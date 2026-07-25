@@ -1,0 +1,162 @@
+@import "tailwindcss";
+
+/*
+  WordArchitect design system
+  --------------------------------------------------------------------------
+  A cinematic "dark-academia meets high fantasy" theme: gilded gold on warm
+  espresso for dark mode, ink on parchment for light mode. Theme is switched
+  via a `.dark` / `.light` class on <html> (managed by next-themes).
+*/
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root,
+.light {
+  /* Surfaces */
+  --canvas: #f4efe7; /* parchment base */
+  --elevated: #fbf8f2;
+  --surface: #fffdf8;
+  --surface-2: #f1eadd;
+
+  /* Lines / borders */
+  --line: rgba(90, 70, 40, 0.14);
+  --line-strong: rgba(90, 70, 40, 0.24);
+
+  /* Ink */
+  --ink: #2a2018;
+  --ink-muted: #6b5f50;
+  --ink-faint: #94897a;
+
+  /* Accent — gilded gold (deeper on light for contrast) */
+  --gold: #a6803f;
+  --gold-soft: #8a6a34;
+  --gold-contrast: #fffdf8;
+
+  /* Semantic */
+  --danger: #b24a32;
+  --warn: #a6803f;
+  --low: #94897a;
+
+  /* Hero art for the welcome banner */
+  --hero: url("/hero-light.png");
+  --hero-overlay: linear-gradient(
+    90deg,
+    var(--surface) 0%,
+    rgba(255, 253, 248, 0.55) 42%,
+    rgba(255, 253, 248, 0) 80%
+  );
+}
+
+.dark {
+  /* Surfaces */
+  --canvas: #0f0b08; /* espresso base */
+  --elevated: #17110d;
+  --surface: #1a1411;
+  --surface-2: #221a15;
+
+  /* Lines / borders */
+  --line: rgba(200, 169, 106, 0.12);
+  --line-strong: rgba(200, 169, 106, 0.22);
+
+  /* Ink */
+  --ink: #ede4d6;
+  --ink-muted: #9a8f82;
+  --ink-faint: #6e655b;
+
+  /* Accent — champagne gold */
+  --gold: #c8a96a;
+  --gold-soft: #b0895a;
+  --gold-contrast: #0f0b08;
+
+  /* Semantic */
+  --danger: #c4593e;
+  --warn: #c8a96a;
+  --low: #8b8177;
+
+  /* Hero art */
+  --hero: url("/hero-dark.jpg");
+  --hero-overlay: linear-gradient(
+    90deg,
+    var(--surface) 0%,
+    rgba(26, 20, 17, 0.55) 42%,
+    rgba(26, 20, 17, 0) 80%
+  );
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-elevated: var(--elevated);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-faint: var(--ink-faint);
+
+  --color-gold: var(--gold);
+  --color-gold-soft: var(--gold-soft);
+  --color-gold-contrast: var(--gold-contrast);
+
+  --color-danger: var(--danger);
+  --color-warn: var(--warn);
+  --color-low: var(--low);
+
+  --font-sans: var(--font-inter);
+  --font-serif: var(--font-cormorant);
+}
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  background-color: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Utility helpers layered on top of the token system */
+@layer utilities {
+  .font-display {
+    font-family: var(--font-cormorant), Georgia, "Times New Roman", serif;
+  }
+
+  /* Small-caps tracked label used throughout the dashboard */
+  .label-caps {
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 0.68rem;
+    color: var(--ink-muted);
+  }
+
+  .card {
+    background-color: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 1rem;
+  }
+
+  .card-2 {
+    background-color: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 0.85rem;
+  }
+
+  /* Gilded gradient text for stat numerals */
+  .text-gilded {
+    background: linear-gradient(180deg, var(--gold) 0%, var(--gold-soft) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Thin scrollbar tuned to the theme */
+  .scroll-slim {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+}

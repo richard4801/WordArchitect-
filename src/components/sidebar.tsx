@@ -1,0 +1,108 @@
+"use client";
+
+import { ChevronRight, Moon } from "lucide-react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useState } from "react";
+import { BrandMark } from "@/components/brand-mark";
+import { NAV_ITEMS } from "@/lib/nav";
+
+export function Sidebar() {
+  const pathname = usePathname();
+  const [focus, setFocus] = useState(false);
+
+  return (
+    <aside className="hidden w-[264px] shrink-0 flex-col border-r border-line bg-elevated lg:flex">
+      {/* Logo */}
+      <div className="px-7 pt-8 pb-6">
+        <div className="flex flex-col items-start gap-2">
+          <BrandMark className="size-7 text-gold" />
+          <div className="font-display text-2xl leading-none tracking-wide text-ink">
+            WORD<span className="text-gold">ARCHITECT</span>
+          </div>
+          <p className="label-caps text-[0.6rem]">Write. Craft. Conquer.</p>
+        </div>
+      </div>
+
+      {/* Nav */}
+      <nav className="scroll-slim flex-1 overflow-y-auto px-4">
+        <ul className="flex flex-col gap-1">
+          {NAV_ITEMS.map((item) => {
+            const active =
+              item.href === "/"
+                ? pathname === "/"
+                : pathname.startsWith(item.href);
+            const Icon = item.icon;
+            return (
+              <li key={item.href}>
+                <Link
+                  href={item.href}
+                  aria-current={active ? "page" : undefined}
+                  className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors ${
+                    active
+                      ? "bg-surface-2 text-ink"
+                      : "text-ink-muted hover:bg-surface-2/60 hover:text-ink"
+                  }`}
+                >
+                  <Icon
+                    className={`size-[18px] ${active ? "text-gold" : ""}`}
+                    strokeWidth={1.7}
+                  />
+                  <span className="flex-1">{item.label}</span>
+                  {active && <ChevronRight className="size-4 text-gold" />}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+
+      {/* Focus mode */}
+      <div className="px-6 py-4">
+        <button
+          type="button"
+          onClick={() => setFocus((f) => !f)}
+          className="flex w-full items-center gap-3 text-sm text-ink-muted"
+        >
+          <Moon className="size-4" strokeWidth={1.7} />
+          <span className="flex-1 text-left">Focus Mode</span>
+          <span
+            className={`relative h-5 w-9 rounded-full border border-line transition-colors ${
+              focus ? "bg-gold/30" : "bg-surface-2"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 size-3.5 rounded-full transition-all ${
+                focus ? "left-4 bg-gold" : "left-0.5 bg-ink-faint"
+              }`}
+            />
+          </span>
+        </button>
+      </div>
+
+      {/* Profile */}
+      <div className="border-t border-line px-6 py-5">
+        <div className="flex items-center gap-3">
+          <span
+            className="size-10 shrink-0 rounded-full border border-line-strong bg-cover bg-center"
+            style={{ backgroundImage: "var(--hero)" }}
+            aria-hidden
+          />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-ink">Jessica</p>
+            <p className="label-caps text-[0.58rem]">Level 7 · Storyweaver</p>
+          </div>
+        </div>
+        <div className="mt-3">
+          <div className="h-1 overflow-hidden rounded-full bg-surface-2">
+            <div
+              className="h-full rounded-full bg-gold"
+              style={{ width: "49%" }}
+            />
+          </div>
+          <p className="mt-1.5 text-[0.68rem] text-ink-faint">2,450 / 5,000 XP</p>
+        </div>
+      </div>
+    </aside>
+  );
+}
