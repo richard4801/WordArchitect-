@@ -13,12 +13,25 @@ export function Sidebar() {
 
   return (
     <aside
-      className="grain sticky top-0 hidden h-dvh w-[264px] shrink-0 flex-col border-r border-line lg:flex"
+      className="fixed left-0 top-0 z-20 hidden h-dvh w-[264px] flex-col border-r border-line lg:flex"
       style={{
+        position: "fixed",
         background: "linear-gradient(180deg, var(--elevated) 0%, var(--canvas) 100%)",
         boxShadow: "inset -1px 0 0 var(--card-highlight)",
       }}
     >
+      {/* Grain texture behind the sidebar content */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{
+          zIndex: -1,
+          backgroundImage: "var(--grain-url)",
+          backgroundSize: "180px 180px",
+          opacity: "var(--grain-opacity)",
+          mixBlendMode: "soft-light",
+        }}
+      />
       {/* Logo */}
       <div className="px-7 pt-8 pb-6">
         <div className="flex flex-col items-start gap-2">

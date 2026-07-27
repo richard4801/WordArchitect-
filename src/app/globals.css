@@ -101,9 +101,11 @@
   --hero-lower-bright: 0.4;
   --grain-opacity: 0.5;
 
-  /* Carved-material card (obsidian / smoked walnut / aged bronze) */
-  --card-top: #211a14;
-  --card-bottom: #18140f;
+  /* Carved-material card (obsidian / smoked walnut / aged bronze).
+     Centered on the system Card Background #2A221B so panels read distinctly
+     against the #1B140F canvas: warmer/lighter top, deeper bottom. */
+  --card-top: #34291f;
+  --card-bottom: #241b14;
   --card-border: rgba(212, 174, 122, 0.1);
   --card-border-hover: rgba(212, 174, 122, 0.22);
   --card-highlight: rgba(255, 255, 255, 0.03);

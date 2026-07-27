@@ -14,10 +14,10 @@ export default function AppLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="relative flex min-h-dvh">
+    <div className="relative min-h-dvh">
       <PageBackground />
       <Sidebar />
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="relative flex min-h-dvh min-w-0 flex-col lg:pl-[264px]">
         <header className="flex items-center justify-end gap-2 px-5 py-4 sm:px-8">
           <button
             type="button"
@@ -35,9 +35,7 @@ export default function AppLayout({
           </button>
           <ThemeToggle />
         </header>
-        <main className="scroll-slim flex-1 overflow-y-auto px-5 pb-12 sm:px-8">
-          {children}
-        </main>
+        <main className="flex-1 px-5 pb-12 sm:px-8">{children}</main>
       </div>
     </div>
   );
