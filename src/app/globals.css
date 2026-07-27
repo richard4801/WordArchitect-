@@ -3,84 +3,73 @@
 /*
   WordArchitect design system
   --------------------------------------------------------------------------
-  A cinematic "dark-academia meets high fantasy" theme: gilded gold on warm
-  espresso for dark mode, ink on parchment for light mode. Theme is switched
-  via a `.dark` / `.light` class on <html> (managed by next-themes).
+  The oracle hero image is the *page background* — sharp at the top (the face)
+  and continuing downward as a blurred, darkened wash that all content floats
+  over. Surfaces are translucent, warm, and grain-textured. Dark = near-black
+  espresso; light = parchment. Theme is switched via a `.dark` / `.light`
+  class on <html> (next-themes).
 */
 
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root,
 .light {
-  /* Surfaces */
-  --canvas: #f4efe7; /* parchment base */
-  --elevated: #fbf8f2;
-  --surface: #fffdf8;
-  --surface-2: #f1eadd;
+  /* Solid base behind the fixed background image (fallback + edges). */
+  --canvas: #efe8dc;
 
-  /* Lines / borders */
-  --line: rgba(90, 70, 40, 0.14);
-  --line-strong: rgba(90, 70, 40, 0.24);
+  /* Translucent surfaces — they float over the background wash. */
+  --elevated: rgba(250, 246, 239, 0.72);
+  --surface: rgba(255, 253, 248, 0.64);
+  --surface-2: rgba(240, 233, 222, 0.68);
 
-  /* Ink */
+  --line: rgba(90, 70, 40, 0.16);
+  --line-strong: rgba(90, 70, 40, 0.26);
+
   --ink: #2a2018;
-  --ink-muted: #6b5f50;
-  --ink-faint: #94897a;
+  --ink-muted: #5f5344;
+  --ink-faint: #8a7f70;
 
-  /* Accent — gilded gold (deeper on light for contrast) */
-  --gold: #a6803f;
-  --gold-soft: #8a6a34;
+  --gold: #9c7734;
+  --gold-soft: #82632f;
   --gold-contrast: #fffdf8;
 
-  /* Semantic */
-  --danger: #b24a32;
-  --warn: #a6803f;
-  --low: #94897a;
+  --danger: #b0472f;
+  --warn: #9c7734;
+  --low: #8a7f70;
 
-  /* Hero art for the welcome banner */
+  /* Background compositing */
   --hero: url("/hero-light.png");
-  --hero-overlay: linear-gradient(
-    90deg,
-    var(--surface) 0%,
-    rgba(255, 253, 248, 0.55) 42%,
-    rgba(255, 253, 248, 0) 80%
-  );
+  --wash-rgb: 244, 239, 231; /* parchment wash colour */
+  --hero-lower-bright: 1.08; /* brightness of the blurred lower background */
+  --grain-opacity: 0.35;
 }
 
 .dark {
-  /* Surfaces */
-  --canvas: #0f0b08; /* espresso base */
-  --elevated: #17110d;
-  --surface: #1a1411;
-  --surface-2: #221a15;
+  --canvas: #0a0705;
 
-  /* Lines / borders */
-  --line: rgba(200, 169, 106, 0.12);
-  --line-strong: rgba(200, 169, 106, 0.22);
+  --elevated: rgba(13, 9, 7, 0.66);
+  --surface: rgba(24, 17, 13, 0.55);
+  --surface-2: rgba(33, 24, 18, 0.6);
 
-  /* Ink */
-  --ink: #ede4d6;
-  --ink-muted: #9a8f82;
-  --ink-faint: #6e655b;
+  --line: rgba(200, 169, 106, 0.14);
+  --line-strong: rgba(200, 169, 106, 0.26);
 
-  /* Accent — champagne gold */
-  --gold: #c8a96a;
+  --ink: #ece3d4;
+  --ink-muted: #a99d8c;
+  --ink-faint: #786d5e;
+
+  --gold: #c9a86a;
   --gold-soft: #b0895a;
-  --gold-contrast: #0f0b08;
+  --gold-contrast: #0a0705;
 
-  /* Semantic */
-  --danger: #c4593e;
-  --warn: #c8a96a;
-  --low: #8b8177;
+  --danger: #c85c40;
+  --warn: #c9a86a;
+  --low: #897f72;
 
-  /* Hero art */
   --hero: url("/hero-dark.jpg");
-  --hero-overlay: linear-gradient(
-    90deg,
-    var(--surface) 0%,
-    rgba(26, 20, 17, 0.55) 42%,
-    rgba(26, 20, 17, 0) 80%
-  );
+  --wash-rgb: 8, 6, 4; /* espresso wash colour */
+  --hero-lower-bright: 0.4;
+  --grain-opacity: 0.5;
 }
 
 @theme inline {
@@ -120,13 +109,19 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* Utility helpers layered on top of the token system */
+/*
+  Fractal-noise film grain, embedded as an SVG data URI. Applied as a
+  soft-light overlay to surfaces to create the "sandy" texture.
+*/
+:root {
+  --grain-url: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
 @layer utilities {
   .font-display {
     font-family: var(--font-cormorant), Georgia, "Times New Roman", serif;
   }
 
-  /* Small-caps tracked label used throughout the dashboard */
   .label-caps {
     text-transform: uppercase;
     letter-spacing: 0.14em;
@@ -134,19 +129,40 @@ body {
     color: var(--ink-muted);
   }
 
+  /* Translucent, grain-textured panel that floats over the background. */
+  .card,
+  .card-2,
+  .grain {
+    position: relative;
+  }
+
   .card {
     background-color: var(--surface);
     border: 1px solid var(--line);
     border-radius: 1rem;
+    backdrop-filter: blur(8px);
   }
 
   .card-2 {
     background-color: var(--surface-2);
     border: 1px solid var(--line);
     border-radius: 0.85rem;
+    backdrop-filter: blur(8px);
   }
 
-  /* Gilded gradient text for stat numerals */
+  .card::after,
+  .card-2::after,
+  .grain::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background-image: var(--grain-url);
+    opacity: var(--grain-opacity);
+    mix-blend-mode: soft-light;
+    pointer-events: none;
+  }
+
   .text-gilded {
     background: linear-gradient(180deg, var(--gold) 0%, var(--gold-soft) 100%);
     -webkit-background-clip: text;
@@ -154,7 +170,6 @@ body {
     color: transparent;
   }
 
-  /* Thin scrollbar tuned to the theme */
   .scroll-slim {
     scrollbar-width: thin;
     scrollbar-color: var(--line-strong) transparent;

@@ -35,3 +35,46 @@ export function Sparkle({ className }: { className?: string }) {
     </svg>
   );
 }
+
+/**
+ * Ornate compass sigil in a diamond frame — the emblem beside the carved
+ * quote in the footer. Thin gold strokes, alchemical/astrolabe feel.
+ */
+export function Sigil({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 48 48"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1"
+      aria-hidden
+      className={className}
+    >
+      <rect
+        x="6.5"
+        y="6.5"
+        width="35"
+        height="35"
+        rx="2"
+        transform="rotate(45 24 24)"
+        opacity="0.6"
+      />
+      <circle cx="24" cy="24" r="9.5" opacity="0.5" />
+      {/* four-point compass star */}
+      <path
+        d="M24 8 L26.5 21.5 L40 24 L26.5 26.5 L24 40 L21.5 26.5 L8 24 L21.5 21.5 Z"
+        fill="currentColor"
+        stroke="none"
+        opacity="0.9"
+      />
+      {/* diagonal minor points */}
+      <path
+        d="M24 13 L25 23 L35 24 L25 25 L24 35 L23 25 L13 24 L23 23 Z"
+        fill="currentColor"
+        stroke="none"
+        opacity="0.35"
+        transform="rotate(45 24 24)"
+      />
+    </svg>
+  );
+}
