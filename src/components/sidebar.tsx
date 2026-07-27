@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { BrandMark } from "@/components/brand-mark";
+import { Progress } from "@/components/ui/progress";
 import { NAV_ITEMS } from "@/lib/nav";
 
 export function Sidebar() {
@@ -113,12 +114,7 @@ export function Sidebar() {
           </div>
         </div>
         <div className="mt-3">
-          <div className="h-1 overflow-hidden rounded-full bg-surface-2">
-            <div
-              className="h-full rounded-full bg-gold"
-              style={{ width: "49%" }}
-            />
-          </div>
+          <Progress value={49} />
           <p className="mt-1.5 text-[0.68rem] text-ink-faint">2,450 / 5,000 XP</p>
         </div>
       </div>

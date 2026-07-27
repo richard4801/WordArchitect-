@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { Sigil, Sparkle } from "@/components/brand-mark";
+import { CoverArt } from "@/components/ui/cover-art";
 import { Progress } from "@/components/ui/progress";
 import { Ring } from "@/components/ui/ring";
 import { SectionHeading } from "@/components/ui/section-heading";
@@ -104,7 +105,10 @@ function ContinueWritingCard() {
       <SectionHeading title="Continue Writing" />
 
       <div className="relative overflow-hidden rounded-xl border border-line">
-        <div className="aspect-[16/8] bg-gradient-to-br from-surface-2 via-surface to-canvas" />
+        <CoverArt
+          seed={continueWriting.title}
+          className="block aspect-[16/8] w-full"
+        />
         <button
           type="button"
           aria-label="Options"
@@ -212,7 +216,7 @@ function ProjectCard({ project }: { project: Project }) {
   return (
     <article className="card card-hover overflow-hidden">
       <div className="relative">
-        <div className="aspect-[16/10] bg-gradient-to-br from-surface-2 via-surface to-canvas" />
+        <CoverArt seed={project.id} className="block aspect-[16/10] w-full" />
         {project.active ? (
           <span className="absolute left-3 top-3 rounded-md bg-canvas/70 px-2 py-0.5 text-[0.6rem] font-semibold tracking-widest text-gold backdrop-blur">
             ACTIVE
