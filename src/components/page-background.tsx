@@ -22,10 +22,11 @@ export function PageBackground() {
     >
       {/* Sharp face, dissolving into the canvas on all sides */}
       <div
-        className="absolute right-0 top-0 h-[94vh] w-[64%] bg-cover bg-no-repeat"
+        className="absolute right-0 top-0 h-[94vh] w-[64%] bg-no-repeat"
         style={{
           backgroundImage: "var(--hero)",
           backgroundPosition: "var(--hero-pos)",
+          backgroundSize: "var(--hero-size, cover)",
           maskImage: mask,
           WebkitMaskImage: mask,
         }}

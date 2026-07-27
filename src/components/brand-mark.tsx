@@ -12,17 +12,20 @@ export function BrandMark({
 }) {
   return (
     <svg
-      viewBox="0 0 24 24"
+      viewBox="0 0 48 48"
       fill="currentColor"
       role="img"
       aria-label={title}
       className={className}
     >
-      <path d="M12 0c.6 4.9 2.5 7.4 6 8.4-3.5.9-5.4 3.5-6 8.4-.6-4.9-2.5-7.5-6-8.4 3.5-1 5.4-3.5 6-8.4Z" />
+      {/* Ornate compass-star cluster: a tall concave four-point star with four
+          small diamonds set in the diagonal notches. */}
+      <path d="M24 2 Q27 21 42 24 Q27 27 24 46 Q21 27 6 24 Q21 21 24 2 Z" />
       <path
-        d="M18.5 14.5c.3 2.6 1.3 3.9 3.2 4.4-1.9.5-2.9 1.9-3.2 4.4-.3-2.6-1.3-3.9-3.2-4.4 1.9-.5 2.9-1.8 3.2-4.4Z"
-        opacity="0.7"
+        d="M35 12 L38 15 L35 18 L32 15 Z M35 30 L38 33 L35 36 L32 33 Z M13 30 L16 33 L13 36 L10 33 Z M13 12 L16 15 L13 18 L10 15 Z"
+        opacity="0.75"
       />
+      <circle cx="24" cy="24" r="1.5" opacity="0.9" />
     </svg>
   );
 }

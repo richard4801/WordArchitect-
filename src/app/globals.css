@@ -47,7 +47,11 @@
 
   /* Hero compositing */
   --hero: url("/hero-light.png");
-  --hero-pos: 52% 33%; /* frame the eye to match the dark-mode crop */
+  /* Eye framing: the light crop (1024x1536, eye at ~53%/52%) is zoomed to
+     119% and positioned so the astrolabe iris lands at the exact same screen
+     point as the dark crop — toggling themes must not move the face. */
+  --hero-size: 119%;
+  --hero-pos: 44% 55%;
   --wash-rgb: 250, 248, 245;
   --hero-lower-bright: 1.08;
   --grain-opacity: 0.3;
@@ -67,13 +71,12 @@
 
 /* --------------------------------------------------------- Dark theme --- */
 .dark {
-  /* Surfaces — near-black, near-neutral (matched to the mockup's rendered
-     values, then pushed darker). Warmth lives in the gold accents and the
-     hero image, not the panels. */
-  --canvas: #090807; /* near-black background */
-  --elevated: #0c0b0a; /* sidebar / elevated surface */
-  --surface: #131110; /* inner surface */
-  --surface-2: #1b1813; /* slightly lifted inner surface */
+  /* Surfaces — near-pure-black, neutral (closer to black than brown). Warmth
+     lives only in the gold accents and the hero image, never the panels. */
+  --canvas: #0a0a0b; /* near-black background */
+  --elevated: #0e0e0f; /* sidebar / elevated surface */
+  --surface: #151517; /* inner surface */
+  --surface-2: #1c1c1f; /* slightly lifted inner surface */
 
   /* Lines / dividers (soft bronze) */
   --line: rgba(212, 174, 122, 0.12);
@@ -100,22 +103,27 @@
 
   /* Hero compositing */
   --hero: url("/hero-dark.jpg");
-  --hero-pos: 50% 46%; /* background-position so the eye frames right + centered */
-  --wash-rgb: 9, 8, 7; /* near-black neutral, matches canvas */
-  --hero-lower-bright: 0.35;
+  /* Eye framing: the dark crop (736x1313, eye at ~56%/50%) is zoomed to 119%
+     and positioned so the astrolabe iris lands at the exact same screen point
+     as the light crop — the two share --hero-size so the face is the same
+     physical size and does not shift when the theme is toggled. */
+  --hero-size: 119%;
+  --hero-pos: 62% 49%;
+  --wash-rgb: 10, 10, 11; /* near-black neutral, matches canvas */
+  --hero-lower-bright: 0.32;
   --grain-opacity: 0.5;
 
-  /* Carved-material card — dark, near-neutral base, with only a whisper of
-     warmth so richness reads on close look. */
-  --card-top: #16130f;
-  --card-bottom: #0e0d0c;
+  /* Carved-material card — near-black neutral base, only a whisper of warmth
+     so the material reads on close look, never as brown. */
+  --card-top: #18181b;
+  --card-bottom: #101012;
   --card-border: rgba(212, 174, 122, 0.1);
   --card-border-hover: rgba(212, 174, 122, 0.22);
-  --card-highlight: rgba(255, 255, 255, 0.03);
+  --card-highlight: rgba(255, 255, 255, 0.05);
   --card-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
   --card-shadow-hover: 0 16px 42px rgba(0, 0, 0, 0.55);
   --card-inner-shadow: inset 0 0 40px rgba(0, 0, 0, 0.28);
-  --card-glow: rgba(212, 174, 122, 0.03);
+  --card-glow: rgba(212, 174, 122, 0.05);
   --card-grain: 0.045;
 }
 
