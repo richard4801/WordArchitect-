@@ -27,7 +27,7 @@ export function PageBackground() {
           backgroundImage: "var(--hero)",
           backgroundPosition: "50% 28%",
           filter:
-            "blur(56px) brightness(var(--hero-lower-bright)) saturate(0.55)",
+            "blur(56px) brightness(var(--hero-lower-bright)) saturate(0.42)",
           transform: "scale(1.15)",
         }}
       />
@@ -64,12 +64,12 @@ export function PageBackground() {
         }}
       />
 
-      {/* Restrained warm glow near the face */}
+      {/* Very restrained warm glow, only right at the face */}
       <div
         className="absolute inset-0"
         style={{
           background:
-            "radial-gradient(85% 52% at 78% 2%, rgba(150,105,55,0.12), transparent 52%)",
+            "radial-gradient(70% 42% at 80% 0%, rgba(150,105,55,0.06), transparent 50%)",
           mixBlendMode: "soft-light",
         }}
       />

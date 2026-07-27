@@ -66,11 +66,13 @@
 
 /* --------------------------------------------------------- Dark theme --- */
 .dark {
-  /* Surfaces (Dark Mode Surfaces) */
-  --canvas: #1b140f; /* Deep Brown — Background */
-  --elevated: #241c16; /* Elevated Surface */
-  --surface: #2a221b; /* Card Background (Charcoal) */
-  --surface-2: #34291f; /* slightly lifted inner surface */
+  /* Surfaces — matched to the mockup's *rendered* values (near-black,
+     near-neutral), not the lighter/warmer swatch codes. Warmth lives in the
+     gold accents and the hero image, not the panels. */
+  --canvas: #0d0c0b; /* near-black background */
+  --elevated: #100f0d; /* sidebar / elevated surface */
+  --surface: #17150f; /* card-ish inner surface */
+  --surface-2: #201d17; /* slightly lifted inner surface */
 
   /* Lines / dividers (soft bronze) */
   --line: rgba(212, 174, 122, 0.12);
@@ -97,23 +99,22 @@
 
   /* Hero compositing */
   --hero: url("/hero-dark.jpg");
-  --wash-rgb: 27, 20, 15; /* #1B140F */
-  --hero-lower-bright: 0.4;
+  --wash-rgb: 12, 11, 10; /* near-black neutral, matches canvas */
+  --hero-lower-bright: 0.35;
   --grain-opacity: 0.5;
 
-  /* Carved-material card (obsidian / smoked walnut / aged bronze).
-     Centered on the system Card Background #2A221B so panels read distinctly
-     against the #1B140F canvas: warmer/lighter top, deeper bottom. */
-  --card-top: #34291f;
-  --card-bottom: #241b14;
+  /* Carved-material card — dark, near-neutral base (mockup card ≈ #131313),
+     with only a whisper of warmth so richness reads on close look. */
+  --card-top: #1a1714;
+  --card-bottom: #121110;
   --card-border: rgba(212, 174, 122, 0.1);
   --card-border-hover: rgba(212, 174, 122, 0.22);
   --card-highlight: rgba(255, 255, 255, 0.03);
-  --card-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  --card-shadow-hover: 0 16px 42px rgba(0, 0, 0, 0.5);
-  --card-inner-shadow: inset 0 0 40px rgba(0, 0, 0, 0.25);
-  --card-glow: rgba(212, 174, 122, 0.05);
-  --card-grain: 0.05;
+  --card-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  --card-shadow-hover: 0 16px 42px rgba(0, 0, 0, 0.55);
+  --card-inner-shadow: inset 0 0 40px rgba(0, 0, 0, 0.28);
+  --card-glow: rgba(212, 174, 122, 0.03);
+  --card-grain: 0.045;
 }
 
 @theme inline {
