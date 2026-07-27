@@ -47,11 +47,13 @@
 
   /* Hero compositing */
   --hero: url("/hero-light.png");
-  /* Eye framing: the light crop (1024x1536, eye at ~53%/52%) is zoomed to
-     119% and positioned so the astrolabe iris lands at the exact same screen
-     point as the dark crop — toggling themes must not move the face. */
-  --hero-size: 119%;
-  --hero-pos: 44% 55%;
+  /* Eye framing: the light crop (1024x1536, eye at ~53%/52%) is scaled DOWN
+     to 72% (a downscale — keeps the face crisp, never upscaled/blurred) and
+     positioned so the astrolabe iris lands at the exact same screen point as
+     the dark crop — the eye sits centred in the hero band and the face does
+     not move when the theme is toggled. Matches the mockup's zoom level. */
+  --hero-size: 72%;
+  --hero-pos: 78.3% 190%;
   --wash-rgb: 250, 248, 245;
   --hero-lower-bright: 1.08;
   --grain-opacity: 0.3;
@@ -103,12 +105,13 @@
 
   /* Hero compositing */
   --hero: url("/hero-dark.jpg");
-  /* Eye framing: the dark crop (736x1313, eye at ~56%/50%) is zoomed to 119%
-     and positioned so the astrolabe iris lands at the exact same screen point
-     as the light crop — the two share --hero-size so the face is the same
-     physical size and does not shift when the theme is toggled. */
-  --hero-size: 119%;
-  --hero-pos: 62% 49%;
+  /* Eye framing: the dark crop (736x1313, eye at ~56%/50%) is scaled DOWN to
+     64% (a downscale of the source — crisp, never upscaled/blurred) and
+     positioned so the astrolabe iris lands at the exact same screen point as
+     the light crop: eye centred in the hero band, face steady across the
+     theme toggle. Matches the mockup's zoom level. */
+  --hero-size: 64%;
+  --hero-pos: 67.2% 138.7%;
   --wash-rgb: 10, 10, 11; /* near-black neutral, matches canvas */
   --hero-lower-bright: 0.32;
   --grain-opacity: 0.5;

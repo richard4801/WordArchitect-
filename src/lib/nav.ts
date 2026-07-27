@@ -1,16 +1,16 @@
 import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
-  BookOpen,
-  Feather,
-  Globe2,
-  LayoutDashboard,
-  ListTree,
-  NotebookPen,
+  FileText,
+  Folder,
+  Globe,
+  Home,
+  List,
+  Pencil,
   Settings,
   Sparkles,
   Target,
-  Users,
+  User,
 } from "lucide-react";
 
 export type NavItem = {
@@ -20,17 +20,19 @@ export type NavItem = {
 };
 
 /**
- * Primary sidebar navigation. Mirrors the WordArchitect mockup. Pages beyond
- * the dashboard are stubbed for now and filled in as their mockups arrive.
+ * Primary sidebar navigation. Icons mirror the WordArchitect mockup exactly:
+ * house, folder, pencil, single person, globe, list, document, sparkles,
+ * target, chart, gear. Pages beyond the dashboard are stubbed for now and
+ * filled in as their mockups arrive.
  */
 export const NAV_ITEMS: NavItem[] = [
-  { label: "Dashboard", href: "/", icon: LayoutDashboard },
-  { label: "Projects", href: "/projects", icon: BookOpen },
-  { label: "Writing", href: "/writing", icon: Feather },
-  { label: "Characters", href: "/characters", icon: Users },
-  { label: "Worldbuilding", href: "/worldbuilding", icon: Globe2 },
-  { label: "Outlines", href: "/outlines", icon: ListTree },
-  { label: "Notes", href: "/notes", icon: NotebookPen },
+  { label: "Dashboard", href: "/", icon: Home },
+  { label: "Projects", href: "/projects", icon: Folder },
+  { label: "Writing", href: "/writing", icon: Pencil },
+  { label: "Characters", href: "/characters", icon: User },
+  { label: "Worldbuilding", href: "/worldbuilding", icon: Globe },
+  { label: "Outlines", href: "/outlines", icon: List },
+  { label: "Notes", href: "/notes", icon: FileText },
   { label: "AI Assistant", href: "/assistant", icon: Sparkles },
   { label: "Goals", href: "/goals", icon: Target },
   { label: "Analytics", href: "/analytics", icon: BarChart3 },
