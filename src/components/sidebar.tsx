@@ -12,7 +12,13 @@ export function Sidebar() {
   const [focus, setFocus] = useState(false);
 
   return (
-    <aside className="grain sticky top-0 hidden h-dvh w-[264px] shrink-0 flex-col border-r border-line bg-elevated backdrop-blur-md lg:flex">
+    <aside
+      className="grain sticky top-0 hidden h-dvh w-[264px] shrink-0 flex-col border-r border-line lg:flex"
+      style={{
+        background: "linear-gradient(180deg, var(--elevated) 0%, var(--canvas) 100%)",
+        boxShadow: "inset -1px 0 0 var(--card-highlight)",
+      }}
+    >
       {/* Logo */}
       <div className="px-7 pt-8 pb-6">
         <div className="flex flex-col items-start gap-2">

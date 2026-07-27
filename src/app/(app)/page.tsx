@@ -100,7 +100,7 @@ function ContinueWritingCard() {
   );
 
   return (
-    <section className="card p-6">
+    <section className="card card-hover p-6">
       <SectionHeading title="Continue Writing" />
 
       <div className="relative overflow-hidden rounded-xl border border-line">
@@ -149,7 +149,7 @@ function ContinueWritingCard() {
 
 function StatsOverviewCard() {
   return (
-    <section className="card p-6">
+    <section className="card card-hover p-6">
       <div className="mb-4 flex items-center justify-between">
         <h2 className="font-display text-2xl text-ink">Stats Overview</h2>
         <button
@@ -210,7 +210,7 @@ function ProjectsGrid() {
 function ProjectCard({ project }: { project: Project }) {
   const percent = Math.round((project.words / project.target) * 100);
   return (
-    <article className="card overflow-hidden">
+    <article className="card card-hover overflow-hidden">
       <div className="relative">
         <div className="aspect-[16/10] bg-gradient-to-br from-surface-2 via-surface to-canvas" />
         {project.active ? (
@@ -268,7 +268,7 @@ const PRIORITY_STYLES: Record<Priority, string> = {
 
 function TasksCard() {
   return (
-    <section className="card p-6">
+    <section className="card card-hover p-6">
       <SectionHeading title="Tasks" actionLabel="View All" />
       <ul className="divide-y divide-line">
         {tasks.map((task) => (
@@ -302,7 +302,7 @@ const ACTIVITY_ICON: Record<ActivityKind, typeof PenLine> = {
 
 function ActivityCard() {
   return (
-    <section className="card p-6">
+    <section className="card card-hover p-6">
       <SectionHeading title="Recent Activity" actionLabel="View All" />
       <ul className="divide-y divide-line">
         {activity.map((item) => {
@@ -330,7 +330,7 @@ function ActivityCard() {
 
 function FooterCta() {
   return (
-    <section className="card flex flex-col items-start gap-5 p-6 sm:flex-row sm:items-center sm:justify-between">
+    <section className="card card-hover flex flex-col items-start gap-5 p-6 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-4">
         <Sigil className="size-12 shrink-0 text-gold" />
         <blockquote className="font-display text-lg italic text-ink-muted">

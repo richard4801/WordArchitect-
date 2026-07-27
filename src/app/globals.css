@@ -2,74 +2,116 @@
 
 /*
   WordArchitect design system
-  --------------------------------------------------------------------------
-  The oracle hero image is the *page background* — sharp at the top (the face)
-  and continuing downward as a blurred, darkened wash that all content floats
-  over. Surfaces are translucent, warm, and grain-textured. Dark = near-black
-  espresso; light = parchment. Theme is switched via a `.dark` / `.light`
-  class on <html> (next-themes).
+  ==========================================================================
+  Colour codes come from the project's official color system (see
+  DESIGN_SYSTEM.md and resources/design-system.png). Fonts: Playfair Display
+  (headings) + Inter (UI). The oracle hero image is the page background;
+  surfaces are "carved" material panels (obsidian / smoked walnut / aged
+  bronze) — never flat rectangles. Theme via a `.dark` / `.light` class on
+  <html> (next-themes).
 */
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* -------------------------------------------------------- Light theme --- */
 :root,
 .light {
-  /* Solid base behind the fixed background image (fallback + edges). */
-  --canvas: #efe8dc;
+  /* Surfaces (Light Mode Surfaces) */
+  --canvas: #faf8f5; /* Off White — page canvas */
+  --elevated: #f5f1ec; /* Muted Surface */
+  --surface: #ffffff; /* Card Background */
+  --surface-2: #f5f1ec; /* Muted Surface */
 
-  /* Translucent surfaces — they float over the background wash. */
-  --elevated: rgba(250, 246, 239, 0.72);
-  --surface: rgba(255, 253, 248, 0.64);
-  --surface-2: rgba(240, 233, 222, 0.68);
+  /* Lines / dividers (soft bronze) */
+  --line: rgba(139, 94, 52, 0.16);
+  --line-strong: rgba(139, 94, 52, 0.28);
 
-  --line: rgba(90, 70, 40, 0.16);
-  --line-strong: rgba(90, 70, 40, 0.26);
+  /* Ink */
+  --ink: #1b140f; /* Deep Brown */
+  --ink-muted: #6e645b; /* Taupe */
+  --ink-faint: #a09487; /* Light Taupe */
 
-  --ink: #2a2018;
-  --ink-muted: #5f5344;
-  --ink-faint: #8a7f70;
+  /* Accents */
+  --gold: #8b5e34; /* Primary Brown — deeper for contrast on light */
+  --gold-soft: #6f4a29;
+  --gold-contrast: #ffffff;
+  --brown: #8b5e34;
 
-  --gold: #9c7734;
-  --gold-soft: #82632f;
-  --gold-contrast: #fffdf8;
+  /* Semantic */
+  --success: #3fa46a;
+  --warn: #c08a2e; /* Warning, darkened for light-mode contrast */
+  --danger: #c0473a; /* Error, darkened for light-mode contrast */
+  --info: #4f86c6;
+  --purple: #7256bd;
+  --low: #a09487;
 
-  --danger: #b0472f;
-  --warn: #9c7734;
-  --low: #8a7f70;
-
-  /* Background compositing */
+  /* Hero compositing */
   --hero: url("/hero-light.png");
-  --wash-rgb: 244, 239, 231; /* parchment wash colour */
-  --hero-lower-bright: 1.08; /* brightness of the blurred lower background */
-  --grain-opacity: 0.35;
+  --wash-rgb: 250, 248, 245;
+  --hero-lower-bright: 1.08;
+  --grain-opacity: 0.3;
+
+  /* Carved-material card */
+  --card-top: #ffffff;
+  --card-bottom: #f6f1e9;
+  --card-border: rgba(139, 94, 52, 0.14);
+  --card-border-hover: rgba(139, 94, 52, 0.3);
+  --card-highlight: rgba(255, 255, 255, 0.6);
+  --card-shadow: 0 10px 28px rgba(60, 40, 20, 0.1);
+  --card-shadow-hover: 0 16px 40px rgba(60, 40, 20, 0.16);
+  --card-inner-shadow: inset 0 0 40px rgba(120, 90, 50, 0.05);
+  --card-glow: rgba(212, 174, 122, 0.06);
+  --card-grain: 0.025;
 }
 
+/* --------------------------------------------------------- Dark theme --- */
 .dark {
-  --canvas: #0a0705;
+  /* Surfaces (Dark Mode Surfaces) */
+  --canvas: #1b140f; /* Deep Brown — Background */
+  --elevated: #241c16; /* Elevated Surface */
+  --surface: #2a221b; /* Card Background (Charcoal) */
+  --surface-2: #34291f; /* slightly lifted inner surface */
 
-  --elevated: rgba(13, 9, 7, 0.66);
-  --surface: rgba(24, 17, 13, 0.55);
-  --surface-2: rgba(33, 24, 18, 0.6);
+  /* Lines / dividers (soft bronze) */
+  --line: rgba(212, 174, 122, 0.12);
+  --line-strong: rgba(212, 174, 122, 0.22);
 
-  --line: rgba(200, 169, 106, 0.14);
-  --line-strong: rgba(200, 169, 106, 0.26);
+  /* Ink */
+  --ink: #f5f1ec; /* Paper Beige — warm off-white text */
+  --ink-muted: #a09487; /* Light Taupe */
+  --ink-faint: #6e645b; /* Taupe */
 
-  --ink: #ece3d4;
-  --ink-muted: #a99d8c;
-  --ink-faint: #786d5e;
+  /* Accents */
+  --gold: #d4af7a; /* Primary Gold */
+  --gold-soft: #b8935f;
+  --gold-contrast: #1b140f;
+  --brown: #8b5e34; /* Primary Brown */
 
-  --gold: #c9a86a;
-  --gold-soft: #b0895a;
-  --gold-contrast: #0a0705;
+  /* Semantic */
+  --success: #3fa46a;
+  --warn: #e0a94f;
+  --danger: #e06a6a;
+  --info: #6ca8e6;
+  --purple: #8868d6;
+  --low: #a09487;
 
-  --danger: #c85c40;
-  --warn: #c9a86a;
-  --low: #897f72;
-
+  /* Hero compositing */
   --hero: url("/hero-dark.jpg");
-  --wash-rgb: 8, 6, 4; /* espresso wash colour */
+  --wash-rgb: 27, 20, 15; /* #1B140F */
   --hero-lower-bright: 0.4;
   --grain-opacity: 0.5;
+
+  /* Carved-material card (obsidian / smoked walnut / aged bronze) */
+  --card-top: #211a14;
+  --card-bottom: #18140f;
+  --card-border: rgba(212, 174, 122, 0.1);
+  --card-border-hover: rgba(212, 174, 122, 0.22);
+  --card-highlight: rgba(255, 255, 255, 0.03);
+  --card-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  --card-shadow-hover: 0 16px 42px rgba(0, 0, 0, 0.5);
+  --card-inner-shadow: inset 0 0 40px rgba(0, 0, 0, 0.25);
+  --card-glow: rgba(212, 174, 122, 0.05);
+  --card-grain: 0.05;
 }
 
 @theme inline {
@@ -88,13 +130,17 @@
   --color-gold: var(--gold);
   --color-gold-soft: var(--gold-soft);
   --color-gold-contrast: var(--gold-contrast);
+  --color-brown: var(--brown);
 
-  --color-danger: var(--danger);
+  --color-success: var(--success);
   --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  --color-purple: var(--purple);
   --color-low: var(--low);
 
   --font-sans: var(--font-inter);
-  --font-serif: var(--font-cormorant);
+  --font-serif: var(--font-playfair);
 }
 
 html {
@@ -109,17 +155,14 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/*
-  Fractal-noise film grain, embedded as an SVG data URI. Applied as a
-  soft-light overlay to surfaces to create the "sandy" texture.
-*/
+/* Fractal-noise film grain (SVG data URI) for organic surface texture */
 :root {
-  --grain-url: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  --grain-url: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 @layer utilities {
   .font-display {
-    font-family: var(--font-cormorant), Georgia, "Times New Roman", serif;
+    font-family: var(--font-playfair), Georgia, "Times New Roman", serif;
   }
 
   .label-caps {
@@ -129,38 +172,88 @@ body {
     color: var(--ink-muted);
   }
 
-  /* Translucent, grain-textured panel that floats over the background. */
-  .card,
-  .card-2,
-  .grain {
-    position: relative;
-  }
-
+  /*
+    Carved material surface — obsidian / smoked walnut / aged bronze.
+    A warm vertical gradient (brighter/warmer at top), a soft ambient bronze
+    glow and grain from the upper-left light, a 1px inner highlight, a soft
+    outer shadow and a faint engraved inner shadow, and a bronze-glow border
+    that intensifies on hover with a 2-4px lift.
+  */
   .card {
-    background-color: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 1rem;
-    backdrop-filter: blur(8px);
+    position: relative;
+    z-index: 0;
+    border-radius: 20px;
+    background: linear-gradient(180deg, var(--card-top) 0%, var(--card-bottom) 100%);
+    border: 1px solid var(--card-border);
+    box-shadow:
+      var(--card-shadow),
+      inset 0 1px 0 var(--card-highlight),
+      var(--card-inner-shadow);
+    transition:
+      transform 180ms ease-out,
+      box-shadow 180ms ease-out,
+      border-color 180ms ease-out;
   }
 
   .card-2 {
-    background-color: var(--surface-2);
-    border: 1px solid var(--line);
-    border-radius: 0.85rem;
-    backdrop-filter: blur(8px);
+    position: relative;
+    z-index: 0;
+    border-radius: 14px;
+    background: linear-gradient(180deg, var(--card-top) 0%, var(--card-bottom) 100%);
+    border: 1px solid var(--card-border);
+    box-shadow: inset 0 1px 0 var(--card-highlight);
   }
 
+  /* Warm ambient glow + light-from-upper-left */
+  .card::before,
+  .card-2::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    background:
+      radial-gradient(120% 90% at 26% -10%, var(--card-glow), transparent 58%),
+      radial-gradient(140% 100% at 22% 0%, rgba(255, 255, 255, 0.025), transparent 55%);
+    pointer-events: none;
+  }
+
+  /* Organic grain — barely-there stone/marble texture */
   .card::after,
   .card-2::after,
   .grain::after {
     content: "";
     position: absolute;
     inset: 0;
+    z-index: -1;
     border-radius: inherit;
     background-image: var(--grain-url);
-    opacity: var(--grain-opacity);
+    background-size: 180px 180px;
+    opacity: var(--card-grain);
     mix-blend-mode: soft-light;
     pointer-events: none;
+  }
+
+  .grain {
+    position: relative;
+    z-index: 0;
+  }
+
+  .grain::after {
+    opacity: var(--grain-opacity);
+  }
+
+  /* Hover: lift, brighten, deepen shadow, intensify bronze border */
+  .card-hover {
+    cursor: pointer;
+  }
+  .card-hover:hover {
+    transform: translateY(-3px);
+    border-color: var(--card-border-hover);
+    box-shadow:
+      var(--card-shadow-hover),
+      inset 0 1px 0 var(--card-highlight),
+      var(--card-inner-shadow);
   }
 
   .text-gilded {
