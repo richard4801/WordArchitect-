@@ -5,7 +5,8 @@
   ==========================================================================
   Colour codes come from the project's official color system (see
   DESIGN_SYSTEM.md and resources/design-system.png). Fonts: Playfair Display
-  (headings) + Inter (UI). The oracle hero image is the page background;
+  (headings) + Jost (UI) + Cinzel (display numerals). The oracle hero image is
+  the page background;
   surfaces are "carved" material panels (obsidian / smoked walnut / aged
   bronze) — never flat rectangles. Theme via a `.dark` / `.light` class on
   <html> (next-themes).
@@ -58,16 +59,15 @@
   --wash-rgb: 250, 248, 245;
   --hero-lower-bright: 1.08;
   --grain-opacity: 0.3;
-  /* Vertical halo that rises from behind the cards up into the hero (light).
-     A pure top-fade reads as smooth atmosphere with no arc/edge; a horizontal
-     mask on the element concentrates it and fades the sides. */
+  /* Full-bleed vertical halo behind the hero stats (light). Fades in above the
+     stats and fades back out below them (light-on-light needs no bottom edge). */
   --hero-stat-grad: linear-gradient(
-    to top,
-    rgba(250, 248, 245, 0.9) 0%,
-    rgba(250, 248, 245, 0.6) 22%,
-    rgba(250, 248, 245, 0.3) 45%,
-    rgba(250, 248, 245, 0.1) 65%,
-    transparent 88%
+    to bottom,
+    transparent 24vh,
+    rgba(250, 248, 245, 0.4) 42vh,
+    rgba(250, 248, 245, 0.68) 51vh,
+    rgba(250, 248, 245, 0.18) 66vh,
+    transparent 80vh
   );
 
   /* Carved-material card */
@@ -126,17 +126,15 @@
   --wash-rgb: 10, 10, 11; /* near-black neutral, matches canvas */
   --hero-lower-bright: 0.32;
   --grain-opacity: 0.5;
-  /* Dark pool that rises from behind the cards up into the hero. A pure
-     top-fade (darkest at the bottom, hidden by the cards) reads as smooth
-     atmosphere with no arc/edge over the bright face; a horizontal mask on the
-     element concentrates it and fades the sides so there's no cutoff. */
+  /* Full-bleed vertical shadow that grounds the hero stats (dark). It fades in
+     above the stats and STAYS dark from the stats down to the page's end, so
+     its origin/bottom edge is never visible; full-bleed = no side edge. */
   --hero-stat-grad: linear-gradient(
-    to top,
-    rgba(0, 0, 0, 0.98) 0%,
-    rgba(0, 0, 0, 0.72) 22%,
-    rgba(0, 0, 0, 0.38) 45%,
-    rgba(0, 0, 0, 0.14) 65%,
-    transparent 88%
+    to bottom,
+    transparent 22vh,
+    rgba(0, 0, 0, 0.34) 40vh,
+    rgba(0, 0, 0, 0.92) 50vh,
+    rgba(0, 0, 0, 0.92) 100%
   );
 
   /* Carved-material card — near-black neutral base, only a whisper of warmth
@@ -178,7 +176,7 @@
   --color-purple: var(--purple);
   --color-low: var(--low);
 
-  --font-sans: var(--font-inter);
+  --font-sans: var(--font-jost);
   --font-serif: var(--font-playfair);
 }
 
@@ -189,7 +187,7 @@ html {
 body {
   background-color: var(--canvas);
   color: var(--ink);
-  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-jost), ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }

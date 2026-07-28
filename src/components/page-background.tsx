@@ -55,6 +55,15 @@ export function PageBackground() {
             "linear-gradient(to bottom, transparent 0, transparent 34vh, rgba(var(--wash-rgb),0.6) 52vh, var(--canvas) 70vh)",
         }}
       />
+
+      {/* Stat shadow: a full-bleed vertical darkening that grounds the hero
+          stats. It stays dark from the stats all the way down to the page's end
+          — so its origin/bottom edge is never visible — and fades up into the
+          hero. Full-bleed means no side edge; the opaque cards hide it below. */}
+      <div
+        className="absolute inset-0"
+        style={{ background: "var(--hero-stat-grad)" }}
+      />
     </div>
   );
 }

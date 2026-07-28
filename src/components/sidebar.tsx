@@ -1,10 +1,9 @@
 "use client";
 
-import { ChevronRight, Moon } from "lucide-react";
+import { ChevronDown, ChevronRight, Moon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { BrandMark } from "@/components/brand-mark";
 import { Progress } from "@/components/ui/progress";
 import { NAV_ITEMS } from "@/lib/nav";
 
@@ -36,7 +35,6 @@ export function Sidebar() {
       {/* Logo */}
       <div className="px-7 pt-8 pb-6">
         <div className="flex flex-col items-start gap-2">
-          <BrandMark className="size-7 text-gold" />
           <div className="font-display text-2xl leading-none tracking-wide text-ink">
             WORD<span className="text-gold">ARCHITECT</span>
           </div>
@@ -100,22 +98,32 @@ export function Sidebar() {
         </button>
       </div>
 
-      {/* Profile */}
-      <div className="border-t border-line px-6 py-5">
-        <div className="flex items-center gap-3">
-          <span
-            className="size-10 shrink-0 rounded-full border border-line-strong bg-cover bg-center"
-            style={{ backgroundImage: "var(--hero)" }}
-            aria-hidden
-          />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-ink">Jessica</p>
-            <p className="label-caps text-[0.58rem]">Level 7 · Storyweaver</p>
+      {/* Profile — a clean, self-contained panel */}
+      <div className="px-4 pb-5 pt-3">
+        <div className="card-2 p-4">
+          <div className="flex items-center gap-3">
+            <span
+              className="size-10 shrink-0 rounded-full border border-line-strong bg-cover"
+              style={{ backgroundImage: "var(--hero)", backgroundPosition: "60% 36%" }}
+              aria-hidden
+            />
+            <div className="min-w-0 flex-1">
+              <button
+                type="button"
+                className="flex items-center gap-1 text-sm font-medium text-ink"
+              >
+                <span className="truncate">Jessica</span>
+                <ChevronDown className="size-3.5 shrink-0 text-ink-muted" />
+              </button>
+              <p className="truncate text-xs text-ink-muted">
+                Level 7 • Storyweaver
+              </p>
+            </div>
           </div>
-        </div>
-        <div className="mt-3">
-          <Progress value={49} />
-          <p className="mt-1.5 text-[0.68rem] text-ink-faint">2,450 / 5,000 XP</p>
+          <div className="mt-3.5">
+            <Progress value={49} />
+            <p className="mt-1.5 text-xs text-ink-faint">2,450 / 5,000 XP</p>
+          </div>
         </div>
       </div>
     </aside>

@@ -5,15 +5,13 @@ import { ThemeProvider } from "@/components/theme-provider";
 
 // Self-hosted fonts (sourced from @fontsource, served locally — no external
 // requests at build or runtime).
-const inter = localFont({
-  variable: "--font-inter",
+const jost = localFont({
+  variable: "--font-jost",
   display: "swap",
   src: [
-    {
-      path: "../fonts/inter-latin-wght-normal.woff2",
-      weight: "100 900",
-      style: "normal",
-    },
+    { path: "../fonts/jost-latin-400-normal.woff2", weight: "400", style: "normal" },
+    { path: "../fonts/jost-latin-500-normal.woff2", weight: "500", style: "normal" },
+    { path: "../fonts/jost-latin-600-normal.woff2", weight: "600", style: "normal" },
   ],
 });
 
@@ -59,7 +57,7 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${inter.variable} ${playfair.variable} ${cinzel.variable} h-full antialiased`}
+      className={`${jost.variable} ${playfair.variable} ${cinzel.variable} h-full antialiased`}
     >
       <body className="min-h-full">
         <ThemeProvider>{children}</ThemeProvider>

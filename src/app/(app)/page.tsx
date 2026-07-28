@@ -78,23 +78,11 @@ function HeroBanner() {
         <p className="mt-3 text-sm text-ink-faint">– {user.quote.attribution}</p>
       </div>
 
-      {/* Stats drop toward the cards, leaving a little breathing space above. A
-          soft shadow RISES from the card line below the stats and fades upward
-          (darkest at the bottom, dissolving before the copy above) — not a
-          block behind them. */}
+      {/* Stats drop toward the cards, leaving a little breathing space above.
+          The shadow that grounds them lives in PageBackground (full-bleed, dark
+          all the way down) so it has no side or bottom edge. */}
       <div className="relative mt-auto">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -left-[8%] -right-[8%] -bottom-[45%] -top-[150%]"
-          style={{
-            background: "var(--hero-stat-grad)",
-            maskImage:
-              "linear-gradient(to right, transparent 0%, #000 15%, #000 72%, transparent 100%)",
-            WebkitMaskImage:
-              "linear-gradient(to right, transparent 0%, #000 15%, #000 72%, transparent 100%)",
-          }}
-        />
-        <div className="relative grid max-w-3xl grid-cols-2 gap-y-8 sm:grid-cols-4">
+        <div className="grid max-w-3xl grid-cols-2 gap-y-8 sm:grid-cols-4">
           {headlineStats.map((stat, i) => (
             <div
               key={stat.label}
