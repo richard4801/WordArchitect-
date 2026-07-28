@@ -76,7 +76,7 @@ export function Ring({
         />
       </svg>
       <div className="absolute inset-0 grid place-content-center text-center">
-        <span className="font-display text-3xl leading-none text-ink">
+        <span className="font-num text-3xl leading-none text-ink">
           {label}
         </span>
         {sublabel && <span className="label-caps mt-1">{sublabel}</span>}

@@ -32,6 +32,18 @@ const playfair = localFont({
   ],
 });
 
+// Cinzel — a classical Roman serif used for the big display numbers. Its
+// numerals sit calmly on the baseline (no oldstyle "dancing" 6/9 like Playfair)
+// while still reading as an elegant, related serif.
+const cinzel = localFont({
+  variable: "--font-cinzel",
+  display: "swap",
+  src: [
+    { path: "../fonts/cinzel-latin-500-normal.woff2", weight: "500", style: "normal" },
+    { path: "../fonts/cinzel-latin-600-normal.woff2", weight: "600", style: "normal" },
+  ],
+});
+
 export const metadata: Metadata = {
   title: "WordArchitect — Write. Craft. Conquer.",
   description:
@@ -47,7 +59,7 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${inter.variable} ${playfair.variable} h-full antialiased`}
+      className={`${inter.variable} ${playfair.variable} ${cinzel.variable} h-full antialiased`}
     >
       <body className="min-h-full">
         <ThemeProvider>{children}</ThemeProvider>

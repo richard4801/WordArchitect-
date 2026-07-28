@@ -92,7 +92,7 @@ function HeroBanner() {
         <div className="relative grid max-w-3xl grid-cols-2 gap-y-8 sm:grid-cols-4">
           {headlineStats.map((stat) => (
             <div key={stat.label} className="text-center">
-              <div className="font-display text-3xl font-semibold text-gilded">
+              <div className="font-num text-3xl font-semibold text-gilded">
                 {stat.value}
               </div>
               <div className="label-caps mt-1">{stat.label}</div>
