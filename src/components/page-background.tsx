@@ -16,10 +16,12 @@ export function PageBackground() {
       className="pointer-events-none absolute inset-0 -z-50 overflow-hidden"
       style={{ backgroundColor: "var(--canvas)" }}
     >
-      {/* Landscape hero, pinned to the top and spanning the full width. Because
-          the art is scaled below full width, a soft radial mask centred on the
-          face feathers the left/top/bottom edges into transparency so the image
-          dissolves into the canvas instead of showing a hard rectangle. */}
+      {/* Landscape hero, pinned to the top and spanning the full width. The art
+          is scaled below full width, so it has real edges inside the viewport.
+          Two intersecting gradient masks (horizontal × vertical) feather every
+          exposed edge — left, top and bottom — to transparent *before* the
+          image's real boundary, so it dissolves into the canvas with no hard
+          line or top cut-off. The right edge bleeds off-screen. */}
       <div
         className="absolute inset-x-0 top-0 h-[74vh] bg-no-repeat"
         style={{
@@ -27,9 +29,11 @@ export function PageBackground() {
           backgroundPosition: "var(--hero-pos)",
           backgroundSize: "var(--hero-size)",
           maskImage:
-            "radial-gradient(120% 135% at 80% 42%, #000 50%, rgba(0,0,0,0.4) 76%, transparent 100%)",
+            "linear-gradient(to right, transparent 16%, #000 42%), linear-gradient(to bottom, transparent 0%, #000 12%, #000 74%, transparent 96%)",
+          maskComposite: "intersect",
           WebkitMaskImage:
-            "radial-gradient(120% 135% at 80% 42%, #000 50%, rgba(0,0,0,0.4) 76%, transparent 100%)",
+            "linear-gradient(to right, transparent 16%, #000 42%), linear-gradient(to bottom, transparent 0%, #000 12%, #000 74%, transparent 96%)",
+          WebkitMaskComposite: "source-in",
         }}
       />
 
