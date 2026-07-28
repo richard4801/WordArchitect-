@@ -17,7 +17,7 @@ export default function AppLayout({
     <div className="relative min-h-dvh">
       <PageBackground />
       <Sidebar />
-      <div className="relative flex min-h-dvh min-w-0 flex-col lg:pl-[264px]">
+      <div className="relative flex min-h-dvh min-w-0 flex-col overflow-x-clip lg:pl-[264px]">
         <header className="flex items-center justify-end gap-2 px-5 py-4 sm:px-8">
           <button
             type="button"

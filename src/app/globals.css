@@ -58,8 +58,17 @@
   --wash-rgb: 250, 248, 245;
   --hero-lower-bright: 1.08;
   --grain-opacity: 0.3;
-  /* Soft pool behind the hero stats so they read on the image (light halo). */
-  --hero-stat-shadow: rgba(250, 248, 245, 0.75);
+  /* Vertical halo that rises from behind the cards up into the hero (light).
+     A pure top-fade reads as smooth atmosphere with no arc/edge; a horizontal
+     mask on the element concentrates it and fades the sides. */
+  --hero-stat-grad: linear-gradient(
+    to top,
+    rgba(250, 248, 245, 0.9) 0%,
+    rgba(250, 248, 245, 0.6) 22%,
+    rgba(250, 248, 245, 0.3) 45%,
+    rgba(250, 248, 245, 0.1) 65%,
+    transparent 88%
+  );
 
   /* Carved-material card */
   --card-top: #ffffff;
@@ -117,8 +126,18 @@
   --wash-rgb: 10, 10, 11; /* near-black neutral, matches canvas */
   --hero-lower-bright: 0.32;
   --grain-opacity: 0.5;
-  /* Dark pool behind the hero stats that spreads up and fades out (mockup). */
-  --hero-stat-shadow: rgba(0, 0, 0, 0.62);
+  /* Dark pool that rises from behind the cards up into the hero. A pure
+     top-fade (darkest at the bottom, hidden by the cards) reads as smooth
+     atmosphere with no arc/edge over the bright face; a horizontal mask on the
+     element concentrates it and fades the sides so there's no cutoff. */
+  --hero-stat-grad: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.98) 0%,
+    rgba(0, 0, 0, 0.72) 22%,
+    rgba(0, 0, 0, 0.38) 45%,
+    rgba(0, 0, 0, 0.14) 65%,
+    transparent 88%
+  );
 
   /* Carved-material card — near-black neutral base, only a whisper of warmth
      so the material reads on close look, never as brown. */

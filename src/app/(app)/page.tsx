@@ -79,14 +79,19 @@ function HeroBanner() {
       </div>
 
       {/* Stats drop toward the cards, leaving a little breathing space above. A
-          soft shadow pools behind them and fades upward so they read clearly. */}
+          soft shadow RISES from the card line below the stats and fades upward
+          (darkest at the bottom, dissolving before the copy above) — not a
+          block behind them. */}
       <div className="relative mt-auto">
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-x-0 bottom-[-14%] top-[-70%] max-w-3xl"
+          className="pointer-events-none absolute -left-[8%] -right-[8%] -bottom-[45%] -top-[150%]"
           style={{
-            background:
-              "radial-gradient(78% 150% at 50% 100%, var(--hero-stat-shadow), transparent 70%)",
+            background: "var(--hero-stat-grad)",
+            maskImage:
+              "linear-gradient(to right, transparent 0%, #000 15%, #000 72%, transparent 100%)",
+            WebkitMaskImage:
+              "linear-gradient(to right, transparent 0%, #000 15%, #000 72%, transparent 100%)",
           }}
         />
         <div className="relative grid max-w-3xl grid-cols-2 gap-y-8 sm:grid-cols-4">
