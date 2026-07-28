@@ -61,7 +61,7 @@ function HeroBanner() {
   // No image here — the oracle face is the page background (PageBackground).
   // This is just the text + stats floating over it.
   return (
-    <section className="min-h-[360px] pt-3 sm:min-h-[420px]">
+    <section className="min-h-[300px] pt-3 sm:min-h-[330px]">
       <p className="text-sm text-ink-muted">Welcome back,</p>
       <h1 className="mt-1 flex items-center gap-2.5 font-display text-5xl font-medium text-ink sm:text-6xl">
         {user.name}
