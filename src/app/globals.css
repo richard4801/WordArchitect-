@@ -50,11 +50,11 @@
      left for the welcome text). Light and dark are matched crops, so a single
      cover/position works for both and nothing shifts on theme toggle. */
   --hero: url("/hero-light.png");
-  /* No zoom — the art fills the width at its native crop (cover) and only
-     pans vertically so the eye sits toward the middle. The face lands on the
-     right on its own. Shared by both matched crops. */
-  --hero-size: cover;
-  --hero-pos: 50% 82%;
+  /* Zoomed OUT below full-width so the whole face reads at a smaller scale,
+     pinned to the right; the empty gap falls on the left where it matches the
+     canvas tone. Shared by both matched crops so nothing shifts on toggle. */
+  --hero-size: 72%;
+  --hero-pos: right 25%;
   --wash-rgb: 250, 248, 245;
   --hero-lower-bright: 1.08;
   --grain-opacity: 0.3;
@@ -110,8 +110,8 @@
   --hero: url("/hero-dark.png");
   /* Matched crop of the light art — same cover/position frames the eye
      identically and the face stays put on theme toggle. */
-  --hero-size: cover;
-  --hero-pos: 50% 82%;
+  --hero-size: 72%;
+  --hero-pos: right 25%;
   --wash-rgb: 10, 10, 11; /* near-black neutral, matches canvas */
   --hero-lower-bright: 0.32;
   --grain-opacity: 0.5;

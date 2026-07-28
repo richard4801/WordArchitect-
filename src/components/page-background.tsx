@@ -16,13 +16,20 @@ export function PageBackground() {
       className="pointer-events-none absolute inset-0 -z-50 overflow-hidden"
       style={{ backgroundColor: "var(--canvas)" }}
     >
-      {/* Landscape hero, pinned to the top and spanning the full width */}
+      {/* Landscape hero, pinned to the top and spanning the full width. Because
+          the art is scaled below full width, a soft radial mask centred on the
+          face feathers the left/top/bottom edges into transparency so the image
+          dissolves into the canvas instead of showing a hard rectangle. */}
       <div
         className="absolute inset-x-0 top-0 h-[74vh] bg-no-repeat"
         style={{
           backgroundImage: "var(--hero)",
           backgroundPosition: "var(--hero-pos)",
           backgroundSize: "var(--hero-size)",
+          maskImage:
+            "radial-gradient(120% 135% at 80% 42%, #000 50%, rgba(0,0,0,0.4) 76%, transparent 100%)",
+          WebkitMaskImage:
+            "radial-gradient(120% 135% at 80% 42%, #000 50%, rgba(0,0,0,0.4) 76%, transparent 100%)",
         }}
       />
 
