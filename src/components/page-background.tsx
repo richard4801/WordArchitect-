@@ -16,12 +16,12 @@ export function PageBackground() {
       className="pointer-events-none absolute inset-0 -z-50 overflow-hidden"
       style={{ backgroundColor: "var(--canvas)" }}
     >
-      {/* Landscape hero, pinned to the top and spanning the full width. The art
-          is scaled below full width, so it has real edges inside the viewport.
-          Two intersecting gradient masks (horizontal × vertical) feather every
-          exposed edge — left, top and bottom — to transparent *before* the
-          image's real boundary, so it dissolves into the canvas with no hard
-          line or top cut-off. The right edge bleeds off-screen. */}
+      {/* Landscape hero, scaled below full width and pinned to the right. It
+          BLEEDS off the top edge (position runs the art past the top) so there
+          is no canvas strip above it to mismatch — the head fills to the top of
+          the page with no seam and no black cover-up. Two intersecting masks
+          feather only the LEFT and BOTTOM edges into the canvas; the top and
+          right bleed off-screen. */}
       <div
         className="absolute inset-x-0 top-0 h-[74vh] bg-no-repeat"
         style={{
@@ -29,24 +29,11 @@ export function PageBackground() {
           backgroundPosition: "var(--hero-pos)",
           backgroundSize: "var(--hero-size)",
           maskImage:
-            "linear-gradient(to right, transparent 16%, #000 42%), linear-gradient(to bottom, transparent 0%, #000 12%, #000 74%, transparent 96%)",
+            "linear-gradient(to right, transparent 16%, #000 42%), linear-gradient(to bottom, #000 0%, #000 74%, transparent 96%)",
           maskComposite: "intersect",
           WebkitMaskImage:
-            "linear-gradient(to right, transparent 16%, #000 42%), linear-gradient(to bottom, transparent 0%, #000 12%, #000 74%, transparent 96%)",
+            "linear-gradient(to right, transparent 16%, #000 42%), linear-gradient(to bottom, #000 0%, #000 74%, transparent 96%)",
           WebkitMaskComposite: "source-in",
-        }}
-      />
-
-      {/* Top fade: paint the page's canvas over the image's upper edge and
-          dissolve it down before the face. The mask only feathers *opacity*,
-          which still blends the image's lighter-than-canvas backdrop into a
-          faint haze near the top; this tones the top to the exact canvas colour
-          so the hero laps seamlessly into the page under the header. */}
-      <div
-        className="absolute inset-0"
-        style={{
-          background:
-            "linear-gradient(to bottom, var(--canvas) 0%, rgba(var(--wash-rgb),0.85) 7%, rgba(var(--wash-rgb),0) 26%)",
         }}
       />
 

@@ -54,10 +54,12 @@
      pinned to the right; the empty gap falls on the left where it matches the
      canvas tone. Shared by both matched crops so nothing shifts on toggle. */
   --hero-size: 72%;
-  --hero-pos: right 25%;
+  --hero-pos: right top;
   --wash-rgb: 250, 248, 245;
   --hero-lower-bright: 1.08;
   --grain-opacity: 0.3;
+  /* Soft pool behind the hero stats so they read on the image (light halo). */
+  --hero-stat-shadow: rgba(250, 248, 245, 0.75);
 
   /* Carved-material card */
   --card-top: #ffffff;
@@ -111,10 +113,12 @@
   /* Matched crop of the light art — same cover/position frames the eye
      identically and the face stays put on theme toggle. */
   --hero-size: 72%;
-  --hero-pos: right 25%;
+  --hero-pos: right top;
   --wash-rgb: 10, 10, 11; /* near-black neutral, matches canvas */
   --hero-lower-bright: 0.32;
   --grain-opacity: 0.5;
+  /* Dark pool behind the hero stats that spreads up and fades out (mockup). */
+  --hero-stat-shadow: rgba(0, 0, 0, 0.62);
 
   /* Carved-material card — near-black neutral base, only a whisper of warmth
      so the material reads on close look, never as brown. */
@@ -272,19 +276,23 @@ body {
       var(--card-inner-shadow);
   }
 
-  /* Raised, carved control chip — a small elevated button (header search /
-     bell / theme toggle) that stays visible sitting over the hero image. */
+  /* Translucent control chip — a small frosted button (header search / bell /
+     theme toggle) that stays visible over the hero image while letting it show
+     through, as in the mockup: semi-opaque fill + blur, not a solid disc. */
   .btn-raised {
-    background: linear-gradient(180deg, var(--card-top) 0%, var(--card-bottom) 100%);
+    background: rgba(var(--wash-rgb), 0.4);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     border: 1px solid var(--card-border-hover);
     box-shadow:
-      0 4px 14px rgba(0, 0, 0, 0.3),
+      0 4px 14px rgba(0, 0, 0, 0.22),
       inset 0 1px 0 var(--card-highlight);
   }
   .btn-raised:hover {
+    background: rgba(var(--wash-rgb), 0.55);
     border-color: var(--line-strong);
     box-shadow:
-      0 6px 18px rgba(0, 0, 0, 0.42),
+      0 6px 18px rgba(0, 0, 0, 0.32),
       inset 0 1px 0 var(--card-highlight);
   }
 

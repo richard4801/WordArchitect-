@@ -61,33 +61,44 @@ function HeroBanner() {
   // No image here — the oracle face is the page background (PageBackground).
   // This is just the text + stats floating over it.
   return (
-    <section className="min-h-[300px] pt-3 sm:min-h-[330px]">
-      <p className="text-sm text-ink-muted">Welcome back,</p>
-      <h1 className="mt-1 flex items-center gap-2.5 font-display text-5xl font-medium text-ink sm:text-6xl">
-        {user.name}
-        <span className="flex items-center gap-1 text-gold">
-          <Sparkle className="size-4" />
-          <Sparkle className="size-5" />
-        </span>
-      </h1>
+    <section className="flex min-h-[340px] flex-col pt-6 sm:min-h-[380px]">
+      <div>
+        <p className="text-base text-ink-muted">Welcome back,</p>
+        <h1 className="mt-1 flex items-center gap-3 font-display text-6xl font-medium text-ink sm:text-7xl">
+          {user.name}
+          <span className="flex items-center gap-1 text-gold">
+            <Sparkle className="size-5" />
+            <Sparkle className="size-6" />
+          </span>
+        </h1>
 
-      <blockquote className="mt-5 max-w-[15rem] font-display text-xl italic leading-snug text-ink-muted sm:max-w-xs">
-        &ldquo;{user.quote.text}&rdquo;
-      </blockquote>
-      <p className="mt-3 text-sm text-ink-faint">– {user.quote.attribution}</p>
+        <blockquote className="mt-6 max-w-sm font-display text-2xl italic leading-snug text-ink-muted">
+          &ldquo;{user.quote.text}&rdquo;
+        </blockquote>
+        <p className="mt-3 text-sm text-ink-faint">– {user.quote.attribution}</p>
+      </div>
 
-      <div className="mt-10 grid max-w-2xl grid-cols-2 gap-y-6 sm:grid-cols-4">
-        {headlineStats.map((stat, i) => (
-          <div
-            key={stat.label}
-            className={i > 0 ? "sm:border-l sm:border-line sm:pl-5" : ""}
-          >
-            <div className="font-display text-3xl font-semibold text-gilded">
-              {stat.value}
+      {/* Stats drop toward the cards, leaving a little breathing space above. A
+          soft shadow pools behind them and fades upward so they read clearly. */}
+      <div className="relative mt-auto">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-[-14%] top-[-70%] max-w-3xl"
+          style={{
+            background:
+              "radial-gradient(78% 150% at 50% 100%, var(--hero-stat-shadow), transparent 70%)",
+          }}
+        />
+        <div className="relative grid max-w-3xl grid-cols-2 gap-y-8 sm:grid-cols-4">
+          {headlineStats.map((stat) => (
+            <div key={stat.label} className="text-center">
+              <div className="font-display text-3xl font-semibold text-gilded">
+                {stat.value}
+              </div>
+              <div className="label-caps mt-1">{stat.label}</div>
             </div>
-            <div className="label-caps mt-1">{stat.label}</div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </section>
   );
