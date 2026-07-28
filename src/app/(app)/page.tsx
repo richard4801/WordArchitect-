@@ -72,7 +72,7 @@ function HeroBanner() {
           </span>
         </h1>
 
-        <blockquote className="mt-6 max-w-sm font-display text-2xl italic leading-snug text-ink-muted">
+        <blockquote className="mt-5 max-w-xs font-display text-lg italic leading-snug text-ink-muted">
           &ldquo;{user.quote.text}&rdquo;
         </blockquote>
         <p className="mt-3 text-sm text-ink-faint">– {user.quote.attribution}</p>
@@ -95,8 +95,11 @@ function HeroBanner() {
           }}
         />
         <div className="relative grid max-w-3xl grid-cols-2 gap-y-8 sm:grid-cols-4">
-          {headlineStats.map((stat) => (
-            <div key={stat.label} className="text-center">
+          {headlineStats.map((stat, i) => (
+            <div
+              key={stat.label}
+              className={`text-center ${i > 0 ? "sm:border-l sm:border-line" : ""}`}
+            >
               <div className="font-num text-3xl font-semibold text-gilded">
                 {stat.value}
               </div>
