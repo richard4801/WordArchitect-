@@ -1,52 +1,47 @@
 /**
- * Full-page dashboard background.
+ * Full-width landscape hero background.
  *
- * A single sharp image of the oracle face, anchored upper-right, that
- * dissolves *seamlessly* into the dark canvas on every side via a large, soft
- * radial mask — no second image layer and no hard edge, so it reads as the
- * page's own backdrop rather than a pasted-in element. The layer is `absolute`
- * so it scrolls with the page (hero text and image move together). Two gentle
- * washes keep the hero text legible and settle the lower page to flat canvas.
- *
- * Positioning is per-theme (`--hero-pos`) so the light and dark crops frame
- * the eye in the same place.
+ * The art is a single 16:9 crop with the oracle face composed on the right and
+ * open, near-canvas-toned space on the left — so the "Welcome back" text sits
+ * over quiet space and the face falls to the right on its own. Light and dark
+ * are matched crops, so one cover/position serves both and nothing moves when
+ * the theme is toggled. The image occupies the top band of the page and melts
+ * into the flat canvas below (where the cards sit) via a bottom fade; a soft
+ * left-side wash keeps the hero text legible.
  */
 export function PageBackground() {
-  const mask =
-    "radial-gradient(63% 58% at 55% 45%, #000 28%, rgba(0,0,0,0.35) 60%, transparent 84%)";
   return (
     <div
       aria-hidden
       className="pointer-events-none absolute inset-0 -z-50 overflow-hidden"
       style={{ backgroundColor: "var(--canvas)" }}
     >
-      {/* Sharp face, dissolving into the canvas on all sides */}
+      {/* Landscape hero, pinned to the top and spanning the full width */}
       <div
-        className="absolute right-0 top-0 h-[94vh] w-[64%] bg-no-repeat"
+        className="absolute inset-x-0 top-0 h-[74vh] bg-no-repeat"
         style={{
           backgroundImage: "var(--hero)",
           backgroundPosition: "var(--hero-pos)",
-          backgroundSize: "var(--hero-size, cover)",
-          maskImage: mask,
-          WebkitMaskImage: mask,
+          backgroundSize: "var(--hero-size)",
         }}
       />
 
-      {/* Left wash: darken the left so hero text stays legible */}
+      {/* Left wash: settle the text area toward canvas so the welcome copy stays
+          legible over the quiet side of the image */}
       <div
         className="absolute inset-0"
         style={{
           background:
-            "linear-gradient(90deg, var(--canvas) 0%, rgba(var(--wash-rgb),0.7) 22%, rgba(var(--wash-rgb),0) 50%)",
+            "linear-gradient(90deg, var(--canvas) 0%, rgba(var(--wash-rgb),0.55) 18%, rgba(var(--wash-rgb),0) 44%)",
         }}
       />
 
-      {/* Bottom fade: settle the lower page to flat canvas under the cards */}
+      {/* Bottom fade: dissolve the hero into flat canvas beneath the cards */}
       <div
         className="absolute inset-0"
         style={{
           background:
-            "linear-gradient(to bottom, transparent 0, transparent 40vh, rgba(var(--wash-rgb),0.55) 60vh, var(--canvas) 80vh)",
+            "linear-gradient(to bottom, transparent 0, transparent 34vh, rgba(var(--wash-rgb),0.6) 52vh, var(--canvas) 70vh)",
         }}
       />
     </div>

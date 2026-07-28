@@ -46,14 +46,15 @@
   --low: #a09487;
 
   /* Hero compositing */
+  /* Full landscape hero art (face composed on the right, open space on the
+     left for the welcome text). Light and dark are matched crops, so a single
+     cover/position works for both and nothing shifts on theme toggle. */
   --hero: url("/hero-light.png");
-  /* Eye framing: the light crop (1024x1536, eye at ~53%/52%) is scaled DOWN
-     to 72% (a downscale — keeps the face crisp, never upscaled/blurred) and
-     positioned so the astrolabe iris lands at the exact same screen point as
-     the dark crop — the eye sits centred in the hero band and the face does
-     not move when the theme is toggled. Matches the mockup's zoom level. */
-  --hero-size: 72%;
-  --hero-pos: 78.3% 190%;
+  /* Slight zoom past cover gives horizontal room; anchoring left (negative X)
+     pushes the face/eye toward the right, and the Y raises the eye to the
+     vertical middle of the hero band. Shared by both matched crops. */
+  --hero-size: 117%;
+  --hero-pos: -5% 61%;
   --wash-rgb: 250, 248, 245;
   --hero-lower-bright: 1.08;
   --grain-opacity: 0.3;
@@ -104,14 +105,13 @@
   --low: #a09487;
 
   /* Hero compositing */
-  --hero: url("/hero-dark.jpg");
-  /* Eye framing: the dark crop (736x1313, eye at ~56%/50%) is scaled DOWN to
-     64% (a downscale of the source — crisp, never upscaled/blurred) and
-     positioned so the astrolabe iris lands at the exact same screen point as
-     the light crop: eye centred in the hero band, face steady across the
-     theme toggle. Matches the mockup's zoom level. */
-  --hero-size: 64%;
-  --hero-pos: 67.2% 138.7%;
+  /* Full landscape hero art — matched crop of the light version, so cover +
+     position are shared across both themes and the face stays put on toggle. */
+  --hero: url("/hero-dark.png");
+  /* Matched crop of the light art, so the same zoom/position frames the eye
+     identically and the face stays put on theme toggle. */
+  --hero-size: 117%;
+  --hero-pos: -5% 61%;
   --wash-rgb: 10, 10, 11; /* near-black neutral, matches canvas */
   --hero-lower-bright: 0.32;
   --grain-opacity: 0.5;
