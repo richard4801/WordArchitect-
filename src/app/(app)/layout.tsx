@@ -22,14 +22,14 @@ export default function AppLayout({
           <button
             type="button"
             aria-label="Search"
-            className="grid size-9 place-items-center rounded-full border border-line text-ink-muted transition-colors hover:text-gold hover:border-line-strong"
+            className="btn-raised grid size-9 place-items-center rounded-full text-ink-muted transition-all hover:text-gold"
           >
             <Search className="size-4" />
           </button>
           <button
             type="button"
             aria-label="Notifications"
-            className="grid size-9 place-items-center rounded-full border border-line text-ink-muted transition-colors hover:text-gold hover:border-line-strong"
+            className="btn-raised grid size-9 place-items-center rounded-full text-ink-muted transition-all hover:text-gold"
           >
             <Bell className="size-4" />
           </button>

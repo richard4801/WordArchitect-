@@ -53,8 +53,8 @@
   /* Slight zoom past cover gives horizontal room; anchoring left (negative X)
      pushes the face/eye toward the right, and the Y raises the eye to the
      vertical middle of the hero band. Shared by both matched crops. */
-  --hero-size: 117%;
-  --hero-pos: -5% 61%;
+  --hero-size: 108%;
+  --hero-pos: -45% 53%;
   --wash-rgb: 250, 248, 245;
   --hero-lower-bright: 1.08;
   --grain-opacity: 0.3;
@@ -110,8 +110,8 @@
   --hero: url("/hero-dark.png");
   /* Matched crop of the light art, so the same zoom/position frames the eye
      identically and the face stays put on theme toggle. */
-  --hero-size: 117%;
-  --hero-pos: -5% 61%;
+  --hero-size: 108%;
+  --hero-pos: -45% 53%;
   --wash-rgb: 10, 10, 11; /* near-black neutral, matches canvas */
   --hero-lower-bright: 0.32;
   --grain-opacity: 0.5;
@@ -270,6 +270,22 @@ body {
       var(--card-shadow-hover),
       inset 0 1px 0 var(--card-highlight),
       var(--card-inner-shadow);
+  }
+
+  /* Raised, carved control chip — a small elevated button (header search /
+     bell / theme toggle) that stays visible sitting over the hero image. */
+  .btn-raised {
+    background: linear-gradient(180deg, var(--card-top) 0%, var(--card-bottom) 100%);
+    border: 1px solid var(--card-border-hover);
+    box-shadow:
+      0 4px 14px rgba(0, 0, 0, 0.3),
+      inset 0 1px 0 var(--card-highlight);
+  }
+  .btn-raised:hover {
+    border-color: var(--line-strong);
+    box-shadow:
+      0 6px 18px rgba(0, 0, 0, 0.42),
+      inset 0 1px 0 var(--card-highlight);
   }
 
   .text-gilded {
