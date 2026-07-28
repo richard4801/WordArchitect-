@@ -37,6 +37,19 @@ export function PageBackground() {
         }}
       />
 
+      {/* Top fade: paint the page's canvas over the image's upper edge and
+          dissolve it down before the face. The mask only feathers *opacity*,
+          which still blends the image's lighter-than-canvas backdrop into a
+          faint haze near the top; this tones the top to the exact canvas colour
+          so the hero laps seamlessly into the page under the header. */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background:
+            "linear-gradient(to bottom, var(--canvas) 0%, rgba(var(--wash-rgb),0.85) 7%, rgba(var(--wash-rgb),0) 26%)",
+        }}
+      />
+
       {/* Left wash: settle the text area toward canvas so the welcome copy stays
           legible over the quiet side of the image */}
       <div
