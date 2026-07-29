@@ -126,15 +126,19 @@
   --wash-rgb: 10, 10, 11; /* near-black neutral, matches canvas */
   --hero-lower-bright: 0.32;
   --grain-opacity: 0.5;
-  /* Full-bleed vertical shadow that grounds the hero stats (dark). It fades in
-     above the stats and STAYS dark from the stats down to the page's end, so
-     its origin/bottom edge is never visible; full-bleed = no side edge. */
+  /* Full-bleed vertical shadow that grounds the hero stats (dark). Over the
+     visible band (above the cards) it's only a translucent veil so the face
+     still reads through it as it fades up; it goes fully dark below the stats
+     (behind the opaque cards) and STAYS dark to the page's end, so its
+     origin/bottom edge is never visible. Full-bleed = no side edge. */
   --hero-stat-grad: linear-gradient(
     to bottom,
-    transparent 22vh,
-    rgba(0, 0, 0, 0.34) 40vh,
-    rgba(0, 0, 0, 0.92) 50vh,
-    rgba(0, 0, 0, 0.92) 100%
+    transparent 20vh,
+    rgba(0, 0, 0, 0.18) 34vh,
+    rgba(0, 0, 0, 0.42) 45vh,
+    rgba(0, 0, 0, 0.62) 51vh,
+    rgba(0, 0, 0, 0.9) 57vh,
+    rgba(0, 0, 0, 0.9) 100%
   );
 
   /* Carved-material card — near-black neutral base, only a whisper of warmth
