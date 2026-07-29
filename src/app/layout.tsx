@@ -15,18 +15,17 @@ const jost = localFont({
   ],
 });
 
-const playfair = localFont({
-  variable: "--font-playfair",
+// Cormorant Garamond — headings/display. A refined, moderate-contrast
+// old-style Garamond that matches the mockup, in place of Playfair's dramatic
+// Didone. Italics back the pull-quote.
+const cormorant = localFont({
+  variable: "--font-cormorant",
   display: "swap",
   src: [
-    { path: "../fonts/playfair-display-latin-400-normal.woff2", weight: "400", style: "normal" },
-    { path: "../fonts/playfair-display-latin-400-italic.woff2", weight: "400", style: "italic" },
-    { path: "../fonts/playfair-display-latin-500-normal.woff2", weight: "500", style: "normal" },
-    { path: "../fonts/playfair-display-latin-500-italic.woff2", weight: "500", style: "italic" },
-    { path: "../fonts/playfair-display-latin-600-normal.woff2", weight: "600", style: "normal" },
-    { path: "../fonts/playfair-display-latin-600-italic.woff2", weight: "600", style: "italic" },
-    { path: "../fonts/playfair-display-latin-700-normal.woff2", weight: "700", style: "normal" },
-    { path: "../fonts/playfair-display-latin-700-italic.woff2", weight: "700", style: "italic" },
+    { path: "../fonts/cormorant-garamond-latin-500-normal.woff2", weight: "500", style: "normal" },
+    { path: "../fonts/cormorant-garamond-latin-500-italic.woff2", weight: "500", style: "italic" },
+    { path: "../fonts/cormorant-garamond-latin-600-normal.woff2", weight: "600", style: "normal" },
+    { path: "../fonts/cormorant-garamond-latin-600-italic.woff2", weight: "600", style: "italic" },
   ],
 });
 
@@ -57,7 +56,7 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${jost.variable} ${playfair.variable} ${cinzel.variable} h-full antialiased`}
+      className={`${jost.variable} ${cormorant.variable} ${cinzel.variable} h-full antialiased`}
     >
       <body className="min-h-full">
         <ThemeProvider>{children}</ThemeProvider>

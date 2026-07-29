@@ -14,12 +14,13 @@ are implemented as CSS variables in `src/app/globals.css` (light under
 
 | Role     | Font              | Notes                                             |
 | -------- | ----------------- | ------------------------------------------------- |
-| Headings | **Playfair Display** | Page titles, section headings, large display text |
-| Body/UI  | **Inter**         | Body, labels, buttons, captions, navigation       |
+| Headings | **Cormorant Garamond** | Page titles, section headings, large display text (refined old-style Garamond, matches the mockup) |
+| Body/UI  | **Jost**          | Body, labels, buttons, captions, navigation (geometric-elegant sans) |
+| Numbers  | **Cinzel**        | Big display numerals only (hero stats, ring %) — calm upright figures |
 
-Inter weights in use: Light, Regular, Medium, Semi Bold, Bold. Fonts are
-self-hosted under `src/fonts/` (loaded via `next/font/local`) — no external
-requests. Utility: `.font-display` applies Playfair; body defaults to Inter.
+Fonts are self-hosted under `src/fonts/` (loaded via `next/font/local`) — no
+external requests (Google Fonts is proxy-blocked). Utilities: `.font-display`
+applies Cormorant Garamond, `.font-num` applies Cinzel; body defaults to Jost.
 
 ## Primary colours
 

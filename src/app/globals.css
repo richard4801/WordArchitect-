@@ -4,7 +4,7 @@
   WordArchitect design system
   ==========================================================================
   Colour codes come from the project's official color system (see
-  DESIGN_SYSTEM.md and resources/design-system.png). Fonts: Playfair Display
+  DESIGN_SYSTEM.md and resources/design-system.png). Fonts: Cormorant Garamond
   (headings) + Jost (UI) + Cinzel (display numerals). The oracle hero image is
   the page background;
   surfaces are "carved" material panels (obsidian / smoked walnut / aged
@@ -181,7 +181,7 @@
   --color-low: var(--low);
 
   --font-sans: var(--font-jost);
-  --font-serif: var(--font-playfair);
+  --font-serif: var(--font-cormorant);
 }
 
 html {
@@ -203,7 +203,7 @@ body {
 
 @layer utilities {
   .font-display {
-    font-family: var(--font-playfair), Georgia, "Times New Roman", serif;
+    font-family: var(--font-cormorant), Georgia, "Times New Roman", serif;
   }
 
   /* Display numerals — Cinzel: calm, upright figures (no dancing 6/9). */

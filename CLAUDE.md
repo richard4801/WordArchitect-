@@ -78,7 +78,7 @@ src/
       types.ts           # AiProvider contract (vendor-agnostic)
       index.ts           # provider registry + getAiProvider()
       providers/anthropic.ts
-  fonts/                 # self-hosted .woff2 (Playfair, Jost, Cinzel)
+  fonts/                 # self-hosted .woff2 (Cormorant Garamond, Jost, Cinzel)
 public/
   hero-dark.png hero-light.png   # the hero artwork actually used at runtime
 resources/
@@ -99,13 +99,13 @@ DESIGN_SYSTEM.md         # full visual spec (colours, fonts, materials)
   image. Light mode canvas is off-white `#faf8f5`. If it ever looks "brown,"
   it's wrong.
 - **Fonts (three):**
-  - **Playfair Display** — headings (`.font-display`, `--font-playfair`).
+  - **Cormorant Garamond** — headings (`.font-display`, `--font-cormorant`); a refined old-style Garamond matching the mockup (replaced Playfair, whose dramatic Didone did not match).
   - **Jost** — all body/UI text (`--font-jost`, wired to `--font-sans` and
-    `body`). Chosen because a geometric-elegant sans complements the
-    high-contrast serif; a neutral grotesk (Inter/Poppins) read as generic and
-    was rejected.
+    `body`). Chosen because a geometric-elegant sans complements the elegant
+    serif headings; a neutral grotesk (Inter/Poppins) read as generic and was
+    rejected.
   - **Cinzel** — big display **numbers only** (`.font-num`: hero stats, ring
-    %). Playfair's numerals have "dancing" oldstyle 6/9; Cinzel's are calm and
+    %). Playfair-style serif numerals "dance" (oldstyle 6/9); Cinzel's are calm and
     upright.
 - **Cards are a "carved material"** (obsidian / smoked walnut / aged bronze),
   never flat or frosted: vertical gradient, bronze-glow border, inner
@@ -145,7 +145,8 @@ build. All fonts are therefore **self-hosted**:
    `--font-*` CSS variable)
 4. reference the variable in `globals.css`.
 
-Current: Playfair (400–700, normal+italic), Jost (400/500/600), Cinzel (500/600).
+Current: Cormorant Garamond (500/600, normal+italic), Jost (400/500/600),
+Cinzel (500/600).
 
 ## 7. AI provider abstraction
 
