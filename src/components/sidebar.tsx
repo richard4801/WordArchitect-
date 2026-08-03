@@ -13,25 +13,26 @@ export function Sidebar() {
 
   return (
     <aside
-      className="fixed left-0 top-0 z-20 hidden h-dvh w-[264px] flex-col border-r border-line lg:flex"
+      // Forced to the dark palette regardless of the app's light/dark toggle:
+      // the artwork below is a dark, gold-inked panel, so the sidebar's own
+      // text/border/card colours must stay the dark-theme values to read on
+      // it. `.dark` here re-applies every `--var` the dark theme block sets,
+      // scoped to this subtree only (see globals.css `.dark { ... }`).
+      className="dark fixed left-0 top-0 z-20 hidden h-dvh w-[264px] flex-col border-r border-line lg:flex"
       style={{
         position: "fixed",
-        background: "linear-gradient(180deg, var(--elevated) 0%, var(--canvas) 100%)",
-        boxShadow: "inset -1px 0 0 var(--card-highlight)",
+        // The ornate astrolabe/constellation panel (resources/sidebar-bg.webp)
+        // was authored to the sidebar's proportions: corner flourishes anchor
+        // to the four corners, and its near-black fill matches the app canvas.
+        // Stretched 100%/100% so those corners always land exactly on the
+        // sidebar's actual corners regardless of viewport height.
+        backgroundImage: "url(/sidebar-bg.webp)",
+        backgroundSize: "100% 100%",
+        backgroundPosition: "top left",
+        backgroundRepeat: "no-repeat",
+        backgroundColor: "#0a0a0b",
       }}
     >
-      {/* Grain texture behind the sidebar content */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0"
-        style={{
-          zIndex: -1,
-          backgroundImage: "var(--grain-url)",
-          backgroundSize: "180px 180px",
-          opacity: "var(--grain-opacity)",
-          mixBlendMode: "soft-light",
-        }}
-      />
       {/* Logo */}
       <div className="px-7 pt-8 pb-6">
         <div className="flex flex-col items-start gap-2">
