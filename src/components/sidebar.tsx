@@ -33,6 +33,16 @@ export function Sidebar() {
         backgroundColor: "#0a0a0b",
       }}
     >
+      {/* Darkening overlay: a flat black wash over the artwork so the sidebar
+          reads darker while the gold constellation linework still shows
+          through (plain opacity, not a blend mode, so it stays a true tint
+          rather than crushing the gold to grey). */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{ zIndex: -1, backgroundColor: "#000000", opacity: 0.45 }}
+      />
+
       {/* Logo */}
       <div className="px-7 pt-8 pb-6">
         <div className="flex flex-col items-start gap-2">
