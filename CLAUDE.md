@@ -17,9 +17,13 @@ writer's side). Tagline: **"Write. Craft. Conquer."**
   "NovelCrafter" in the product.
 - Live on Vercel: **word-architect-three.vercel.app** (auto-deploys on every
   push to the working branch).
-- Current state: the **dashboard/home page is built and polished**. All other
+- Current state: **Dashboard and Projects are built and polished**. All other
   nav destinations are stubbed with `<ComingSoon>` and get built out as their
   mockups arrive.
+- **The oracle-face hero background is dashboard-only.** It does not appear on
+  Projects or any other page — confirmed explicitly against the Projects
+  mockup. See §4/§5 (`(app)/layout.tsx` gates `<PageBackground />` on
+  `pathname === "/"`).
 
 ## 2. Tech stack
 
@@ -52,15 +56,21 @@ src/
   app/
     layout.tsx           # root: loads fonts, ThemeProvider, <html> classes
     globals.css          # design tokens + Tailwind v4 config + utilities  ← the design system lives here
-    (app)/               # authenticated app shell (route group)
-      layout.tsx         # PageBackground + Sidebar + <header> (search/bell/theme) + <main>
-      page.tsx           # DASHBOARD (the built page). Hero, stats, cards.
+    (app)/               # authenticated app shell (route group) — "use client"
+                         #   (needs usePathname to gate the hero, see below)
+      layout.tsx         # Sidebar + <header> (search/bell/theme) + <main>.
+                         #   Renders <PageBackground /> ONLY when pathname === "/".
+      page.tsx           # DASHBOARD (built). Hero, stats, 3 featured project cards.
+      projects/page.tsx  # PROJECTS (built). Search/filter/sort/tabs/pagination
+                         #   over the shared mock dataset + a stats right-rail.
       writing|characters|worldbuilding|outlines|notes|assistant|goals|
-        analytics|projects|projects/new|settings/page.tsx   # stubs → <ComingSoon>
+        analytics|projects/new|settings/page.tsx   # stubs → <ComingSoon>
     api/ai/route.ts      # POST endpoint that calls the AI provider
   components/
-    page-background.tsx  # full-bleed hero image + washes + the stat shadow
-    sidebar.tsx          # fixed left nav + profile panel
+    page-background.tsx  # full-bleed hero image + washes + the stat shadow (dashboard only)
+    sidebar.tsx          # fixed left nav + profile panel; ornate astrolabe artwork
+                         #   background (public/sidebar-bg.webp), pinned to the dark
+                         #   palette via a scoped `.dark` class regardless of app theme
     theme-provider.tsx   # next-themes wrapper
     theme-toggle.tsx     # sun/moon button (.btn-raised chip)
     brand-mark.tsx       # Sparkle + Sigil SVGs (NOTE: the old compass-star logo
@@ -73,16 +83,25 @@ src/
       section-heading.tsx
   lib/
     nav.ts               # sidebar nav items (label, href, lucide icon)
-    dashboard-data.ts    # mock data for the dashboard (user, stats, projects…)
+    dashboard-data.ts    # dashboard-only mock data (user, headline stats, tasks,
+                         #   activity); re-exports projects/Project from projects-data.ts
+    projects-data.ts     # SINGLE SOURCE OF TRUTH for project data — the richer
+                         #   Project type (logline, chapters/sessions, status
+                         #   active/completed/archived, active-only stage
+                         #   Active/Draft/Outline), the 12-project mock list,
+                         #   achievements, and derive helpers (status counts,
+                         #   active-project word stats, top-genre breakdown)
     ai/
       types.ts           # AiProvider contract (vendor-agnostic)
       index.ts           # provider registry + getAiProvider()
       providers/anthropic.ts
   fonts/                 # self-hosted .woff2 (Cormorant Garamond, Jost, Cinzel)
 public/
-  hero-dark.png hero-light.png   # the hero artwork actually used at runtime
+  hero-dark.png hero-light.png   # the hero artwork actually used at runtime (dashboard only)
+  sidebar-bg.webp        # ornate astrolabe/constellation sidebar background
 resources/
   dark.png light.png     # SOURCE hero art (matched 16:9 landscape crops of the oracle face)
+  sidebar-bg.webp        # SOURCE sidebar artwork (same file as public/, kept for record)
   design-system.png      # the official colour-system reference image
   README.md
 DESIGN_SYSTEM.md         # full visual spec (colours, fonts, materials)
@@ -132,6 +151,22 @@ DESIGN_SYSTEM.md         # full visual spec (colours, fonts, materials)
   - `vh` stops target the stats' on-screen position (stats sit ≈ 44–50vh at
     1440×900; re-probe if the hero height changes).
   - Dark mode = real dark pool; light mode = bounded soft halo.
+- **The hero background is dashboard-only** — every other page has a plain
+  canvas background, no oracle face. `(app)/layout.tsx` is a client component
+  (`usePathname`) that renders `<PageBackground />` only when
+  `pathname === "/"`. Don't move `<PageBackground />` back to being
+  unconditional in the shared layout.
+- **The sidebar is a fixed dark ornate panel, independent of the app theme.**
+  Its background is `public/sidebar-bg.webp` (an astrolabe/constellation
+  artwork sized to the sidebar's proportions, stretched `100%/100%` so its
+  corner flourishes always land on the sidebar's actual corners) plus a flat
+  ~45% black overlay to darken it further. Because that art is dark and
+  gold-inked, the `<aside>` also carries a literal `className="dark"` — this
+  re-applies every `.dark { --var: ... }` declaration from `globals.css`
+  scoped to that subtree only, so nav text/borders/the profile card stay
+  legible on the art *even when the rest of the app is in light mode* (a
+  persistent-dark-rail pattern, like Notion/Linear). Don't try to theme the
+  sidebar via the normal light/dark variables — it intentionally ignores them.
 
 ## 6. Fonts / the proxy gotcha (IMPORTANT)
 
