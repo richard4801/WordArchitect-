@@ -35,39 +35,11 @@ export const statsOverview = {
   ],
 };
 
-export type Project = {
-  id: string;
-  title: string;
-  genre: string;
-  words: number;
-  target: number;
-  active?: boolean;
-};
-
-export const projects: Project[] = [
-  {
-    id: "shadows-of-elarion",
-    title: "Shadows of Elarion",
-    genre: "Epic Fantasy",
-    words: 12450,
-    target: 25000,
-    active: true,
-  },
-  {
-    id: "bound-by-stars",
-    title: "Bound by Stars",
-    genre: "Romance · Fantasy",
-    words: 8230,
-    target: 20000,
-  },
-  {
-    id: "the-last-heir",
-    title: "The Last Heir",
-    genre: "Dark Fantasy",
-    words: 4100,
-    target: 15000,
-  },
-];
+// Single source of truth for project data lives in projects-data.ts (it also
+// backs the full /projects page); re-exported here so the dashboard's "Your
+// Projects" grid doesn't need a second import path.
+export type { Project } from "@/lib/projects-data";
+export { projects } from "@/lib/projects-data";
 
 export type Priority = "High" | "Medium" | "Low";
 

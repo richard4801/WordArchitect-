@@ -41,7 +41,11 @@ export default function DashboardPage() {
       </div>
 
       <section>
-        <SectionHeading title="Your Projects" actionLabel="View All" />
+        <SectionHeading
+          title="Your Projects"
+          actionLabel="View All"
+          actionHref="/projects"
+        />
         <ProjectsGrid />
       </section>
 
@@ -207,10 +211,14 @@ function StatsOverviewCard() {
 
 /* ------------------------------------------------------------ Projects --- */
 
+// Feature a handful of in-progress projects here; the full roster (with
+// search/filter/sort) lives on the dedicated /projects page.
+const FEATURED_PROJECTS = projects.filter((p) => p.status === "active").slice(0, 3);
+
 function ProjectsGrid() {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      {projects.map((project) => (
+      {FEATURED_PROJECTS.map((project) => (
         <ProjectCard key={project.id} project={project} />
       ))}
       <NewProjectCard />
@@ -224,7 +232,7 @@ function ProjectCard({ project }: { project: Project }) {
     <article className="card card-hover overflow-hidden">
       <div className="relative">
         <CoverArt seed={project.id} className="block aspect-[16/10] w-full" />
-        {project.active ? (
+        {project.stage === "Active" ? (
           <span className="absolute left-3 top-3 rounded-md bg-canvas/70 px-2 py-0.5 text-[0.6rem] font-semibold tracking-widest text-gold backdrop-blur">
             ACTIVE
           </span>
