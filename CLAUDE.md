@@ -17,9 +17,10 @@ writer's side). Tagline: **"Write. Craft. Conquer."**
   "NovelCrafter" in the product.
 - Live on Vercel: **word-architect-three.vercel.app** (auto-deploys on every
   push to the working branch).
-- Current state: **Dashboard and Projects are built and polished**. All other
-  nav destinations are stubbed with `<ComingSoon>` and get built out as their
-  mockups arrive.
+- Current state: **Dashboard, Projects, New Project, and the project detail
+  page's Overview tab are built and polished**. Every other destination
+  (including the detail page's other 6 tabs) is stubbed with `<ComingSoon>`
+  and gets built out as its mockup arrives.
 - **The oracle-face hero background is dashboard-only.** It does not appear on
   Projects or any other page — confirmed explicitly against the Projects
   mockup. See §4/§5 (`(app)/layout.tsx` gates `<PageBackground />` on
@@ -63,8 +64,18 @@ src/
       page.tsx           # DASHBOARD (built). Hero, stats, 3 featured project cards.
       projects/page.tsx  # PROJECTS (built). Search/filter/sort/tabs/pagination
                          #   over the shared mock dataset + a stats right-rail.
+      projects/new/page.tsx  # NEW PROJECT (built). Multi-section form; on submit,
+                         #   calls project-store's createProject() and redirects
+                         #   to the fake-created project's own page.
+      projects/[id]/layout.tsx  # PROJECT DETAIL shared chrome (built): back link,
+                         #   title/status/meta, Write Now, the 7-tab nav, and the
+                         #   right rail (cover, details, stats, quick actions).
+      projects/[id]/page.tsx    # Overview tab (built): description, manuscript
+                         #   progress ring, recent chapters, recent activity.
+      projects/[id]/{chapters,characters,world,outlines,notes,analytics}/page.tsx
+                         # the other 6 tabs — stubs → <ComingSoon>, same as main nav
       writing|characters|worldbuilding|outlines|notes|assistant|goals|
-        analytics|projects/new|settings/page.tsx   # stubs → <ComingSoon>
+        analytics|settings/page.tsx   # stubs → <ComingSoon>
     api/ai/route.ts      # POST endpoint that calls the AI provider
   components/
     page-background.tsx  # full-bleed hero image + washes + the stat shadow (dashboard only)
@@ -88,9 +99,21 @@ src/
     projects-data.ts     # SINGLE SOURCE OF TRUTH for project data — the richer
                          #   Project type (logline, chapters/sessions, status
                          #   active/completed/archived, active-only stage
-                         #   Active/Draft/Outline), the 12-project mock list,
-                         #   achievements, and derive helpers (status counts,
-                         #   active-project word stats, top-genre breakdown)
+                         #   Active/Draft/Outline, plus detail-page fields:
+                         #   created/pov/tense/language/deadline/tags/
+                         #   povCharacters/worldEntries), the 12-project mock
+                         #   list, achievements, and derive helpers (status
+                         #   counts, active-project word stats, top-genre
+                         #   breakdown, deriveRecentChapters/deriveRecentActivity —
+                         #   explicit data for shadows-of-elarion, generic
+                         #   fallback for every other project)
+    project-store.ts     # Reactive wrapper around projects-data's array
+                         #   (useSyncExternalStore) so /projects/new can
+                         #   fake-create a project (createProject()) and have
+                         #   it actually show up on /projects and its own
+                         #   /projects/[id] page — no backend, in-memory only,
+                         #   resets on a hard refresh. /projects reads through
+                         #   useProjects() from here, not the static import.
     ai/
       types.ts           # AiProvider contract (vendor-agnostic)
       index.ts           # provider registry + getAiProvider()
