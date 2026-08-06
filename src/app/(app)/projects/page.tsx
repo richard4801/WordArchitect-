@@ -376,25 +376,32 @@ function ProjectOverviewCard({
 }: {
   counts: ReturnType<typeof projectStatusCounts>;
 }) {
+  const stats = [
+    { value: counts.total, label: "Total Projects" },
+    { value: counts.active, label: "Active" },
+    { value: counts.completed, label: "Completed" },
+    { value: counts.archived, label: "Archived" },
+  ];
   return (
     <section className="card p-5">
       <h2 className="font-display text-lg text-ink">Project Overview</h2>
-      <div className="mt-4 grid grid-cols-2 gap-4">
-        <StatBlock value={counts.total} label="Total Projects" />
-        <StatBlock value={counts.active} label="Active" />
-        <StatBlock value={counts.completed} label="Completed" />
-        <StatBlock value={counts.archived} label="Archived" />
+      {/* A true 2x2 grid with a cross divider (border-r on the left column,
+          border-b on the top row) so the four cells read as compact, roughly
+          square boxes rather than numbers spread edge-to-edge. */}
+      <div className="mt-4 grid grid-cols-2 overflow-hidden rounded-xl border border-line">
+        {stats.map((s, i) => (
+          <div
+            key={s.label}
+            className={`aspect-square p-4 text-center ${
+              i % 2 === 0 ? "border-r border-line" : ""
+            } ${i < 2 ? "border-b border-line" : ""} flex flex-col items-center justify-center`}
+          >
+            <div className="font-num text-2xl text-gilded">{s.value}</div>
+            <div className="label-caps mt-0.5 text-[0.6rem]">{s.label}</div>
+          </div>
+        ))}
       </div>
     </section>
-  );
-}
-
-function StatBlock({ value, label }: { value: number; label: string }) {
-  return (
-    <div>
-      <div className="font-num text-2xl text-gilded">{value}</div>
-      <div className="label-caps mt-0.5 text-[0.62rem]">{label}</div>
-    </div>
   );
 }
 
@@ -403,7 +410,13 @@ function WordCountCard({ stats }: { stats: ReturnType<typeof activeWordStats> })
     <section className="card p-5">
       <h2 className="font-display text-lg text-ink">Word Count</h2>
       <div className="mt-4 flex justify-center">
-        <Ring value={stats.percent} label={`${stats.percent}%`} sublabel="of Goal" size={148} />
+        <Ring
+          value={stats.percent}
+          label={stats.written.toLocaleString()}
+          sublabel="Total Words"
+          size={152}
+          labelClassName="text-2xl"
+        />
       </div>
       <div className="mt-4 space-y-2 text-sm">
         <LegendRow color="var(--gold)" label="Written" value={stats.written.toLocaleString()} />
