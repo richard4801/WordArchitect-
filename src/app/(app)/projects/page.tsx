@@ -194,7 +194,7 @@ export default function ProjectsPage() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px] lg:items-start">
         <div className="space-y-4">
           {pageItems.length === 0 ? (
             <div className="card p-10 text-center text-sm text-ink-muted">
@@ -217,7 +217,13 @@ export default function ProjectsPage() {
           )}
         </div>
 
-        <aside className="space-y-6">
+        {/* Sticky + independently scrollable: pinned in the viewport while the
+            project list scrolls past it. If its own content is taller than the
+            space available, it gets its own scrollbar (max-height + overflow)
+            so you can scroll the rail without moving the list — and once
+            you've scrolled it to its own bottom, the scroll naturally falls
+            through to the page (default overscroll behaviour, no JS needed). */}
+        <aside className="scroll-slim space-y-6 lg:sticky lg:top-6 lg:max-h-[calc(100dvh-3rem)] lg:overflow-y-auto lg:pr-1">
           <ProjectOverviewCard counts={counts} />
           <WordCountCard stats={wordStats} />
           <TopGenresCard genres={genres} />
