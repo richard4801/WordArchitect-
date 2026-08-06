@@ -29,16 +29,17 @@ import {
   type Project,
   type ProjectStatus,
   primaryGenre,
-  projects,
   projectStatusCounts,
   topGenres,
 } from "@/lib/projects-data";
+import { useProjects } from "@/lib/project-store";
 
 const PER_PAGE = 6;
 type StatusFilter = "all" | ProjectStatus;
 type SortKey = "recent" | "title" | "progress" | "words";
 
 export default function ProjectsPage() {
+  const projects = useProjects();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [genreFilter, setGenreFilter] = useState("all");
@@ -52,7 +53,7 @@ export default function ProjectsPage() {
   const genres = topGenres(projects);
   const genreOptions = useMemo(
     () => [...new Set(projects.map((p) => primaryGenre(p.genre)))].sort(),
-    [],
+    [projects],
   );
 
   const filtered = useMemo(() => {
@@ -86,7 +87,7 @@ export default function ProjectsPage() {
         break;
     }
     return sorted;
-  }, [statusFilter, genreFilter, search, sort]);
+  }, [projects, statusFilter, genreFilter, search, sort]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
   const currentPage = Math.min(page, totalPages);
@@ -253,16 +254,22 @@ function ProjectRow({ project }: { project: Project }) {
   return (
     <article className="card card-hover p-4 sm:p-5">
       <div className="flex gap-4">
-        <div className="size-24 shrink-0 overflow-hidden rounded-xl border border-line sm:size-28">
+        <Link
+          href={`/projects/${project.id}`}
+          className="block size-24 shrink-0 overflow-hidden rounded-xl border border-line sm:size-28"
+        >
           <CoverArt seed={project.id} className="h-full w-full" />
-        </div>
+        </Link>
 
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2">
-              <h3 className="truncate font-display text-xl text-ink">
+              <Link
+                href={`/projects/${project.id}`}
+                className="truncate font-display text-xl text-ink transition-colors hover:text-gold"
+              >
                 {project.title}
-              </h3>
+              </Link>
               <span
                 className="shrink-0 rounded-full px-2 py-0.5 text-[0.6rem] font-semibold tracking-wider"
                 style={{

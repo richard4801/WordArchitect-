@@ -2,11 +2,28 @@
  * Placeholder projects data — stands in until the data layer (Prisma) and
  * auth are wired up. `dashboard-data.ts` re-exports `projects`/`Project` from
  * here so the dashboard's "Your Projects" grid and the full /projects page
- * share one source of truth.
+ * share one source of truth. `project-store.ts` wraps this array in a
+ * reactive, fake-create-capable store for the /projects and /projects/[id]
+ * pages.
  */
 
 export type ProjectStatus = "active" | "completed" | "archived";
 export type ProjectStage = "Active" | "Draft" | "Outline";
+
+export type ChapterEntry = {
+  number: number;
+  title: string;
+  words: number;
+};
+
+export type ProjectActivityKind = "wrote" | "character" | "world" | "session" | "note";
+
+export type ProjectActivityEntry = {
+  id: string;
+  kind: ProjectActivityKind;
+  text: string;
+  time: string;
+};
 
 export type Project = {
   id: string;
@@ -24,6 +41,21 @@ export type Project = {
   status: ProjectStatus;
   /** Only meaningful for status "active" — which badge/colour to show. */
   stage?: ProjectStage;
+
+  // ---- Detail-page-only fields (optional; the list/rail views ignore them) ----
+  /** Human label for "Created …" — projects-data's own dates, not real timestamps. */
+  created: string;
+  pov?: string;
+  tense?: string;
+  language?: string;
+  deadline?: string;
+  povCharacters?: number;
+  worldEntries?: number;
+  tags?: string[];
+  /** Explicit chapter list for the Overview tab; derived generically if absent. */
+  chapterList?: ChapterEntry[];
+  /** Explicit activity log for the Overview tab; derived generically if absent. */
+  activityLog?: ProjectActivityEntry[];
 };
 
 export const projects: Project[] = [
@@ -32,7 +64,7 @@ export const projects: Project[] = [
     title: "Shadows of Elarion",
     genre: "Epic Fantasy",
     logline:
-      "In a world where light is fading, an ancient prophecy awakens a forgotten bloodline.",
+      "In a world where light is fading, an ancient prophecy awakens a forgotten bloodline. Kaelen, a reluctant heir, must journey through a fractured realm to unite the kingdoms, uncover long-buried truths, and face the darkness that threatens to consume Elarion.",
     words: 12450,
     target: 25000,
     chapters: 18,
@@ -41,6 +73,28 @@ export const projects: Project[] = [
     updatedRank: 1,
     status: "active",
     stage: "Active",
+    created: "May 12, 2024",
+    pov: "Third Person",
+    tense: "Past Tense",
+    language: "English",
+    deadline: "Dec 31, 2024",
+    povCharacters: 6,
+    worldEntries: 8,
+    tags: ["Epic", "Magic", "Prophecy", "War", "Friendship"],
+    chapterList: [
+      { number: 18, title: "The Silence Beyond", words: 2450 },
+      { number: 17, title: "Whispers in the Dark", words: 2180 },
+      { number: 16, title: "Bloodline Awakening", words: 2050 },
+      { number: 15, title: "Echoes of the Past", words: 2310 },
+      { number: 14, title: "The Veil Thins", words: 2120 },
+    ],
+    activityLog: [
+      { id: "a1", kind: "wrote", text: "You updated Chapter 18: The Silence Beyond", time: "2h ago" },
+      { id: "a2", kind: "note", text: "You created a new note: Ancient Runes", time: "5h ago" },
+      { id: "a3", kind: "character", text: "You added Kaelen Duskryn to the story", time: "1d ago" },
+      { id: "a4", kind: "world", text: "You updated the world entry: Valenor Kingdom", time: "2d ago" },
+      { id: "a5", kind: "session", text: "You completed a writing session (1,245 words)", time: "2d ago" },
+    ],
   },
   {
     id: "bound-by-stars",
@@ -55,6 +109,14 @@ export const projects: Project[] = [
     updatedRank: 2,
     status: "active",
     stage: "Active",
+    created: "Jun 3, 2024",
+    pov: "Dual POV",
+    tense: "Present Tense",
+    language: "English",
+    deadline: "Nov 15, 2024",
+    povCharacters: 2,
+    worldEntries: 3,
+    tags: ["Romance", "Fate", "Forbidden Love"],
   },
   {
     id: "the-last-heir",
@@ -69,6 +131,14 @@ export const projects: Project[] = [
     updatedRank: 3,
     status: "active",
     stage: "Active",
+    created: "Jul 20, 2024",
+    pov: "First Person",
+    tense: "Past Tense",
+    language: "English",
+    deadline: "Jan 10, 2025",
+    povCharacters: 3,
+    worldEntries: 4,
+    tags: ["Dark Fantasy", "Betrayal", "Revenge"],
   },
   {
     id: "rise-of-the-veil",
@@ -83,6 +153,13 @@ export const projects: Project[] = [
     updatedRank: 4,
     status: "active",
     stage: "Draft",
+    created: "Aug 8, 2024",
+    pov: "Third Person Limited",
+    tense: "Past Tense",
+    language: "English",
+    povCharacters: 2,
+    worldEntries: 2,
+    tags: ["Mystery", "Secrets", "Investigation"],
   },
   {
     id: "whispers-of-the-deep",
@@ -97,6 +174,13 @@ export const projects: Project[] = [
     updatedRank: 5,
     status: "active",
     stage: "Draft",
+    created: "Sep 1, 2024",
+    pov: "First Person",
+    tense: "Present Tense",
+    language: "English",
+    povCharacters: 1,
+    worldEntries: 2,
+    tags: ["Adventure", "Sea", "Forgotten Lore"],
   },
   {
     id: "ashes-of-a-kingdom",
@@ -111,6 +195,13 @@ export const projects: Project[] = [
     updatedRank: 6,
     status: "active",
     stage: "Outline",
+    created: "Sep 25, 2024",
+    pov: "Third Person",
+    tense: "Past Tense",
+    language: "English",
+    povCharacters: 0,
+    worldEntries: 1,
+    tags: ["Historical", "Legends"],
   },
   {
     id: "the-clockwork-court",
@@ -124,6 +215,13 @@ export const projects: Project[] = [
     updated: "3w ago",
     updatedRank: 7,
     status: "completed",
+    created: "Jan 4, 2024",
+    pov: "Third Person",
+    tense: "Past Tense",
+    language: "English",
+    povCharacters: 5,
+    worldEntries: 6,
+    tags: ["Steampunk", "Gears", "Succession"],
   },
   {
     id: "beneath-the-iron-moon",
@@ -137,6 +235,13 @@ export const projects: Project[] = [
     updated: "1mo ago",
     updatedRank: 8,
     status: "completed",
+    created: "Oct 10, 2023",
+    pov: "First Person",
+    tense: "Present Tense",
+    language: "English",
+    povCharacters: 4,
+    worldEntries: 9,
+    tags: ["Sci-Fi", "Archives", "Lost Sun"],
   },
   {
     id: "letters-to-a-vanished-king",
@@ -150,6 +255,13 @@ export const projects: Project[] = [
     updated: "2mo ago",
     updatedRank: 9,
     status: "completed",
+    created: "Feb 18, 2024",
+    pov: "Epistolary",
+    tense: "Past Tense",
+    language: "English",
+    povCharacters: 2,
+    worldEntries: 3,
+    tags: ["Historical Romance", "Letters", "Court Intrigue"],
   },
   {
     id: "the-cartographers-curse",
@@ -163,6 +275,13 @@ export const projects: Project[] = [
     updated: "4mo ago",
     updatedRank: 10,
     status: "archived",
+    created: "Mar 2, 2024",
+    pov: "Third Person",
+    tense: "Past Tense",
+    language: "English",
+    povCharacters: 1,
+    worldEntries: 5,
+    tags: ["Adventure", "Memory", "Curse"],
   },
   {
     id: "winters-choir",
@@ -176,6 +295,13 @@ export const projects: Project[] = [
     updated: "5mo ago",
     updatedRank: 11,
     status: "archived",
+    created: "Apr 14, 2024",
+    pov: "First Person",
+    tense: "Present Tense",
+    language: "English",
+    povCharacters: 1,
+    worldEntries: 2,
+    tags: ["Gothic Horror", "Choir", "Snow"],
   },
   {
     id: "the-salt-and-the-storm",
@@ -190,6 +316,13 @@ export const projects: Project[] = [
     updated: "6mo ago",
     updatedRank: 12,
     status: "archived",
+    created: "May 30, 2024",
+    pov: "Third Person",
+    tense: "Past Tense",
+    language: "English",
+    povCharacters: 2,
+    worldEntries: 2,
+    tags: ["Nautical", "Mutiny", "Curse"],
   },
 ];
 
@@ -262,4 +395,42 @@ export function topGenres(list: Project[], take = 5) {
     .map(([label, count]) => ({ label, percent: Math.round((count / total) * 100) }))
     .sort((a, b) => b.percent - a.percent)
     .slice(0, take);
+}
+
+/** The project's chapter list for the Overview tab — explicit if set, else a
+ *  generic countdown from its chapter count with an even word-count split. */
+export function deriveRecentChapters(project: Project, take = 5): ChapterEntry[] {
+  if (project.chapterList) return project.chapterList;
+  const count = Math.min(take, project.chapters);
+  if (count <= 0) return [];
+  const avgWords = Math.max(1, Math.round(project.words / project.chapters));
+  return Array.from({ length: count }, (_, i) => {
+    const number = project.chapters - i;
+    return { number, title: `Chapter ${number}`, words: avgWords };
+  });
+}
+
+/** The project's activity feed for the Overview tab — explicit if set, else a
+ *  small generic feed built from the project's own fields. */
+export function deriveRecentActivity(project: Project): ProjectActivityEntry[] {
+  if (project.activityLog) return project.activityLog;
+  const entries: ProjectActivityEntry[] = [];
+  if (project.words > 0) {
+    entries.push({
+      id: "d1",
+      kind: "wrote",
+      text: `You wrote in ${project.title}`,
+      time: project.updated,
+    });
+  }
+  if (project.sessions > 0) {
+    entries.push({
+      id: "d2",
+      kind: "session",
+      text: "You completed a writing session",
+      time: project.updated,
+    });
+  }
+  entries.push({ id: "d3", kind: "wrote", text: "Project created", time: project.created });
+  return entries;
 }
