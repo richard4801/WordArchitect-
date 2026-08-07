@@ -19,6 +19,7 @@ export const headlineStats = [
 ] as const;
 
 export const continueWriting = {
+  projectId: "shadows-of-elarion",
   title: "Shadows of Elarion",
   chapter: "Chapter 18: The Silence Beyond",
   words: 12450,

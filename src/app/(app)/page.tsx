@@ -1,3 +1,5 @@
+"use client";
+
 import {
   ArrowRight,
   ArrowUp,
@@ -17,6 +19,7 @@ import { CoverArt } from "@/components/ui/cover-art";
 import { Progress } from "@/components/ui/progress";
 import { Ring } from "@/components/ui/ring";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { useProjects } from "@/lib/project-store";
 import {
   activity,
   type ActivityKind,
@@ -24,7 +27,6 @@ import {
   headlineStats,
   type Priority,
   type Project,
-  projects,
   statsOverview,
   tasks,
   user,
@@ -115,7 +117,10 @@ function ContinueWritingCard() {
     <section className="card card-hover p-6">
       <SectionHeading title="Continue Writing" />
 
-      <div className="relative overflow-hidden rounded-xl border border-line">
+      <Link
+        href={`/projects/${continueWriting.projectId}`}
+        className="relative block overflow-hidden rounded-xl border border-line"
+      >
         <CoverArt
           seed={continueWriting.title}
           className="block aspect-[16/8] w-full"
@@ -123,6 +128,7 @@ function ContinueWritingCard() {
         <button
           type="button"
           aria-label="Options"
+          onClick={(e) => e.preventDefault()}
           className="absolute right-3 top-3 grid size-8 place-items-center rounded-lg bg-canvas/60 text-ink-muted backdrop-blur transition-colors hover:text-ink"
         >
           <MoreHorizontal className="size-4" />
@@ -133,7 +139,7 @@ function ContinueWritingCard() {
           </h3>
           <p className="text-sm text-ink-muted">{continueWriting.chapter}</p>
         </div>
-      </div>
+      </Link>
 
       <div className="mt-5">
         <Progress value={percent} />
@@ -211,14 +217,16 @@ function StatsOverviewCard() {
 
 /* ------------------------------------------------------------ Projects --- */
 
-// Feature a handful of in-progress projects here; the full roster (with
-// search/filter/sort) lives on the dedicated /projects page.
-const FEATURED_PROJECTS = projects.filter((p) => p.status === "active").slice(0, 3);
-
 function ProjectsGrid() {
+  // Feature a handful of in-progress projects here; the full roster (with
+  // search/filter/sort) lives on the dedicated /projects page. Reads the
+  // live store so a just-created project shows up immediately.
+  const featured = useProjects()
+    .filter((p) => p.status === "active")
+    .slice(0, 3);
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      {FEATURED_PROJECTS.map((project) => (
+      {featured.map((project) => (
         <ProjectCard key={project.id} project={project} />
       ))}
       <NewProjectCard />
@@ -229,7 +237,7 @@ function ProjectsGrid() {
 function ProjectCard({ project }: { project: Project }) {
   const percent = Math.round((project.words / project.target) * 100);
   return (
-    <article className="card card-hover overflow-hidden">
+    <Link href={`/projects/${project.id}`} className="card card-hover block overflow-hidden">
       <div className="relative">
         <CoverArt seed={project.id} className="block aspect-[16/10] w-full" />
         {project.stage === "Active" ? (
@@ -240,6 +248,7 @@ function ProjectCard({ project }: { project: Project }) {
           <button
             type="button"
             aria-label="Options"
+            onClick={(e) => e.preventDefault()}
             className="absolute right-3 top-3 grid size-7 place-items-center rounded-lg bg-canvas/60 text-ink-muted backdrop-blur transition-colors hover:text-ink"
           >
             <MoreHorizontal className="size-4" />
@@ -257,7 +266,7 @@ function ProjectCard({ project }: { project: Project }) {
         </p>
         <Progress value={percent} className="mt-2" />
       </div>
-    </article>
+    </Link>
   );
 }
 
