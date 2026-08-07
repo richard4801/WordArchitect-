@@ -96,8 +96,37 @@ const EYES: Record<"dark" | "light", EyeAsset> = {
 
 /** Cursor distance (CSS px) at which the iris reaches its full clamped travel. */
 const FALLOFF_PX = 550;
-/** Per-frame easing toward the target offset — lower = lazier, more fluid. */
-const EASE = 0.12;
+
+/**
+ * Motion model: a real eye doesn't smoothly chase a moving target — it
+ * mostly holds a fixation, then snaps to a new one in a fast saccade. So
+ * instead of continuously easing toward wherever the cursor currently is,
+ * the iris only picks a new "fixation" point periodically (gated by
+ * SACCADE_* below) and then flicks to it over a short, distance-scaled
+ * duration — small movements are near-instant, larger ones take a bit
+ * longer but are still much quicker than the old constant chase. Between
+ * saccades it holds still (plus a hint of idle micro-jitter, like ocular
+ * microtremor, so it doesn't read as frozen).
+ */
+/** Normalized (falloff-space, ~[0,1] per axis) distance the cursor must drift from the current fixation before a new saccade is even considered. */
+const SACCADE_DIST_THRESHOLD = 0.05;
+/** Above this normalized distance, react almost immediately — a big cursor jump should get a sharp, fast look, not wait out the usual pause. */
+const SACCADE_BIG_JUMP = 0.35;
+/** Random pause range (ms) between ordinary saccades — the "hold a fixation" feel. */
+const SACCADE_INTERVAL_MIN = 260;
+const SACCADE_INTERVAL_JITTER = 340;
+/** Random reaction pause range (ms) for a big/sharp jump. */
+const SACCADE_FAST_MIN = 40;
+const SACCADE_FAST_JITTER = 70;
+/** Saccade flight duration (ms): DURATION_BASE + distance * DURATION_PER_UNIT. */
+const SACCADE_DURATION_BASE = 55;
+const SACCADE_DURATION_PER_UNIT = 130;
+/** Idle micro-jitter amplitude (normalized units) once a saccade has settled. */
+const MICRO_JITTER_AMPLITUDE = 0.012;
+
+function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3);
+}
 
 /** Linear-interpolate the safe travel radius at `angle` (radians) from the 24-sample sweep. */
 function angleToRadius(travel: number[], angle: number): number {
@@ -165,6 +194,31 @@ function useCoverGeometry(containerRef: React.RefObject<HTMLDivElement | null>) 
   return { geometry, geometryRef };
 }
 
+type Vec2 = { nx: number; ny: number };
+
+/** Per-theme saccade state, all in normalized (falloff-space) units — the actual per-theme travel radius is only applied at the very end, when converting to screen pixels. */
+type SaccadeState = {
+  raw: Vec2;
+  fixation: Vec2;
+  animStart: Vec2;
+  animStartTime: number;
+  animDuration: number;
+  nextAllowedAt: number;
+  jitterSeed: number;
+};
+
+function newSaccadeState(): SaccadeState {
+  return {
+    raw: { nx: 0, ny: 0 },
+    fixation: { nx: 0, ny: 0 },
+    animStart: { nx: 0, ny: 0 },
+    animStartTime: 0,
+    animDuration: 1,
+    nextAllowedAt: 0,
+    jitterSeed: Math.random() * 1000,
+  };
+}
+
 function useIrisTracking(
   containerRef: React.RefObject<HTMLDivElement | null>,
   geometryRef: React.RefObject<Geometry>,
@@ -173,8 +227,10 @@ function useIrisTracking(
     dark: null,
     light: null,
   });
-  const targets = useRef({ dark: { x: 0, y: 0 }, light: { x: 0, y: 0 } });
-  const current = useRef({ dark: { x: 0, y: 0 }, light: { x: 0, y: 0 } });
+  const saccades = useRef<Record<"dark" | "light", SaccadeState>>({
+    dark: newSaccadeState(),
+    light: newSaccadeState(),
+  });
 
   const setDarkIrisRef = useCallback((el: HTMLImageElement | null) => {
     irisRefs.current.dark = el;
@@ -201,31 +257,73 @@ function useIrisTracking(
     function onMouseMove(e: MouseEvent) {
       (Object.keys(EYES) as (keyof typeof EYES)[]).forEach((theme) => {
         const asset = EYES[theme];
-        const { x: ex, y: ey, scale } = eyeScreenCenter(asset);
+        const { x: ex, y: ey } = eyeScreenCenter(asset);
         const dx = e.clientX - ex;
         const dy = e.clientY - ey;
         const dist = Math.hypot(dx, dy);
         const falloff = Math.min(1, dist / FALLOFF_PX);
         const angle = Math.atan2(dy, dx);
-        const radius = angleToRadius(asset.travel, angle) * falloff;
-
-        targets.current[theme] = {
-          x: Math.cos(angle) * radius * scale,
-          y: Math.sin(angle) * radius * scale,
-        };
+        saccades.current[theme].raw = { nx: Math.cos(angle) * falloff, ny: Math.sin(angle) * falloff };
       });
     }
 
     let raf = 0;
     function tick() {
+      const now = performance.now();
+
       (Object.keys(EYES) as (keyof typeof EYES)[]).forEach((theme) => {
-        const cur = current.current[theme];
-        const tgt = targets.current[theme];
-        cur.x += (tgt.x - cur.x) * EASE;
-        cur.y += (tgt.y - cur.y) * EASE;
+        const asset = EYES[theme];
+        const s = saccades.current[theme];
+
+        const dx = s.raw.nx - s.fixation.nx;
+        const dy = s.raw.ny - s.fixation.ny;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist > SACCADE_DIST_THRESHOLD && now >= s.nextAllowedAt) {
+          // Snapshot wherever the eye visually is right now as the new
+          // flight's start, so an interrupted saccade blends into the next
+          // one instead of jump-cutting.
+          const t = s.animDuration > 0 ? Math.min(1, (now - s.animStartTime) / s.animDuration) : 1;
+          const eased = easeOutCubic(t);
+          s.animStart = {
+            nx: s.animStart.nx + (s.fixation.nx - s.animStart.nx) * eased,
+            ny: s.animStart.ny + (s.fixation.ny - s.animStart.ny) * eased,
+          };
+          s.fixation = { ...s.raw };
+          s.animStartTime = now;
+          s.animDuration = SACCADE_DURATION_BASE + Math.min(dist, 1.4) * SACCADE_DURATION_PER_UNIT;
+          s.nextAllowedAt =
+            dist > SACCADE_BIG_JUMP
+              ? now + SACCADE_FAST_MIN + Math.random() * SACCADE_FAST_JITTER
+              : now + SACCADE_INTERVAL_MIN + Math.random() * SACCADE_INTERVAL_JITTER;
+        }
+
+        const t = Math.min(1, (now - s.animStartTime) / s.animDuration);
+        const eased = easeOutCubic(t);
+        let nx = s.animStart.nx + (s.fixation.nx - s.animStart.nx) * eased;
+        let ny = s.animStart.ny + (s.fixation.ny - s.animStart.ny) * eased;
+
+        if (t >= 1) {
+          // Fixation reached — add a faint, slow wander so the eye doesn't
+          // read as frozen while holding still between saccades.
+          const time = now / 1000 + s.jitterSeed;
+          nx += Math.sin(time * 1.3) * MICRO_JITTER_AMPLITUDE;
+          ny += Math.sin(time * 1.7 + 1.5) * MICRO_JITTER_AMPLITUDE;
+        }
+
+        const angle = Math.atan2(ny, nx);
+        const magnitude = Math.hypot(nx, ny);
+        const radius = angleToRadius(asset.travel, angle) * magnitude;
+        const g = geometryRef.current;
+
         const el = irisRefs.current[theme];
-        if (el) el.style.transform = `translate3d(${cur.x.toFixed(2)}px, ${cur.y.toFixed(2)}px, 0)`;
+        if (el) {
+          const px = Math.cos(angle) * radius * g.scale;
+          const py = Math.sin(angle) * radius * g.scale;
+          el.style.transform = `translate3d(${px.toFixed(2)}px, ${py.toFixed(2)}px, 0)`;
+        }
       });
+
       raf = requestAnimationFrame(tick);
     }
 
