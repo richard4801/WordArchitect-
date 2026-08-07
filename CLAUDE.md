@@ -212,28 +212,38 @@ DESIGN_SYSTEM.md         # full visual spec (colours, fonts, materials)
   - Light & dark are **matched compositions**, so one `--hero-size` /
     `--hero-pos` serves both and the face never moves on theme toggle.
   - `--hero-size: 46%` (width-based; height follows the portrait's own aspect
-    ratio) at `--hero-pos: right top`, inside a **`h-[95vh]`** band (taller
-    than the old 16:9 mechanism needed, so the castle low in the frame clears
-    the bottom fade before it cuts off). Bleeds off the top and right edges;
-    two intersecting masks feather only the left and bottom into canvas.
+    ratio) at `--hero-pos: right top`, inside a **`h-[95vh]`** band. Bleeds
+    off the top and right edges.
+  - **No CSS overlay of any kind** — no wash, no fade, no shadow, no
+    `mask-image`. `PageBackground` sets only
+    `backgroundImage`/`backgroundPosition`/`backgroundSize` on a single div.
+    This was explicit, repeated user direction: any color wash read as
+    "dimming," and even a pure-alpha `mask-image` feather (no color, just
+    transparency) still read as "a card blocking the art." Don't reintroduce
+    either.
+  - Instead, **the soft edge is baked into the PNG files themselves**: both
+    `resources/{dark,light}.png` (and their `public/hero-*.png` copies) are
+    RGBA with a real alpha-channel gradient — fully opaque through most of
+    the frame, fading to 0 over the leftmost ~16% of width and the bottom
+    ~14% of height. Generated with PIL + numpy (open RGB, build a `float32`
+    alpha ramp with `np.linspace`, write it into the array's alpha channel,
+    save as RGBA) — see git history on this file for the exact script if the
+    source art changes again. This is what makes "no CSS treatment, no hard
+    seam" both true at once: the fade is part of the asset, not a layer on
+    top of it.
   - Small circular hero-crops elsewhere (header avatar, sidebar profile photo)
     use `background-position: "68% 25%"` on `var(--hero)` to center on the eye.
   - If the source art changes again, re-derive `--hero-size`/`--hero-pos`/the
-    band height from the new image's own eye/subject coordinates — don't just
-    keep the old numbers. `resources/README.md`-style grid-overlay measurement
-    (crop the source with PIL, draw a coordinate grid, read pixel positions)
-    is far faster than eyeballing.
-- **The stat "shadow"** (the dark pool grounding the quick-actions row) lives
-  in `PageBackground` as a **full-bleed** layer (`--hero-stat-grad`), *not*
-  inside the content. This was iterated on heavily. Rules that must hold:
-  - Full-bleed so it has **no left/right edge**.
-  - A `to bottom` linear gradient that fades in **above** the row and stays
-    dark **from the row all the way down to the page's end** → **no bottom
-    edge** (its origin is never visible; the opaque cards hide it).
-  - `vh` stops target the quick-actions row's on-screen position (sits
-    ≈ 12–22vh at 1536×1024 with the current, shorter hero-text block;
-    re-probe if the hero text or row height changes).
-  - Dark mode = real dark pool; light mode = bounded soft halo.
+    band height AND regenerate the alpha-fade PNGs from the new image's own
+    eye/subject coordinates and dimensions — don't just keep the old numbers.
+    `resources/README.md`-style grid-overlay measurement (crop the source
+    with PIL, draw a coordinate grid, read pixel positions) is far faster
+    than eyeballing.
+- Historical note: earlier revisions of this hero treatment had a full-bleed
+  "stat shadow" gradient (`--hero-stat-grad`) grounding the area below the
+  hero text. It's gone — removed along with the rest of the overlay
+  treatment — and the CSS token was deleted from `globals.css`. Don't
+  resurrect it without a fresh explicit request.
 - **The hero background is dashboard-only** — every other page has a plain
   canvas background, no oracle face. `(app)/layout.tsx` is a client component
   (`usePathname`) that renders `<PageBackground />` only when
