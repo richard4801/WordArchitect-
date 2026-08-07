@@ -201,10 +201,14 @@ DESIGN_SYSTEM.md         # full visual spec (colours, fonts, materials)
     upright.
 - **Cards are a "carved material"** (obsidian / smoked walnut / aged bronze),
   never flat or frosted: vertical gradient, bronze-glow border, inner
-  highlight, outer + engraved-inner shadow, subtle grain, hover lift. See
-  `.card` / `.card-2` in `globals.css`.
+  highlight, outer + engraved-inner shadow, subtle grain, hover lift, plus a
+  tighter `--card-pop-shadow` layer (echoing the header chips' raised depth,
+  but opaque — cards never go translucent) for a bit more pop against the
+  page. See `.card` / `.card-2` in `globals.css`.
 - **Header icon chips** (`.btn-raised`) are **translucent** (semi-opaque fill +
-  `backdrop-filter: blur`), not solid discs.
+  `backdrop-filter: blur`), not solid discs — the one place in the design
+  system that *is* translucent; cards echo its raised-depth look but stay
+  fully opaque.
 - **Hero image** (`page-background.tsx`): the source art (`resources/dark.png` /
   `light.png`, copied to `public/hero-*.png`) is a **landscape** (1672×941,
   ~16:9) "eye reflecting a distant castle" composition, generated wide
@@ -217,19 +221,28 @@ DESIGN_SYSTEM.md         # full visual spec (colours, fonts, materials)
     eye in frame across reasonable desktop aspect ratios; an unrealistically
     tall/narrow viewport can still crop it out, but this is a desktop-only
     app, sidebar included, so that's an acceptable edge case).
-  - `PageBackground`'s root is `fixed inset-0`, not `absolute` — `cover`
-    sizes against the **viewport**, not the page's full scroll height. A tall
-    scrolling dashboard under `absolute` would make `cover` scale against
-    scroll height instead and crop unpredictably.
-  - **No CSS overlay of any kind** — no wash, no fade, no shadow, no
-    `mask-image`. `PageBackground` sets only
-    `backgroundImage`/`backgroundPosition`/`backgroundSize` on a single div.
-    This was explicit, repeated user direction from an earlier (portrait,
-    46%-width) version of this art: any color wash read as "dimming," and
-    even a pure-alpha `mask-image` feather (no color, just transparency)
-    still read as "a card blocking the art." With `cover` there's no boundary
-    to feather anyway — the image always fills the container completely, so
-    the seam problem that motivated those experiments doesn't exist here.
+  - `PageBackground`'s root is `absolute inset-x-0 top-0` with an explicit
+    `h-[100vh]` band, not `fixed` — the user wants the hero to scroll away
+    with the page like a normal banner rather than stay pinned to the
+    viewport. `cover` still needs a sane fixed box to size against (a tall
+    dashboard under an unbounded height would scale/crop unpredictably),
+    hence the explicit `100vh` cap rather than letting the band stretch to
+    the page's full scroll height.
+  - Because `absolute` + a capped height means the band has a real endpoint
+    partway down the page, its bottom is masked into a fade
+    (`mask-image`/`WebkitMaskImage`, `linear-gradient(to bottom, #000 0%,
+    #000 78%, transparent 98%)`) so the termination isn't a visible hard
+    edge. This is a deliberate, narrow exception to the "no overlay" rule
+    below — explicitly requested by the user for this specific scroll
+    behavior, alpha-only (no color/wash), applied to the image alone.
+  - Otherwise, **no CSS overlay beyond that bottom fade** — no wash, no
+    shadow, no other `mask-image`. This was explicit, repeated user
+    direction from an earlier (portrait, 46%-width) version of this art: any
+    color wash read as "dimming," and a full-image `mask-image` feather
+    still read as "a card blocking the art." With `cover` there's no
+    boundary to feather on the top/sides anyway — the image always fills the
+    container completely — so only the bottom (where the band now
+    necessarily ends under `absolute`) gets a fade.
   - Small circular hero-crops elsewhere (header avatar, sidebar profile photo)
     use `background-position: "75% 27%"` on `var(--hero)` to center on the eye.
   - If the source art changes again: regenerate it **wide** (16:9 or wider —
@@ -238,8 +251,9 @@ DESIGN_SYSTEM.md         # full visual spec (colours, fonts, materials)
     fractions of the new image's width/height (crop with PIL, draw a
     coordinate grid, read pixel positions — far faster than eyeballing), and
     update `--hero-pos` and the two `75% 27%` avatar crops to match. Don't
-    reintroduce a percentage-width `--hero-size` or any mask/wash — `cover`
-    + a focal-point position is the settled approach.
+    reintroduce a percentage-width `--hero-size` or any mask/wash beyond the
+    bottom fade already in place — `cover` + a focal-point position is the
+    settled approach.
 - **The hero background is dashboard-only** — every other page has a plain
   canvas background, no oracle face. `(app)/layout.tsx` is a client component
   (`usePathname`) that renders `<PageBackground />` only when

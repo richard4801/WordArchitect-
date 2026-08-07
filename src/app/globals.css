@@ -65,11 +65,12 @@
   /* Carved-material card */
   --card-top: #ffffff;
   --card-bottom: #f6f1e9;
-  --card-border: rgba(139, 94, 52, 0.14);
-  --card-border-hover: rgba(139, 94, 52, 0.3);
+  --card-border: rgba(139, 94, 52, 0.22);
+  --card-border-hover: rgba(139, 94, 52, 0.36);
   --card-highlight: rgba(255, 255, 255, 0.6);
   --card-shadow: 0 10px 28px rgba(60, 40, 20, 0.1);
   --card-shadow-hover: 0 16px 40px rgba(60, 40, 20, 0.16);
+  --card-pop-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
   --card-inner-shadow: inset 0 0 40px rgba(120, 90, 50, 0.05);
   --card-glow: rgba(212, 174, 122, 0.06);
   --card-grain: 0.025;
@@ -122,11 +123,12 @@
      so the material reads on close look, never as brown. */
   --card-top: #18181b;
   --card-bottom: #101012;
-  --card-border: rgba(212, 174, 122, 0.1);
-  --card-border-hover: rgba(212, 174, 122, 0.22);
+  --card-border: rgba(212, 174, 122, 0.18);
+  --card-border-hover: rgba(212, 174, 122, 0.3);
   --card-highlight: rgba(255, 255, 255, 0.05);
   --card-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
   --card-shadow-hover: 0 16px 42px rgba(0, 0, 0, 0.55);
+  --card-pop-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
   --card-inner-shadow: inset 0 0 40px rgba(0, 0, 0, 0.28);
   --card-glow: rgba(212, 174, 122, 0.05);
   --card-grain: 0.045;
@@ -212,6 +214,7 @@ body {
     border: 1px solid var(--card-border);
     box-shadow:
       var(--card-shadow),
+      var(--card-pop-shadow),
       inset 0 1px 0 var(--card-highlight),
       var(--card-inner-shadow);
     transition:
@@ -226,7 +229,9 @@ body {
     border-radius: 14px;
     background: linear-gradient(180deg, var(--card-top) 0%, var(--card-bottom) 100%);
     border: 1px solid var(--card-border);
-    box-shadow: inset 0 1px 0 var(--card-highlight);
+    box-shadow:
+      var(--card-pop-shadow),
+      inset 0 1px 0 var(--card-highlight);
   }
 
   /* Warm ambient glow + light-from-upper-left */
