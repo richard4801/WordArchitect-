@@ -11,13 +11,6 @@ export const user = {
   },
 };
 
-export const headlineStats = [
-  { value: "12", label: "Projects" },
-  { value: "436K", label: "Words Written" },
-  { value: "89", label: "Days Writing" },
-  { value: "24", label: "Achievements" },
-] as const;
-
 export const continueWriting = {
   projectId: "shadows-of-elarion",
   title: "Shadows of Elarion",
@@ -26,15 +19,62 @@ export const continueWriting = {
   target: 25000,
 };
 
-export const statsOverview = {
-  goalPercent: 78,
-  metrics: [
-    { label: "Words Written", value: "24,560", up: true },
-    { label: "Chapters", value: "18", up: true },
-    { label: "Sessions", value: "42", up: true },
-    { label: "Avg. Words / Day", value: "1,125", up: true },
-  ],
+/** Today's word-count ring + writing streak + a month of activity dots. */
+export const todaysProgress = {
+  words: 1250,
+  target: 2000,
+  streakDays: 12,
+  today: 18,
+  // Days of the mock month with at least one writing session (deterministic
+  // mock pattern — no real Date math, so server/client render identically).
+  activeDays: [1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 16, 17, 18, 20, 21, 23, 24, 25, 27, 28],
 };
+
+/** The five headline stat tiles above the AI Insights / Activity / Goal row. */
+export const weeklyStats = {
+  wordsWritten: { value: 24560, trendPercent: 18, sparkline: [12, 18, 15, 22, 19, 27, 24] },
+  writingTime: { value: "8h 45m", trendPercent: 12 },
+};
+
+export const writingGoal = {
+  current: 24560,
+  target: 50000,
+  daysActive: 18,
+  consistencyPercent: 78,
+  writingTime: "8h 45m",
+};
+
+export type AiInsightTone = "warn" | "info" | "danger";
+
+export const aiInsights: {
+  id: string;
+  tone: AiInsightTone;
+  text: string;
+  linkLabel: string;
+  linkHref: string;
+}[] = [
+  {
+    id: "i1",
+    tone: "warn",
+    text: "Possible plot inconsistency detected in Chapter 14.",
+    linkLabel: "Review",
+    linkHref: "/projects/shadows-of-elarion/chapters",
+  },
+  {
+    id: "i2",
+    tone: "info",
+    text: "Kaelen Duskryn hasn't appeared in 5 chapters.",
+    linkLabel: "View Character",
+    linkHref: "/projects/shadows-of-elarion/characters",
+  },
+  {
+    id: "i3",
+    tone: "danger",
+    text: "Dialogue ratio dropped 18% in your last chapter.",
+    linkLabel: "See Analysis",
+    linkHref: "/projects/shadows-of-elarion/analytics",
+  },
+];
 
 // Single source of truth for project data lives in projects-data.ts (it also
 // backs the full /projects page); re-exported here so the dashboard's "Your
@@ -42,41 +82,7 @@ export const statsOverview = {
 export type { Project } from "@/lib/projects-data";
 export { projects } from "@/lib/projects-data";
 
-export type Priority = "High" | "Medium" | "Low";
-
-export const tasks: {
-  id: string;
-  title: string;
-  context: string;
-  priority: Priority;
-}[] = [
-  {
-    id: "t1",
-    title: "Outline Chapter 19",
-    context: "Shadows of Elarion",
-    priority: "High",
-  },
-  {
-    id: "t2",
-    title: "Develop Victarion's Backstory",
-    context: "Shadows of Elarion",
-    priority: "Medium",
-  },
-  {
-    id: "t3",
-    title: "Research Elven Kingdoms",
-    context: "Worldbuilding",
-    priority: "Low",
-  },
-  {
-    id: "t4",
-    title: "Write 1,000 Words Today",
-    context: "Daily Goal",
-    priority: "High",
-  },
-];
-
-export type ActivityKind = "wrote" | "character" | "world" | "session";
+export type ActivityKind = "wrote" | "character" | "world" | "session" | "note";
 
 export const activity: {
   id: string;
@@ -88,29 +94,36 @@ export const activity: {
   {
     id: "a1",
     kind: "wrote",
-    text: "You wrote 2,450 words",
+    text: "You wrote 2,450 words in Shadows of Elarion",
     context: "Shadows of Elarion",
     time: "2h ago",
   },
   {
     id: "a2",
     kind: "character",
-    text: "You created a new character: Lyriana",
+    text: "You created a new character: Lyriana Veyra",
     context: "Bound by Stars",
     time: "5h ago",
   },
   {
     id: "a3",
     kind: "world",
-    text: "You updated world: Elarion",
+    text: "You updated world entry: Valenor Kingdom",
     context: "Shadows of Elarion",
     time: "1d ago",
   },
   {
     id: "a4",
+    kind: "note",
+    text: "You added a new note: Ancient Prophecies",
+    context: "Shadows of Elarion",
+    time: "2d ago",
+  },
+  {
+    id: "a5",
     kind: "session",
-    text: "You completed a writing session",
-    context: "1,125 words",
-    time: "1d ago",
+    text: "AI Assistant completed a rewrite",
+    context: "Shadows of Elarion",
+    time: "3d ago",
   },
 ];

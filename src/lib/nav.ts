@@ -1,15 +1,16 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  BarChart3,
+  Clock,
   FileText,
   Folder,
   Globe,
+  HelpCircle,
   Home,
+  LayoutTemplate,
   List,
   Pencil,
   Settings,
   Sparkles,
-  Target,
   User,
 } from "lucide-react";
 
@@ -19,22 +20,22 @@ export type NavItem = {
   icon: LucideIcon;
 };
 
-/**
- * Primary sidebar navigation. Icons mirror the WordArchitect mockup exactly:
- * house, folder, pencil, single person, globe, list, document, sparkles,
- * target, chart, gear. Pages beyond the dashboard are stubbed for now and
- * filled in as their mockups arrive.
- */
+/** Primary sidebar navigation — the main workspace sections. */
 export const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard", href: "/", icon: Home },
   { label: "Projects", href: "/projects", icon: Folder },
   { label: "Writing", href: "/writing", icon: Pencil },
+  { label: "Outliner", href: "/outlines", icon: List },
   { label: "Characters", href: "/characters", icon: User },
   { label: "Worldbuilding", href: "/worldbuilding", icon: Globe },
-  { label: "Outlines", href: "/outlines", icon: List },
+  { label: "Timeline", href: "/timeline", icon: Clock },
   { label: "Notes", href: "/notes", icon: FileText },
   { label: "AI Assistant", href: "/assistant", icon: Sparkles },
-  { label: "Goals", href: "/goals", icon: Target },
-  { label: "Analytics", href: "/analytics", icon: BarChart3 },
+  { label: "Templates", href: "/templates", icon: LayoutTemplate },
+];
+
+/** Secondary/utility nav, set apart from the main list near the bottom. */
+export const UTILITY_NAV_ITEMS: NavItem[] = [
   { label: "Settings", href: "/settings", icon: Settings },
+  { label: "Help & Feedback", href: "/help", icon: HelpCircle },
 ];

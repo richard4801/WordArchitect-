@@ -19,12 +19,28 @@ writer's side). Tagline: **"Write. Craft. Conquer."**
   push to the working branch).
 - Current state: **Dashboard, Projects, New Project, and the project detail
   page's Overview tab are built and polished**. Every other destination
-  (including the detail page's other 6 tabs) is stubbed with `<ComingSoon>`
+  (including the detail page's other 7 tabs) is stubbed with `<ComingSoon>`
   and gets built out as its mockup arrives.
 - **The oracle-face hero background is dashboard-only.** It does not appear on
   Projects or any other page — confirmed explicitly against the Projects
   mockup. See §4/§5 (`(app)/layout.tsx` gates `<PageBackground />` on
   `pathname === "/"`).
+- **The Dashboard has two variants**, switched purely on whether the live
+  project store is empty (`useProjects().length === 0`) — no separate
+  auth/onboarding flag: a **New User** dashboard (onboarding: feature
+  callouts, "Let's Get You Started", "How WordArchitect Helps You Write
+  Better", Suggested for You, Tip of the Day) and a **Returning User**
+  dashboard (quick actions row, Continue Writing + Today's Progress,
+  weekly stats row, AI Insights / Recent Activity / Writing Goal, Your
+  Projects). Both live in `(app)/page.tsx`. To preview the New User state
+  locally: temporarily empty `projects-data.ts`'s `projects` array, rebuild,
+  screenshot, then revert — there's no UI toggle for it (matches the "resets
+  the whole store" nature of every other mock-data flow in this app).
+- **PENDING**: the Dashboard's hero artwork (portrait "eye reflecting a
+  castle landscape" piece, dark + light versions) was supplied as pasted
+  chat images, which don't reach the filesystem — only `public/hero-dark.png`
+  / `hero-light.png` (the older, different crop) exist on disk. Swap them in
+  once the user provides the actual files.
 
 ## 2. Tech stack
 
@@ -59,46 +75,63 @@ src/
     globals.css          # design tokens + Tailwind v4 config + utilities  ← the design system lives here
     (app)/               # authenticated app shell (route group) — "use client"
                          #   (needs usePathname to gate the hero, see below)
-      layout.tsx         # Sidebar + <header> (search/bell/theme) + <main>.
-                         #   Renders <PageBackground /> ONLY when pathname === "/".
-      page.tsx           # DASHBOARD (built). Hero, stats, 3 featured project cards.
+      layout.tsx         # Sidebar + <header> (search w/ ⌘K, bell, mail, theme,
+                         #   avatar) + <main>. Renders <PageBackground /> ONLY
+                         #   when pathname === "/".
+      page.tsx           # DASHBOARD (built). Switches New User vs Returning User
+                         #   on useProjects().length — see §1.
       projects/page.tsx  # PROJECTS (built). Search/filter/sort/tabs/pagination
                          #   over the shared mock dataset + a stats right-rail.
-      projects/new/page.tsx  # NEW PROJECT (built). Multi-section form; on submit,
-                         #   calls project-store's createProject() and redirects
-                         #   to the fake-created project's own page.
+      projects/new/page.tsx  # NEW PROJECT (built). Multi-section form (incl.
+                         #   Target Word Count); on submit, calls project-store's
+                         #   createProject() and redirects to the fake-created
+                         #   project's own page.
       projects/[id]/layout.tsx  # PROJECT DETAIL shared chrome (built): back link,
-                         #   title/status/meta, Write Now, the 7-tab nav, and the
-                         #   right rail (cover, details, stats, quick actions).
+                         #   title/status/meta, Write Now, the 8-tab nav, and the
+                         #   right rail (cover, details incl. inline-editable
+                         #   Target Words, stats, quick actions).
       projects/[id]/page.tsx    # Overview tab (built): description, manuscript
                          #   progress ring, recent chapters, recent activity.
-      projects/[id]/{chapters,characters,world,outlines,notes,analytics}/page.tsx
-                         # the other 6 tabs — stubs → <ComingSoon>, same as main nav
+      projects/[id]/{chapters,characters,world,outlines,notes,analytics,settings}/page.tsx
+                         # the other 7 tabs — stubs → <ComingSoon>, same as main nav
       writing|characters|worldbuilding|outlines|notes|assistant|goals|
-        analytics|settings/page.tsx   # stubs → <ComingSoon>
+        analytics|settings|timeline|templates|help/page.tsx   # stubs → <ComingSoon>
+                         #   (goals/analytics exist but aren't in the sidebar nav —
+                         #   see nav.ts)
     api/ai/route.ts      # POST endpoint that calls the AI provider
   components/
     page-background.tsx  # full-bleed hero image + washes + the stat shadow (dashboard only)
-    sidebar.tsx          # fixed left nav + profile panel; ornate astrolabe artwork
-                         #   background (public/sidebar-bg.webp), pinned to the dark
-                         #   palette via a scoped `.dark` class regardless of app theme
+    sidebar.tsx          # fixed left nav (NAV_ITEMS) + secondary utility nav
+                         #   (UTILITY_NAV_ITEMS: Settings, Help & Feedback) +
+                         #   profile panel that also switches new/returning-user
+                         #   (XP bar vs "New Writer" + Upgrade button); ornate
+                         #   astrolabe artwork background (public/sidebar-bg.webp),
+                         #   pinned to the dark palette via a scoped `.dark` class
+                         #   regardless of app theme
     theme-provider.tsx   # next-themes wrapper
     theme-toggle.tsx     # sun/moon button (.btn-raised chip)
-    brand-mark.tsx       # Sparkle + Sigil SVGs (NOTE: the old compass-star logo
-                         #   mark was removed from the sidebar; Sparkle/Sigil still used)
+    brand-mark.tsx       # BrandMark (compass-star, used as the small logo mark
+                         #   above the sidebar wordmark) + Sparkle + Sigil SVGs
     coming-soon.tsx      # placeholder for unbuilt pages
     ui/
       cover-art.tsx      # deterministic SVG "book cover" placeholders (seeded)
       progress.tsx       # animated progress bar (shimmer)
-      ring.tsx           # animated circular progress (comet highlight)
+      ring.tsx           # animated circular progress (comet highlight); sublabel
+                         #   is ReactNode so callers control its typography
+      sparkline.tsx      # tiny inline SVG trend line (weekly-stats tiles)
+      mini-calendar.tsx  # month-grid activity calendar (Today's Progress widget);
+                         #   takes an explicit day list, no real Date math, so it
+                         #   renders identically on server/client
       section-heading.tsx
   lib/
-    nav.ts               # sidebar nav items (label, href, lucide icon)
-    dashboard-data.ts    # dashboard-only mock data (user, headline stats, tasks,
+    nav.ts               # NAV_ITEMS (main sidebar list) + UTILITY_NAV_ITEMS
+                         #   (Settings, Help & Feedback)
+    dashboard-data.ts    # dashboard-only mock data (user, continueWriting,
+                         #   todaysProgress, weeklyStats, writingGoal, aiInsights,
                          #   activity); re-exports projects/Project from projects-data.ts
     projects-data.ts     # SINGLE SOURCE OF TRUTH for project data — the richer
-                         #   Project type (logline, chapters/sessions, status
-                         #   active/completed/archived, active-only stage
+                         #   Project type (logline, chapters/sessions/daysActive,
+                         #   status active/completed/archived, active-only stage
                          #   Active/Draft/Outline, plus detail-page fields:
                          #   created/pov/tense/language/deadline/tags/
                          #   povCharacters/worldEntries), the 12-project mock
@@ -109,11 +142,15 @@ src/
                          #   fallback for every other project)
     project-store.ts     # Reactive wrapper around projects-data's array
                          #   (useSyncExternalStore) so /projects/new can
-                         #   fake-create a project (createProject()) and have
-                         #   it actually show up on /projects and its own
-                         #   /projects/[id] page — no backend, in-memory only,
-                         #   resets on a hard refresh. /projects reads through
-                         #   useProjects() from here, not the static import.
+                         #   fake-create a project (createProject(), which
+                         #   accepts a custom targetWords) and have it actually
+                         #   show up everywhere (Dashboard, /projects, its own
+                         #   /projects/[id] page) — no backend, in-memory only,
+                         #   resets on a hard refresh. updateProjectTarget(id,
+                         #   target) lets the goal be raised later (used by the
+                         #   detail page's inline-editable Target Words row).
+                         #   Every project list reads through useProjects()
+                         #   from here, not a static import.
     ai/
       types.ts           # AiProvider contract (vendor-agnostic)
       index.ts           # provider registry + getAiProvider()

@@ -1,15 +1,16 @@
 "use client";
 
-import { ChevronDown, ChevronRight, Moon } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { BrandMark } from "@/components/brand-mark";
 import { Progress } from "@/components/ui/progress";
-import { NAV_ITEMS } from "@/lib/nav";
+import { NAV_ITEMS, UTILITY_NAV_ITEMS } from "@/lib/nav";
+import { useProjects } from "@/lib/project-store";
 
 export function Sidebar() {
   const pathname = usePathname();
-  const [focus, setFocus] = useState(false);
+  const isNewUser = useProjects().length === 0;
 
   return (
     <aside
@@ -46,6 +47,7 @@ export function Sidebar() {
       {/* Logo */}
       <div className="px-7 pt-8 pb-6">
         <div className="flex flex-col items-start gap-2">
+          <BrandMark className="size-6 text-gold" />
           <div className="font-display text-2xl leading-none tracking-wide text-ink">
             WORD<span className="text-gold">ARCHITECT</span>
           </div>
@@ -86,28 +88,31 @@ export function Sidebar() {
         </ul>
       </nav>
 
-      {/* Focus mode */}
-      <div className="px-6 py-4">
-        <button
-          type="button"
-          onClick={() => setFocus((f) => !f)}
-          className="flex w-full items-center gap-3 text-sm text-ink-muted"
-        >
-          <Moon className="size-4" strokeWidth={1.7} />
-          <span className="flex-1 text-left">Focus Mode</span>
-          <span
-            className={`relative h-5 w-9 rounded-full border border-line transition-colors ${
-              focus ? "bg-gold/30" : "bg-surface-2"
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 size-3.5 rounded-full transition-all ${
-                focus ? "left-4 bg-gold" : "left-0.5 bg-ink-faint"
-              }`}
-            />
-          </span>
-        </button>
-      </div>
+      {/* Utility nav — Settings, Help & Feedback */}
+      <nav className="px-4 pb-2">
+        <ul className="flex flex-col gap-1">
+          {UTILITY_NAV_ITEMS.map((item) => {
+            const active = pathname.startsWith(item.href);
+            const Icon = item.icon;
+            return (
+              <li key={item.href}>
+                <Link
+                  href={item.href}
+                  aria-current={active ? "page" : undefined}
+                  className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors ${
+                    active
+                      ? "bg-surface-2 text-ink"
+                      : "text-ink-muted hover:bg-surface-2/60 hover:text-ink"
+                  }`}
+                >
+                  <Icon className={`size-[18px] ${active ? "text-gold" : ""}`} strokeWidth={1.7} />
+                  <span className="flex-1">{item.label}</span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
 
       {/* Profile — a clean, self-contained panel */}
       <div className="px-4 pb-5 pt-3">
@@ -127,14 +132,23 @@ export function Sidebar() {
                 <ChevronDown className="size-3.5 shrink-0 text-ink-muted" />
               </button>
               <p className="truncate text-xs text-ink-muted">
-                Level 7 • Storyweaver
+                {isNewUser ? "New Writer" : "Level 7 • Storyweaver"}
               </p>
             </div>
           </div>
-          <div className="mt-3.5">
-            <Progress value={49} />
-            <p className="mt-1.5 text-xs text-ink-faint">2,450 / 5,000 XP</p>
-          </div>
+          {isNewUser ? (
+            <Link
+              href="/settings"
+              className="mt-3.5 block w-full rounded-lg bg-gold py-2 text-center text-xs font-medium text-gold-contrast transition-opacity hover:opacity-90"
+            >
+              Upgrade
+            </Link>
+          ) : (
+            <div className="mt-3.5">
+              <Progress value={49} />
+              <p className="mt-1.5 text-xs text-ink-faint">2,450 / 5,000 XP</p>
+            </div>
+          )}
         </div>
       </div>
     </aside>
