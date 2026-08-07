@@ -46,16 +46,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * light/dark handling) rather than JS-selected, so there's no
  * theme-resolution hydration flash — the browser only fetches the
  * currently-visible stack's images since the other is `display: none`.
- *
- * Blinking: the PSDs only give an *open* eye — there's no closed-eyelid
- * layer to animate to. Rather than skip it, EYES[].eyeClosed is a
- * clone-stamped variant of the background: the eyelid/brow skin directly
- * above the socket is sampled and feather-blended down over the open
- * socket + iris (see the generation notes above EYES below), producing a
- * plausible "eyes shut" frame using only real pixels from the same
- * artwork. A blink is just a brief opacity crossfade to that frame, timed
- * on a randomized schedule (with an occasional natural-feeling double
- * blink) — see useBlink.
  */
 
 const IMG_W = 1672;
@@ -65,12 +55,6 @@ type EyeAsset = {
   bg: string;
   iris: string;
   mask: string;
-  /**
-   * Same canvas as `bg`, but with the eye-opening region (mask bbox + a
-   * margin, clone-stamped from the skin directly above it, feathered at
-   * the edges) patched shut. Crossfaded in briefly to fake a blink.
-   */
-  eyeClosed: string;
   /** Iris rest position, in source-image pixel space (from the PSD's raster mask center). */
   center: { x: number; y: number };
   /**
@@ -92,7 +76,6 @@ const EYES: Record<"dark" | "light", EyeAsset> = {
     bg: "/hero-dark-bg.png",
     iris: "/hero-dark-iris.png",
     mask: "/hero-dark-iris-mask.png",
-    eyeClosed: "/hero-dark-eye-closed.png",
     center: { x: 1286.7, y: 260.0 },
     travel: [
       50, 47, 38, 31, 27, 25, 25, 25, 27, 28, 31, 32, 32, 31, 29, 28, 28, 28, 29, 33, 38, 45, 50,
@@ -103,7 +86,6 @@ const EYES: Record<"dark" | "light", EyeAsset> = {
     bg: "/hero-light-bg.png",
     iris: "/hero-light-iris.png",
     mask: "/hero-light-iris-mask.png",
-    eyeClosed: "/hero-light-eye-closed.png",
     center: { x: 1424.7, y: 254.2 },
     travel: [
       51, 44, 31, 24, 20, 19, 18, 19, 20, 21, 24, 26, 26, 26, 25, 24, 23, 23, 24, 27, 30, 38, 49,
@@ -141,22 +123,6 @@ const SACCADE_DURATION_BASE = 55;
 const SACCADE_DURATION_PER_UNIT = 130;
 /** Idle micro-jitter amplitude (normalized units) once a saccade has settled. */
 const MICRO_JITTER_AMPLITUDE = 0.012;
-
-/** Blink timing (ms): fast close, a brief hold shut, a slightly slower reopen. */
-const BLINK_CLOSE_MS = 55;
-const BLINK_HOLD_MS = 90;
-const BLINK_OPEN_MS = 110;
-/** Gap (ms) before a double-blink's second flutter, when one is rolled. */
-const BLINK_DOUBLE_GAP_MS = 100;
-/** Chance a blink is immediately followed by a second one, like a real flutter. */
-const BLINK_DOUBLE_CHANCE = 0.16;
-/** Random pause range (ms) between blinks — natural rate is roughly one every few seconds. */
-const BLINK_INTERVAL_MIN = 2600;
-const BLINK_INTERVAL_JITTER = 4200;
-
-function easeInOutQuad(t: number): number {
-  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-}
 
 function easeOutCubic(t: number): number {
   return 1 - Math.pow(1 - t, 3);
@@ -253,31 +219,6 @@ function newSaccadeState(): SaccadeState {
   };
 }
 
-/** Per-theme blink state — a scheduled, time-driven opacity crossfade to the eyeClosed frame. */
-type BlinkState = {
-  /** Timestamp the current blink (close→hold→open) started, or null when idle/waiting. */
-  activeSince: number | null;
-  nextBlinkAt: number;
-  doubleBlinkPending: boolean;
-};
-
-function newBlinkState(): BlinkState {
-  return {
-    activeSince: null,
-    nextBlinkAt: performance.now() + BLINK_INTERVAL_MIN + Math.random() * BLINK_INTERVAL_JITTER,
-    doubleBlinkPending: false,
-  };
-}
-
-/** Opacity of the eyeClosed frame at `elapsed` ms into an active blink (0 = fully open, 1 = fully shut). */
-function blinkOpacityAt(elapsed: number): number {
-  if (elapsed < BLINK_CLOSE_MS) return easeInOutQuad(elapsed / BLINK_CLOSE_MS);
-  if (elapsed < BLINK_CLOSE_MS + BLINK_HOLD_MS) return 1;
-  const openElapsed = elapsed - BLINK_CLOSE_MS - BLINK_HOLD_MS;
-  if (openElapsed < BLINK_OPEN_MS) return 1 - easeInOutQuad(openElapsed / BLINK_OPEN_MS);
-  return 0;
-}
-
 function useIrisTracking(
   containerRef: React.RefObject<HTMLDivElement | null>,
   geometryRef: React.RefObject<Geometry>,
@@ -286,17 +227,9 @@ function useIrisTracking(
     dark: null,
     light: null,
   });
-  const blinkRefs = useRef<Record<"dark" | "light", HTMLImageElement | null>>({
-    dark: null,
-    light: null,
-  });
   const saccades = useRef<Record<"dark" | "light", SaccadeState>>({
     dark: newSaccadeState(),
     light: newSaccadeState(),
-  });
-  const blinks = useRef<Record<"dark" | "light", BlinkState>>({
-    dark: newBlinkState(),
-    light: newBlinkState(),
   });
 
   const setDarkIrisRef = useCallback((el: HTMLImageElement | null) => {
@@ -304,12 +237,6 @@ function useIrisTracking(
   }, []);
   const setLightIrisRef = useCallback((el: HTMLImageElement | null) => {
     irisRefs.current.light = el;
-  }, []);
-  const setDarkBlinkRef = useCallback((el: HTMLImageElement | null) => {
-    blinkRefs.current.dark = el;
-  }, []);
-  const setLightBlinkRef = useCallback((el: HTMLImageElement | null) => {
-    blinkRefs.current.light = el;
   }, []);
 
   useEffect(() => {
@@ -395,32 +322,6 @@ function useIrisTracking(
           const py = Math.sin(angle) * radius * g.scale;
           el.style.transform = `translate3d(${px.toFixed(2)}px, ${py.toFixed(2)}px, 0)`;
         }
-
-        const b = blinks.current[theme];
-        if (b.activeSince === null && now >= b.nextBlinkAt) {
-          b.activeSince = now;
-          b.doubleBlinkPending = Math.random() < BLINK_DOUBLE_CHANCE;
-        }
-        let blinkOpacity = 0;
-        if (b.activeSince !== null) {
-          const elapsed = now - b.activeSince;
-          const blinkTotal = BLINK_CLOSE_MS + BLINK_HOLD_MS + BLINK_OPEN_MS;
-          if (elapsed < blinkTotal) {
-            blinkOpacity = blinkOpacityAt(elapsed);
-          } else if (b.doubleBlinkPending && elapsed < blinkTotal + BLINK_DOUBLE_GAP_MS) {
-            blinkOpacity = 0;
-          } else if (b.doubleBlinkPending) {
-            b.activeSince = now;
-            b.doubleBlinkPending = false;
-            blinkOpacity = blinkOpacityAt(0);
-          } else {
-            b.activeSince = null;
-            b.nextBlinkAt = now + BLINK_INTERVAL_MIN + Math.random() * BLINK_INTERVAL_JITTER;
-            blinkOpacity = 0;
-          }
-        }
-        const blinkEl = blinkRefs.current[theme];
-        if (blinkEl) blinkEl.style.opacity = blinkOpacity.toFixed(3);
       });
 
       raf = requestAnimationFrame(tick);
@@ -435,23 +336,18 @@ function useIrisTracking(
     };
   }, [containerRef, geometryRef]);
 
-  return {
-    iris: { dark: setDarkIrisRef, light: setLightIrisRef },
-    blink: { dark: setDarkBlinkRef, light: setLightBlinkRef },
-  };
+  return { dark: setDarkIrisRef, light: setLightIrisRef };
 }
 
 function EyeStack({
   theme,
   visibilityClass,
   irisRef,
-  blinkRef,
   geometry,
 }: {
   theme: "dark" | "light";
   visibilityClass: string;
   irisRef: (el: HTMLImageElement | null) => void;
-  blinkRef: (el: HTMLImageElement | null) => void;
   geometry: Geometry;
 }) {
   const asset = EYES[theme];
@@ -482,13 +378,6 @@ function EyeStack({
       >
         <img ref={irisRef} src={asset.iris} alt="" className="will-change-transform" style={fitStyle} />
       </div>
-      <img
-        ref={blinkRef}
-        src={asset.eyeClosed}
-        alt=""
-        className="will-change-[opacity]"
-        style={{ ...fitStyle, opacity: 0 }}
-      />
     </div>
   );
 }
@@ -496,7 +385,7 @@ function EyeStack({
 export function PageBackground() {
   const containerRef = useRef<HTMLDivElement>(null);
   const { geometry, geometryRef } = useCoverGeometry(containerRef);
-  const { iris, blink } = useIrisTracking(containerRef, geometryRef);
+  const setIrisRef = useIrisTracking(containerRef, geometryRef);
 
   return (
     <div
@@ -515,15 +404,13 @@ export function PageBackground() {
         <EyeStack
           theme="light"
           visibilityClass="dark:hidden"
-          irisRef={iris.light}
-          blinkRef={blink.light}
+          irisRef={setIrisRef.light}
           geometry={geometry}
         />
         <EyeStack
           theme="dark"
           visibilityClass="hidden dark:block"
-          irisRef={iris.dark}
-          blinkRef={blink.dark}
+          irisRef={setIrisRef.dark}
           geometry={geometry}
         />
       </div>
