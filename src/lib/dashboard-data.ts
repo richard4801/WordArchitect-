@@ -44,7 +44,7 @@ export const writingGoal = {
   writingTime: "8h 45m",
 };
 
-export type AiInsightTone = "warn" | "info" | "danger";
+export type AiInsightTone = "warn" | "purple" | "success";
 
 export const aiInsights: {
   id: string;
@@ -62,14 +62,14 @@ export const aiInsights: {
   },
   {
     id: "i2",
-    tone: "info",
+    tone: "purple",
     text: "Kaelen Duskryn hasn't appeared in 5 chapters.",
     linkLabel: "View Character",
     linkHref: "/projects/shadows-of-elarion/characters",
   },
   {
     id: "i3",
-    tone: "danger",
+    tone: "success",
     text: "Dialogue ratio dropped 18% in your last chapter.",
     linkLabel: "See Analysis",
     linkHref: "/projects/shadows-of-elarion/analytics",

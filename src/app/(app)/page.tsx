@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AlertTriangle,
   ArrowUp,
   Compass,
   FilePlus2,
@@ -13,8 +14,10 @@ import {
   ShieldCheck,
   Sparkles,
   Target,
+  TrendingDown,
   UserPlus,
   Users,
+  UserX,
 } from "lucide-react";
 import Link from "next/link";
 import { Sigil, Sparkle } from "@/components/brand-mark";
@@ -97,15 +100,17 @@ const QUICK_ACTIONS = [
 ];
 
 function QuickActionsRow() {
+  // Fixed-width tiles, not stretched to fill the row — the hero art shows
+  // through in the space to their right, same as the mockup.
   return (
-    <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
+    <div className="flex flex-wrap gap-3">
       {QUICK_ACTIONS.map((a) => {
         const Icon = a.icon;
         return (
           <Link
             key={a.label}
             href={a.href}
-            className="card card-hover flex flex-col items-center gap-2 px-3 py-4 text-center"
+            className="card card-hover flex w-24 shrink-0 flex-col items-center gap-2 px-2 py-3.5 text-center sm:w-28"
           >
             <Icon className="size-4 text-gold" strokeWidth={1.7} />
             <span className="text-xs text-ink-muted">{a.label}</span>
@@ -122,40 +127,43 @@ function ContinueWritingCard() {
     <section className="card card-hover p-6">
       <SectionHeading title="Continue Writing" />
 
-      <div className="relative overflow-hidden rounded-xl border border-line">
-        <CoverArt seed={continueWriting.title} className="block aspect-[16/8] w-full" />
-        <span className="absolute left-3 top-3 rounded-md bg-canvas/70 px-2 py-0.5 text-[0.6rem] font-semibold tracking-widest text-gold backdrop-blur">
-          ACTIVE
-        </span>
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-canvas/90 to-transparent p-5">
+      <div className="flex flex-col gap-5 sm:flex-row">
+        <div className="w-full shrink-0 sm:w-48">
+          <div className="relative overflow-hidden rounded-xl border border-line">
+            <CoverArt seed={continueWriting.title} className="block aspect-square w-full" />
+            <span className="absolute right-2 top-2 rounded-md bg-canvas/70 px-2 py-0.5 text-[0.6rem] font-semibold tracking-widest text-gold backdrop-blur">
+              ACTIVE
+            </span>
+          </div>
+          <Link
+            href={`/projects/${continueWriting.projectId}/chapters`}
+            className="mt-3 block w-full rounded-xl bg-gold px-4 py-2.5 text-center text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
+          >
+            Resume Writing
+          </Link>
+        </div>
+
+        <div className="flex min-w-0 flex-1 flex-col">
           <h3 className="font-display text-2xl text-ink">{continueWriting.title}</h3>
           <p className="text-sm text-ink-muted">{continueWriting.chapter}</p>
-        </div>
-      </div>
 
-      <div className="mt-5">
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-ink-muted">
-            {continueWriting.words.toLocaleString()} / {continueWriting.target.toLocaleString()} words
-          </span>
-          <span className="text-gold">{percent}%</span>
-        </div>
-        <Progress value={percent} className="mt-2" />
-      </div>
+          <div className="mt-4">
+            <Progress value={percent} />
+            <div className="mt-2 flex items-center justify-between text-sm">
+              <span className="text-ink-muted">
+                {continueWriting.words.toLocaleString()} / {continueWriting.target.toLocaleString()} words
+              </span>
+              <span className="text-gold">{percent}%</span>
+            </div>
+          </div>
 
-      <div className="mt-5 flex items-center gap-3">
-        <Link
-          href={`/projects/${continueWriting.projectId}/chapters`}
-          className="flex-1 rounded-xl bg-gold px-4 py-2.5 text-center text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
-        >
-          Resume Writing
-        </Link>
-        <Link
-          href={`/projects/${continueWriting.projectId}`}
-          className="flex-1 rounded-xl border border-line px-4 py-2.5 text-center text-sm text-ink-muted transition-colors hover:text-ink"
-        >
-          Open Project
-        </Link>
+          <Link
+            href={`/projects/${continueWriting.projectId}`}
+            className="mt-4 block w-full rounded-xl border border-line px-4 py-2.5 text-center text-sm text-ink-muted transition-colors hover:text-ink"
+          >
+            Open Project
+          </Link>
+        </div>
       </div>
     </section>
   );
@@ -173,7 +181,7 @@ function TodaysProgressCard() {
       </div>
 
       <div className="mt-4 flex flex-col items-center gap-6 sm:flex-row sm:items-start">
-        <div className="flex shrink-0 flex-col items-center gap-2.5">
+        <div className="shrink-0">
           <Ring
             value={percent}
             label={todaysProgress.words.toLocaleString()}
@@ -183,16 +191,19 @@ function TodaysProgressCard() {
             size={128}
             labelClassName="text-xl"
           />
-          <div className="text-center">
-            <div className="font-num text-lg text-gilded">{todaysProgress.streakDays}</div>
-            <div className="label-caps text-[0.6rem]">Day Streak</div>
-          </div>
         </div>
 
         <div className="min-w-0 flex-1">
           <MiniCalendar activeDays={todaysProgress.activeDays} today={todaysProgress.today} />
-          <p className="mt-3 text-center text-xs text-ink-faint">🔥 Keep it going!</p>
         </div>
+      </div>
+
+      <div className="mt-4 flex items-center justify-between border-t border-line pt-3">
+        <div>
+          <div className="font-num text-lg text-gilded">{todaysProgress.streakDays}</div>
+          <div className="label-caps text-[0.6rem]">Day Streak</div>
+        </div>
+        <p className="text-xs text-ink-faint">🔥 Keep it going!</p>
       </div>
     </section>
   );
@@ -218,11 +229,11 @@ function WeeklyStatsRow({ projects }: { projects: Project[] }) {
         <span className="font-num text-2xl text-ink">{projects.length}</span>
         <StatCaption text={`${active.length} in progress`} up={false} />
       </StatTile>
-      <StatTile label="Characters">
+      <StatTile label="Characters" badgeIcon={UserPlus} badgeTone="bg-purple/15 text-purple">
         <span className="font-num text-2xl text-ink">{characters}</span>
         <StatCaption text="3 this week" />
       </StatTile>
-      <StatTile label="World Entries">
+      <StatTile label="World Entries" badgeIcon={Globe2} badgeTone="bg-info/15 text-info">
         <span className="font-num text-2xl text-ink">{worldEntries}</span>
         <StatCaption text="7 this week" />
       </StatTile>
@@ -234,10 +245,27 @@ function WeeklyStatsRow({ projects }: { projects: Project[] }) {
   );
 }
 
-function StatTile({ label, children }: { label: string; children: React.ReactNode }) {
+function StatTile({
+  label,
+  badgeIcon: BadgeIcon,
+  badgeTone = "",
+  children,
+}: {
+  label: string;
+  badgeIcon?: typeof PenLine;
+  badgeTone?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="card p-4">
-      <p className="label-caps text-[0.6rem]">{label}</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="label-caps text-[0.6rem]">{label}</p>
+        {BadgeIcon && (
+          <span className={`grid size-7 shrink-0 place-items-center rounded-full ${badgeTone}`}>
+            <BadgeIcon className="size-3.5" strokeWidth={1.7} />
+          </span>
+        )}
+      </div>
       <div className="mt-2">{children}</div>
     </div>
   );
@@ -252,10 +280,10 @@ function StatCaption({ text, up = true }: { text: string; up?: boolean }) {
   );
 }
 
-const INSIGHT_TONE_DOT: Record<AiInsightTone, string> = {
-  warn: "bg-warn",
-  info: "bg-info",
-  danger: "bg-danger",
+const INSIGHT_TONE_BADGE: Record<AiInsightTone, { icon: typeof PenLine; className: string }> = {
+  warn: { icon: AlertTriangle, className: "bg-warn/15 text-warn" },
+  purple: { icon: UserX, className: "bg-purple/15 text-purple" },
+  success: { icon: TrendingDown, className: "bg-success/15 text-success" },
 };
 
 function AiInsightsCard() {
@@ -268,17 +296,25 @@ function AiInsightsCard() {
         </span>
       </div>
       <ul className="mt-3 space-y-4">
-        {aiInsights.map((insight) => (
-          <li key={insight.id} className="flex gap-2.5 text-sm">
-            <span className={`mt-1.5 size-1.5 shrink-0 rounded-full ${INSIGHT_TONE_DOT[insight.tone]}`} />
-            <div className="min-w-0">
-              <p className="text-ink-muted">{insight.text}</p>
-              <Link href={insight.linkHref} className="text-xs text-gold hover:opacity-80">
-                {insight.linkLabel} →
-              </Link>
-            </div>
-          </li>
-        ))}
+        {aiInsights.map((insight) => {
+          const badge = INSIGHT_TONE_BADGE[insight.tone];
+          const Icon = badge.icon;
+          return (
+            <li key={insight.id} className="flex gap-2.5 text-sm">
+              <span
+                className={`grid size-6 shrink-0 place-items-center rounded-full ${badge.className}`}
+              >
+                <Icon className="size-3" strokeWidth={1.7} />
+              </span>
+              <div className="min-w-0">
+                <p className="text-ink-muted">{insight.text}</p>
+                <Link href={insight.linkHref} className="text-xs text-gold hover:opacity-80">
+                  {insight.linkLabel} →
+                </Link>
+              </div>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
@@ -292,11 +328,11 @@ const ACTIVITY_ICON: Record<ActivityKind, typeof PenLine> = {
   note: FileText,
 };
 const ACTIVITY_TONE: Record<ActivityKind, string> = {
-  wrote: "text-gold",
-  character: "text-purple",
-  world: "text-info",
-  session: "text-success",
-  note: "text-warn",
+  wrote: "bg-gold/20 text-gold",
+  character: "bg-purple/20 text-purple",
+  world: "bg-info/20 text-info",
+  session: "bg-success/20 text-success",
+  note: "bg-warn/20 text-warn",
 };
 
 function ActivityCard() {
@@ -309,7 +345,7 @@ function ActivityCard() {
           return (
             <li key={item.id} className="flex items-center gap-3 py-3">
               <span
-                className={`grid size-8 shrink-0 place-items-center rounded-full border border-line ${ACTIVITY_TONE[item.kind]}`}
+                className={`grid size-8 shrink-0 place-items-center rounded-lg ${ACTIVITY_TONE[item.kind]}`}
               >
                 <Icon className="size-3.5" strokeWidth={1.7} />
               </span>
@@ -334,21 +370,23 @@ function WritingGoalCard() {
         </button>
       </div>
 
-      <p className="label-caps mt-3">Monthly Goal</p>
-      <div className="mt-1.5 flex items-center justify-between text-sm text-ink">
-        <span>
-          {writingGoal.current.toLocaleString()} / {writingGoal.target.toLocaleString()} words
-        </span>
-        <span className="text-gold">{percent}%</span>
+      <div className="mt-4 rounded-xl bg-surface-2/60 p-4">
+        <p className="text-sm font-medium text-ink">Monthly Goal</p>
+        <div className="mt-2 flex items-center justify-between text-sm text-ink">
+          <span>
+            {writingGoal.current.toLocaleString()} / {writingGoal.target.toLocaleString()} words
+          </span>
+          <span className="text-gold">{percent}%</span>
+        </div>
+        <Progress value={percent} className="mt-2" />
       </div>
-      <Progress value={percent} className="mt-2" />
 
-      <div className="mt-5 border-t border-line pt-4">
+      <div className="mt-5">
         <p className="label-caps">This Month</p>
-        <div className="mt-2 flex divide-x divide-line">
-          <MiniStat value={writingGoal.daysActive} label="Days Active" className="pr-5" />
-          <MiniStat value={`${writingGoal.consistencyPercent}%`} label="Consistency" className="px-5" />
-          <MiniStat value={writingGoal.writingTime} label="Writing Time" className="pl-5" />
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <MiniStat value={writingGoal.daysActive} label="Days Active" />
+          <MiniStat value={`${writingGoal.consistencyPercent}%`} label="Consistency" />
+          <MiniStat value={writingGoal.writingTime} label="Writing Time" />
         </div>
       </div>
     </section>
@@ -389,7 +427,7 @@ function ProjectCard({ project, featured }: { project: Project; featured: boolea
   return (
     <Link href={`/projects/${project.id}`} className="card card-hover block overflow-hidden">
       <div className="relative">
-        <CoverArt seed={project.id} className="block aspect-[3/4] w-full" />
+        <CoverArt seed={project.id} className="block aspect-[8/5] w-full" />
         {featured && (
           <span className="absolute left-3 top-3 rounded-md bg-canvas/70 px-2 py-0.5 text-[0.6rem] font-semibold tracking-widest text-gold backdrop-blur">
             ACTIVE

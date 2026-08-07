@@ -42,15 +42,14 @@ export default function AppLayout({
               className="btn-raised relative grid size-9 place-items-center rounded-full text-ink-muted transition-all hover:text-gold"
             >
               <Bell className="size-4" />
-              <span className="absolute right-2 top-2 size-1.5 rounded-full bg-danger" />
+              <span className="absolute right-2 top-2 size-1.5 rounded-full bg-gold" />
             </button>
             <button
               type="button"
               aria-label="Messages"
-              className="btn-raised relative grid size-9 place-items-center rounded-full text-ink-muted transition-all hover:text-gold"
+              className="btn-raised grid size-9 place-items-center rounded-full text-ink-muted transition-all hover:text-gold"
             >
               <Mail className="size-4" />
-              <span className="absolute right-2 top-2 size-1.5 rounded-full bg-danger" />
             </button>
             <ThemeToggle />
             <button
@@ -60,7 +59,7 @@ export default function AppLayout({
             >
               <span
                 className="size-7 shrink-0 rounded-full border border-line-strong bg-cover"
-                style={{ backgroundImage: "var(--hero)", backgroundPosition: "60% 36%" }}
+                style={{ backgroundImage: "var(--hero)", backgroundPosition: "68% 25%" }}
                 aria-hidden
               />
               <ChevronDown className="size-3.5 text-ink-muted" />

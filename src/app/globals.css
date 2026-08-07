@@ -47,14 +47,15 @@
   --low: #a09487;
 
   /* Hero compositing */
-  /* Full landscape hero art (face composed on the right, open space on the
-     left for the welcome text). Light and dark are matched crops, so a single
-     cover/position works for both and nothing shifts on theme toggle. */
+  /* Portrait hero art (eye reflecting a distant castle), pinned top-right so
+     open space falls on the left for the welcome text. Light and dark are
+     matched compositions, so a single size/position works for both and
+     nothing shifts on theme toggle. */
   --hero: url("/hero-light.png");
-  /* Zoomed OUT below full-width so the whole face reads at a smaller scale,
-     pinned to the right; the empty gap falls on the left where it matches the
-     canvas tone. Shared by both matched crops so nothing shifts on toggle. */
-  --hero-size: 72%;
+  /* Width-based sizing (height follows the portrait's own aspect ratio) —
+     tall enough that the castle low in the frame still shows above the
+     bottom fade. Shared by both matched crops so nothing shifts on toggle. */
+  --hero-size: 46%;
   --hero-pos: right top;
   --wash-rgb: 250, 248, 245;
   --hero-lower-bright: 1.08;
@@ -63,11 +64,11 @@
      stats and fades back out below them (light-on-light needs no bottom edge). */
   --hero-stat-grad: linear-gradient(
     to bottom,
-    transparent 24vh,
-    rgba(250, 248, 245, 0.4) 42vh,
-    rgba(250, 248, 245, 0.68) 51vh,
-    rgba(250, 248, 245, 0.18) 66vh,
-    transparent 80vh
+    transparent 14vh,
+    rgba(250, 248, 245, 0.4) 26vh,
+    rgba(250, 248, 245, 0.68) 34vh,
+    rgba(250, 248, 245, 0.18) 48vh,
+    transparent 62vh
   );
 
   /* Carved-material card */
@@ -116,12 +117,11 @@
   --low: #a09487;
 
   /* Hero compositing */
-  /* Full landscape hero art — matched crop of the light version, so cover +
-     position are shared across both themes and the face stays put on toggle. */
+  /* Portrait hero art — matched composition to the light version, so
+     size/position are shared across both themes and the face stays put on
+     toggle. */
   --hero: url("/hero-dark.png");
-  /* Matched crop of the light art — same cover/position frames the eye
-     identically and the face stays put on theme toggle. */
-  --hero-size: 72%;
+  --hero-size: 46%;
   --hero-pos: right top;
   --wash-rgb: 10, 10, 11; /* near-black neutral, matches canvas */
   --hero-lower-bright: 0.32;
@@ -133,11 +133,11 @@
      origin/bottom edge is never visible. Full-bleed = no side edge. */
   --hero-stat-grad: linear-gradient(
     to bottom,
-    transparent 20vh,
-    rgba(0, 0, 0, 0.18) 34vh,
-    rgba(0, 0, 0, 0.42) 45vh,
-    rgba(0, 0, 0, 0.62) 51vh,
-    rgba(0, 0, 0, 0.9) 57vh,
+    transparent 12vh,
+    rgba(0, 0, 0, 0.18) 22vh,
+    rgba(0, 0, 0, 0.42) 30vh,
+    rgba(0, 0, 0, 0.62) 36vh,
+    rgba(0, 0, 0, 0.9) 42vh,
     rgba(0, 0, 0, 0.9) 100%
   );
 

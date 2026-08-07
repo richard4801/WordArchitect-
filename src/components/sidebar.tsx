@@ -120,7 +120,7 @@ export function Sidebar() {
           <div className="flex items-center gap-3">
             <span
               className="size-10 shrink-0 rounded-full border border-line-strong bg-cover"
-              style={{ backgroundImage: "var(--hero)", backgroundPosition: "60% 36%" }}
+              style={{ backgroundImage: "var(--hero)", backgroundPosition: "68% 25%" }}
               aria-hidden
             />
             <div className="min-w-0 flex-1">

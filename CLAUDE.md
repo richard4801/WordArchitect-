@@ -36,11 +36,12 @@ writer's side). Tagline: **"Write. Craft. Conquer."**
   locally: temporarily empty `projects-data.ts`'s `projects` array, rebuild,
   screenshot, then revert — there's no UI toggle for it (matches the "resets
   the whole store" nature of every other mock-data flow in this app).
-- **PENDING**: the Dashboard's hero artwork (portrait "eye reflecting a
-  castle landscape" piece, dark + light versions) was supplied as pasted
-  chat images, which don't reach the filesystem — only `public/hero-dark.png`
-  / `hero-light.png` (the older, different crop) exist on disk. Swap them in
-  once the user provides the actual files.
+- **Pasted chat images never reach the filesystem** — only visual access, no
+  file. When a mockup/asset is shared that way, ask the user to save it into
+  the repo (they can upload directly via the GitHub web UI onto the working
+  branch — see the `resources/dashboard-mockup.png` / `dark.png` / `light.png`
+  history for the pattern) rather than guessing from memory. This cost real
+  rework once already on the Dashboard redesign — don't repeat it.
 
 ## 2. Tech stack
 
@@ -160,9 +161,21 @@ public/
   hero-dark.png hero-light.png   # the hero artwork actually used at runtime (dashboard only)
   sidebar-bg.webp        # ornate astrolabe/constellation sidebar background
 resources/
-  dark.png light.png     # SOURCE hero art (matched 16:9 landscape crops of the oracle face)
+  dark.png light.png     # SOURCE hero art — portrait "eye reflecting a distant
+                         #   castle" composition (1024x1536), pinned top-right
+                         #   via --hero-size/--hero-pos so the face bleeds off
+                         #   the top/right edge and the castle shows lower-left
+                         #   as the image continues down (see §5)
   sidebar-bg.webp        # SOURCE sidebar artwork (same file as public/, kept for record)
   design-system.png      # the official colour-system reference image
+  dashboard-mockup.png   # the Dashboard reference mockup (New User + Returning
+                         #   User panels side by side) — measure against this
+                         #   file directly (crop + grid-overlay with PIL) rather
+                         #   than eyeballing a chat screenshot; that's how the
+                         #   structural deltas in the Oct 2026 redesign pass
+                         #   were actually found (quick-actions tile width,
+                         #   Continue Writing's two-column layout, icon badge
+                         #   styles, etc.)
   README.md
 DESIGN_SYSTEM.md         # full visual spec (colours, fonts, materials)
 ```
@@ -193,23 +206,33 @@ DESIGN_SYSTEM.md         # full visual spec (colours, fonts, materials)
 - **Header icon chips** (`.btn-raised`) are **translucent** (semi-opaque fill +
   `backdrop-filter: blur`), not solid discs.
 - **Hero image** (`page-background.tsx`): the source art (`resources/dark.png` /
-  `light.png`, copied to `public/hero-*.png`) is a matched 16:9 landscape crop —
-  face on the right, quiet space on the left for the welcome text.
-  - Light & dark are **matched crops**, so one `--hero-size` / `--hero-pos`
-    serves both and the face never moves on theme toggle.
-  - Scaled **below** full width (`--hero-size: 72%`, `--hero-pos: right top`) so
-    the whole face reads and it bleeds off the top edge (no top seam / no black
-    cover-up). Two intersecting masks feather the left & bottom into the canvas;
-    top and right bleed off-screen.
-- **The stat "shadow"** (the dark pool grounding the hero stats) lives in
-  `PageBackground` as a **full-bleed** layer (`--hero-stat-grad`), *not* inside
-  the content. This was iterated on heavily. Rules that must hold:
+  `light.png`, copied to `public/hero-*.png`) is a **portrait** (1024x1536)
+  "eye reflecting a distant castle" composition — the eye sits in the upper
+  ~68%/25% of the frame, the castle lower-left around 24%/55%.
+  - Light & dark are **matched compositions**, so one `--hero-size` /
+    `--hero-pos` serves both and the face never moves on theme toggle.
+  - `--hero-size: 46%` (width-based; height follows the portrait's own aspect
+    ratio) at `--hero-pos: right top`, inside a **`h-[95vh]`** band (taller
+    than the old 16:9 mechanism needed, so the castle low in the frame clears
+    the bottom fade before it cuts off). Bleeds off the top and right edges;
+    two intersecting masks feather only the left and bottom into canvas.
+  - Small circular hero-crops elsewhere (header avatar, sidebar profile photo)
+    use `background-position: "68% 25%"` on `var(--hero)` to center on the eye.
+  - If the source art changes again, re-derive `--hero-size`/`--hero-pos`/the
+    band height from the new image's own eye/subject coordinates — don't just
+    keep the old numbers. `resources/README.md`-style grid-overlay measurement
+    (crop the source with PIL, draw a coordinate grid, read pixel positions)
+    is far faster than eyeballing.
+- **The stat "shadow"** (the dark pool grounding the quick-actions row) lives
+  in `PageBackground` as a **full-bleed** layer (`--hero-stat-grad`), *not*
+  inside the content. This was iterated on heavily. Rules that must hold:
   - Full-bleed so it has **no left/right edge**.
-  - A `to bottom` linear gradient that fades in **above** the stats and stays
-    dark **from the stats all the way down to the page's end** → **no bottom
+  - A `to bottom` linear gradient that fades in **above** the row and stays
+    dark **from the row all the way down to the page's end** → **no bottom
     edge** (its origin is never visible; the opaque cards hide it).
-  - `vh` stops target the stats' on-screen position (stats sit ≈ 44–50vh at
-    1440×900; re-probe if the hero height changes).
+  - `vh` stops target the quick-actions row's on-screen position (sits
+    ≈ 12–22vh at 1536×1024 with the current, shorter hero-text block;
+    re-probe if the hero text or row height changes).
   - Dark mode = real dark pool; light mode = bounded soft halo.
 - **The hero background is dashboard-only** — every other page has a plain
   canvas background, no oracle face. `(app)/layout.tsx` is a client component
