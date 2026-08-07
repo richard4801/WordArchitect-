@@ -23,8 +23,8 @@ function Panel({ children, onClose }: { children: React.ReactNode; onClose: () =
         onClick={onClose}
         className="fixed inset-0 z-10 cursor-default"
       />
-      <div className="card-2 absolute inset-x-0 top-full z-20 mt-1.5 max-h-60 overflow-y-auto p-2">
-        {children}
+      <div className="absolute inset-x-0 top-full z-20 mt-1.5">
+        <div className="card-2 max-h-60 overflow-y-auto p-2">{children}</div>
       </div>
     </>
   );
