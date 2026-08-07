@@ -1,11 +1,12 @@
 /**
  * Full-bleed hero background — a portrait "eye reflecting a distant castle"
- * piece, covering the entire viewport edge to edge with no crop games, no
- * mask, no wash, no fade, no shadow. `fixed` (not `absolute`) so `cover`
- * sizes against the viewport itself rather than the page's full scroll
- * height — otherwise a tall dashboard would stretch/crop the composition.
- * Light and dark are matched crops, so one position works for both and
- * nothing shifts on theme toggle.
+ * piece, stretched to exactly match the viewport (`background-size: 100%
+ * 100%`, same technique as `sidebar-bg.webp`) rather than `cover`, which
+ * crops/zooms to preserve aspect ratio. No mask, no wash, no fade, no
+ * shadow — just the artwork at the page's own size. `fixed` (not
+ * `absolute`) so it sizes against the viewport itself rather than the full
+ * scroll height of a tall dashboard. Light and dark are matched crops, so
+ * one position works for both and nothing shifts on theme toggle.
  */
 export function PageBackground() {
   return (
@@ -15,7 +16,7 @@ export function PageBackground() {
       style={{
         backgroundImage: "var(--hero)",
         backgroundPosition: "var(--hero-pos)",
-        backgroundSize: "cover",
+        backgroundSize: "100% 100%",
       }}
     />
   );
