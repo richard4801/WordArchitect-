@@ -6,7 +6,6 @@ import {
   BarChart3,
   Bold,
   BookOpen,
-  ChevronDown,
   ChevronLeft,
   Clock,
   Eye,
@@ -28,6 +27,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { DropdownSelect, MultiSelectDropdown } from "@/components/ui/dropdown-select";
 import { useRef, useState } from "react";
 import { createProject } from "@/lib/project-store";
 
@@ -112,7 +112,6 @@ export default function NewProjectPage() {
   const [description, setDescription] = useState("");
   const [primaryGenre, setPrimaryGenre] = useState("");
   const [subgenres, setSubgenres] = useState<string[]>([]);
-  const [subgenrePickerOpen, setSubgenrePickerOpen] = useState(false);
   const [themes, setThemes] = useState("");
   const [pov, setPov] = useState("");
   const [tense, setTense] = useState("");
@@ -130,12 +129,6 @@ export default function NewProjectPage() {
     const t = TEMPLATES.find((tpl) => tpl.id === id)!;
     if (t.genre) setPrimaryGenre(t.genre);
     if (t.subgenres) setSubgenres(t.subgenres);
-  }
-
-  function toggleSubgenre(name: string) {
-    setSubgenres((prev) =>
-      prev.includes(name) ? prev.filter((s) => s !== name) : [...prev, name],
-    );
   }
 
   function handleCoverPick(file: File | undefined) {
@@ -258,69 +251,28 @@ export default function NewProjectPage() {
               <label className="text-sm text-ink">
                 Primary Genre <span className="text-danger">*</span>
               </label>
-              <div className="relative mt-1.5">
-                <select
-                  value={primaryGenre}
-                  onChange={(e) => {
-                    setPrimaryGenre(e.target.value);
-                    if (e.target.value) setGenreError(false);
-                  }}
-                  className={`w-full appearance-none rounded-xl border bg-surface px-4 py-2.5 text-sm focus:outline-none ${
-                    primaryGenre ? "text-ink" : "text-ink-faint"
-                  } ${titleError || genreError ? "" : ""} ${
-                    genreError ? "border-danger" : "border-line focus:border-line-strong"
-                  }`}
-                >
-                  <option value="">Select primary genre</option>
-                  {PRIMARY_GENRES.map((g) => (
-                    <option key={g} value={g}>
-                      {g}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2 text-ink-faint" />
-              </div>
+              <DropdownSelect
+                value={primaryGenre}
+                onChange={(v) => {
+                  setPrimaryGenre(v);
+                  setGenreError(false);
+                }}
+                options={PRIMARY_GENRES}
+                placeholder="Select primary genre"
+                error={genreError}
+                className="mt-1.5"
+              />
             </div>
 
-            <div className="relative mt-4">
+            <div className="mt-4">
               <label className="text-sm text-ink">Subgenres (Optional)</label>
-              <button
-                type="button"
-                onClick={() => setSubgenrePickerOpen((o) => !o)}
-                className="mt-1.5 flex w-full items-center justify-between rounded-xl border border-line bg-surface px-4 py-2.5 text-left text-sm focus:border-line-strong focus:outline-none"
-              >
-                <span className={subgenres.length ? "text-ink" : "text-ink-faint"}>
-                  {subgenres.length ? subgenres.join(", ") : "Select one or more subgenres"}
-                </span>
-                <ChevronDown className="size-3.5 shrink-0 text-ink-faint" />
-              </button>
-
-              {subgenrePickerOpen && (
-                <>
-                  <button
-                    type="button"
-                    aria-label="Close subgenre picker"
-                    onClick={() => setSubgenrePickerOpen(false)}
-                    className="fixed inset-0 z-10 cursor-default"
-                  />
-                  <div className="card-2 absolute inset-x-0 top-full z-20 mt-1.5 max-h-56 overflow-y-auto p-2">
-                    {SUBGENRE_OPTIONS.map((s) => (
-                      <label
-                        key={s}
-                        className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={subgenres.includes(s)}
-                          onChange={() => toggleSubgenre(s)}
-                          className="accent-gold"
-                        />
-                        {s}
-                      </label>
-                    ))}
-                  </div>
-                </>
-              )}
+              <MultiSelectDropdown
+                value={subgenres}
+                onChange={setSubgenres}
+                options={SUBGENRE_OPTIONS}
+                placeholder="Select one or more subgenres"
+                className="mt-1.5"
+              />
             </div>
 
             <div className="mt-4">
@@ -540,23 +492,13 @@ function SelectField({
         <Icon className="size-3.5 text-ink-faint" />
         {label}
       </label>
-      <div className="relative mt-1.5">
-        <select
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className={`w-full appearance-none rounded-xl border border-line bg-surface px-4 py-2.5 text-sm focus:border-line-strong focus:outline-none ${
-            value ? "text-ink" : "text-ink-faint"
-          }`}
-        >
-          <option value="">{placeholder}</option>
-          {options.map((o) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </select>
-        <ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2 text-ink-faint" />
-      </div>
+      <DropdownSelect
+        value={value}
+        onChange={onChange}
+        options={options}
+        placeholder={placeholder}
+        className="mt-1.5"
+      />
     </div>
   );
 }

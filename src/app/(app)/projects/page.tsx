@@ -2,7 +2,6 @@
 
 import {
   BookOpen,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -19,6 +18,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { DropdownSelect } from "@/components/ui/dropdown-select";
 import { Progress } from "@/components/ui/progress";
 import { Ring } from "@/components/ui/ring";
 import { CoverArt } from "@/components/ui/cover-art";
@@ -37,6 +37,13 @@ import { useProjects } from "@/lib/project-store";
 const PER_PAGE = 6;
 type StatusFilter = "all" | ProjectStatus;
 type SortKey = "recent" | "title" | "progress" | "words";
+
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: "recent", label: "Recently Updated" },
+  { key: "title", label: "Title (A–Z)" },
+  { key: "progress", label: "Progress" },
+  { key: "words", label: "Words Written" },
+];
 
 export default function ProjectsPage() {
   const projects = useProjects();
@@ -134,42 +141,30 @@ export default function ProjectsPage() {
           />
         </div>
 
-        <div className="relative shrink-0">
-          <Filter className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-ink-faint" />
-          <select
-            value={genreFilter}
-            onChange={(e) => {
-              setGenreFilter(e.target.value);
+        <div className="relative shrink-0 sm:w-56">
+          <Filter className="pointer-events-none absolute left-3 top-1/2 z-10 size-3.5 -translate-y-1/2 text-ink-faint" />
+          <DropdownSelect
+            value={genreFilter === "all" ? "All Genres" : genreFilter}
+            onChange={(v) => {
+              setGenreFilter(v === "All Genres" ? "all" : v);
               setPage(1);
             }}
-            className="appearance-none rounded-xl border border-line bg-surface py-2.5 pl-8 pr-8 text-sm text-ink-muted focus:border-line-strong focus:outline-none"
-          >
-            <option value="all">All Genres</option>
-            {genreOptions.map((g) => (
-              <option key={g} value={g}>
-                {g}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2 text-ink-faint" />
+            options={["All Genres", ...genreOptions]}
+            placeholder="All Genres"
+            triggerClassName="pl-8"
+          />
         </div>
 
-        <div className="relative shrink-0">
-          <select
-            value={sort}
-            onChange={(e) => {
-              setSort(e.target.value as SortKey);
-              setPage(1);
-            }}
-            className="appearance-none rounded-xl border border-line bg-surface py-2.5 pl-4 pr-8 text-sm text-ink-muted focus:border-line-strong focus:outline-none"
-          >
-            <option value="recent">Recently Updated</option>
-            <option value="title">Title (A–Z)</option>
-            <option value="progress">Progress</option>
-            <option value="words">Words Written</option>
-          </select>
-          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2 text-ink-faint" />
-        </div>
+        <DropdownSelect
+          value={SORT_OPTIONS.find((o) => o.key === sort)!.label}
+          onChange={(label) => {
+            setSort(SORT_OPTIONS.find((o) => o.label === label)!.key);
+            setPage(1);
+          }}
+          options={SORT_OPTIONS.map((o) => o.label)}
+          placeholder="Recently Updated"
+          className="shrink-0 sm:w-52"
+        />
       </div>
 
       <div className="flex items-center gap-6 overflow-x-auto border-b border-line text-sm">
