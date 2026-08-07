@@ -206,44 +206,40 @@ DESIGN_SYSTEM.md         # full visual spec (colours, fonts, materials)
 - **Header icon chips** (`.btn-raised`) are **translucent** (semi-opaque fill +
   `backdrop-filter: blur`), not solid discs.
 - **Hero image** (`page-background.tsx`): the source art (`resources/dark.png` /
-  `light.png`, copied to `public/hero-*.png`) is a **portrait** (1024x1536)
-  "eye reflecting a distant castle" composition — the eye sits in the upper
-  ~68%/25% of the frame, the castle lower-left around 24%/55%.
-  - Light & dark are **matched compositions**, so one `--hero-size` /
-    `--hero-pos` serves both and the face never moves on theme toggle.
-  - `--hero-size: 46%` (width-based; height follows the portrait's own aspect
-    ratio) at `--hero-pos: right top`, inside a **`h-[95vh]`** band. Bleeds
-    off the top and right edges.
+  `light.png`, copied to `public/hero-*.png`) is a **landscape** (1672×941,
+  ~16:9) "eye reflecting a distant castle" composition, generated wide
+  specifically so it can cover the page at any viewport ratio — the eye sits
+  at roughly **75%/30%** of the frame, the castle spans the left two-thirds.
+  - Light & dark are **matched compositions**, so one `--hero-pos` serves
+    both and the eye never moves on theme toggle.
+  - `--hero-size: cover`, `--hero-pos: 75% 30%` (the position doubles as the
+    focal point cover crops around on any axis that overflows — keeps the
+    eye in frame across reasonable desktop aspect ratios; an unrealistically
+    tall/narrow viewport can still crop it out, but this is a desktop-only
+    app, sidebar included, so that's an acceptable edge case).
+  - `PageBackground`'s root is `fixed inset-0`, not `absolute` — `cover`
+    sizes against the **viewport**, not the page's full scroll height. A tall
+    scrolling dashboard under `absolute` would make `cover` scale against
+    scroll height instead and crop unpredictably.
   - **No CSS overlay of any kind** — no wash, no fade, no shadow, no
     `mask-image`. `PageBackground` sets only
     `backgroundImage`/`backgroundPosition`/`backgroundSize` on a single div.
-    This was explicit, repeated user direction: any color wash read as
-    "dimming," and even a pure-alpha `mask-image` feather (no color, just
-    transparency) still read as "a card blocking the art." Don't reintroduce
-    either.
-  - Instead, **the soft edge is baked into the PNG files themselves**: both
-    `resources/{dark,light}.png` (and their `public/hero-*.png` copies) are
-    RGBA with a real alpha-channel gradient — fully opaque through most of
-    the frame, fading to 0 over the leftmost ~16% of width and the bottom
-    ~14% of height. Generated with PIL + numpy (open RGB, build a `float32`
-    alpha ramp with `np.linspace`, write it into the array's alpha channel,
-    save as RGBA) — see git history on this file for the exact script if the
-    source art changes again. This is what makes "no CSS treatment, no hard
-    seam" both true at once: the fade is part of the asset, not a layer on
-    top of it.
+    This was explicit, repeated user direction from an earlier (portrait,
+    46%-width) version of this art: any color wash read as "dimming," and
+    even a pure-alpha `mask-image` feather (no color, just transparency)
+    still read as "a card blocking the art." With `cover` there's no boundary
+    to feather anyway — the image always fills the container completely, so
+    the seam problem that motivated those experiments doesn't exist here.
   - Small circular hero-crops elsewhere (header avatar, sidebar profile photo)
-    use `background-position: "68% 25%"` on `var(--hero)` to center on the eye.
-  - If the source art changes again, re-derive `--hero-size`/`--hero-pos`/the
-    band height AND regenerate the alpha-fade PNGs from the new image's own
-    eye/subject coordinates and dimensions — don't just keep the old numbers.
-    `resources/README.md`-style grid-overlay measurement (crop the source
-    with PIL, draw a coordinate grid, read pixel positions) is far faster
-    than eyeballing.
-- Historical note: earlier revisions of this hero treatment had a full-bleed
-  "stat shadow" gradient (`--hero-stat-grad`) grounding the area below the
-  hero text. It's gone — removed along with the rest of the overlay
-  treatment — and the CSS token was deleted from `globals.css`. Don't
-  resurrect it without a fresh explicit request.
+    use `background-position: "75% 27%"` on `var(--hero)` to center on the eye.
+  - If the source art changes again: regenerate it **wide** (16:9 or wider —
+    a portrait image fighting a landscape page is what caused most of the
+    back-and-forth that led here), re-measure the eye's coordinates as
+    fractions of the new image's width/height (crop with PIL, draw a
+    coordinate grid, read pixel positions — far faster than eyeballing), and
+    update `--hero-pos` and the two `75% 27%` avatar crops to match. Don't
+    reintroduce a percentage-width `--hero-size` or any mask/wash — `cover`
+    + a focal-point position is the settled approach.
 - **The hero background is dashboard-only** — every other page has a plain
   canvas background, no oracle face. `(app)/layout.tsx` is a client component
   (`usePathname`) that renders `<PageBackground />` only when

@@ -59,7 +59,7 @@ export default function AppLayout({
             >
               <span
                 className="size-7 shrink-0 rounded-full border border-line-strong bg-cover"
-                style={{ backgroundImage: "var(--hero)", backgroundPosition: "68% 25%" }}
+                style={{ backgroundImage: "var(--hero)", backgroundPosition: "75% 27%" }}
                 aria-hidden
               />
               <ChevronDown className="size-3.5 text-ink-muted" />

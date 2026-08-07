@@ -47,16 +47,17 @@
   --low: #a09487;
 
   /* Hero compositing */
-  /* Portrait hero art (eye reflecting a distant castle), pinned top-right so
-     open space falls on the left for the welcome text. Light and dark are
-     matched compositions, so a single size/position works for both and
-     nothing shifts on theme toggle. */
+  /* Landscape hero art (16:9-ish, eye at ~75%/27%, castle spanning the left
+     two-thirds) — generated wide specifically so background-size: cover can
+     fill the page at any viewport ratio without cropping into either. Light
+     and dark are matched compositions, so a single position works for both
+     and nothing shifts on theme toggle. */
   --hero: url("/hero-light.png");
-  /* Width-based sizing (height follows the portrait's own aspect ratio) —
-     tall enough that the castle low in the frame still shows above the
-     bottom fade. Shared by both matched crops so nothing shifts on toggle. */
-  --hero-size: 46%;
-  --hero-pos: right top;
+  --hero-size: cover;
+  /* Focal point ~= the eye's own position in the source art, so cover's
+     crop (whichever axis overflows) stays centered on it instead of the
+     image's raw geometric center. */
+  --hero-pos: 75% 30%;
   --wash-rgb: 250, 248, 245;
   --hero-lower-bright: 1.08;
   --grain-opacity: 0.3;
@@ -107,12 +108,12 @@
   --low: #a09487;
 
   /* Hero compositing */
-  /* Portrait hero art — matched composition to the light version, so
-     size/position are shared across both themes and the face stays put on
+  /* Landscape hero art — matched composition to the light version, so
+     size/position are shared across both themes and the eye stays put on
      toggle. */
   --hero: url("/hero-dark.png");
-  --hero-size: 46%;
-  --hero-pos: right top;
+  --hero-size: cover;
+  --hero-pos: 75% 30%;
   --wash-rgb: 10, 10, 11; /* near-black neutral, matches canvas */
   --hero-lower-bright: 0.32;
   --grain-opacity: 0.5;
