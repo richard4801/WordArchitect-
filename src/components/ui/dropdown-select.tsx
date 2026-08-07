@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 /**
  * Custom single/multi-select dropdown: a themed trigger + a `.card-2` panel
@@ -14,7 +14,39 @@ import { useState } from "react";
 const TRIGGER_BASE =
   "flex w-full items-center justify-between gap-2 rounded-xl border bg-surface px-4 py-2.5 text-left text-sm focus:outline-none";
 
-function Panel({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+// Panel height estimate (max-h-60 = 240px + the top/bottom margin gap).
+const PANEL_HEIGHT_ESTIMATE = 256;
+
+/**
+ * Flips the panel above the trigger when there isn't enough viewport room
+ * below it — without this, a trigger low on a long form opens a panel that
+ * renders off-screen, so the user's cursor never actually reaches it and
+ * scroll input falls through to the page instead of the panel.
+ */
+function usePanelPlacement(open: boolean) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [openUpward, setOpenUpward] = useState(false);
+
+  useLayoutEffect(() => {
+    if (!open || !containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    setOpenUpward(spaceBelow < PANEL_HEIGHT_ESTIMATE && spaceAbove > spaceBelow);
+  }, [open]);
+
+  return { containerRef, openUpward };
+}
+
+function Panel({
+  children,
+  onClose,
+  openUpward,
+}: {
+  children: React.ReactNode;
+  onClose: () => void;
+  openUpward: boolean;
+}) {
   return (
     <>
       <button
@@ -23,7 +55,9 @@ function Panel({ children, onClose }: { children: React.ReactNode; onClose: () =
         onClick={onClose}
         className="fixed inset-0 z-10 cursor-default"
       />
-      <div className="absolute inset-x-0 top-full z-20 mt-1.5">
+      <div
+        className={`absolute inset-x-0 z-20 ${openUpward ? "bottom-full mb-1.5" : "top-full mt-1.5"}`}
+      >
         <div className="card-2 max-h-60 overflow-y-auto p-2">{children}</div>
       </div>
     </>
@@ -48,9 +82,10 @@ export function DropdownSelect({
   error?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const { containerRef, openUpward } = usePanelPlacement(open);
 
   return (
-    <div className={`relative ${className}`}>
+    <div ref={containerRef} className={`relative ${className}`}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -65,7 +100,7 @@ export function DropdownSelect({
       </button>
 
       {open && (
-        <Panel onClose={() => setOpen(false)}>
+        <Panel onClose={() => setOpen(false)} openUpward={openUpward}>
           {options.map((o) => (
             <button
               key={o}
@@ -100,13 +135,14 @@ export function MultiSelectDropdown({
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const { containerRef, openUpward } = usePanelPlacement(open);
 
   function toggle(name: string) {
     onChange(value.includes(name) ? value.filter((v) => v !== name) : [...value, name]);
   }
 
   return (
-    <div className={`relative ${className}`}>
+    <div ref={containerRef} className={`relative ${className}`}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -121,7 +157,7 @@ export function MultiSelectDropdown({
       </button>
 
       {open && (
-        <Panel onClose={() => setOpen(false)}>
+        <Panel onClose={() => setOpen(false)} openUpward={openUpward}>
           {options.map((s) => (
             <label
               key={s}
