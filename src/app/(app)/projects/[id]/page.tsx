@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, Circle, Globe2, PenLine, User, Plus } from "lucide-react";
+import { ArrowRight, CheckCircle2, Circle, Globe2, PenLine, User, Plus } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { CoverArt } from "@/components/ui/cover-art";
@@ -72,7 +72,14 @@ export default function ProjectOverviewPage() {
           <Ring
             value={percent}
             label={`${percent}%`}
-            sublabel={`${project.words.toLocaleString()} of ${project.target.toLocaleString()} words`}
+            sublabel={
+              <div className="text-center">
+                <div className="text-sm font-medium text-ink">{project.words.toLocaleString()}</div>
+                <div className="mt-0.5 text-xs text-ink-faint">
+                  of {project.target.toLocaleString()} words
+                </div>
+              </div>
+            }
             size={148}
           />
           <div className="w-full flex-1">
@@ -89,11 +96,11 @@ export default function ProjectOverviewPage() {
               />
             </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
-              <MiniStat value={project.chapters} label="Chapters" />
-              <MiniStat value={project.sessions} label="Sessions" />
-              <MiniStat value={project.povCharacters ?? 0} label="POV Characters" />
-              <MiniStat value={project.updated} label="Last Updated" />
+            <div className="mt-5 flex flex-wrap divide-x divide-line">
+              <MiniStat value={project.chapters} label="Chapters" className="pr-5" />
+              <MiniStat value={project.sessions} label="Sessions" className="px-5" />
+              <MiniStat value={project.daysActive} label="Days Active" className="px-5" />
+              <MiniStat value={project.updated} label="Last Updated" className="pl-5" />
             </div>
           </div>
         </div>
@@ -131,12 +138,25 @@ export default function ProjectOverviewPage() {
               ))}
             </ul>
           )}
+          <Link
+            href={`/projects/${project.id}/chapters`}
+            className="mt-4 flex items-center justify-center gap-1.5 border-t border-line pt-4 text-sm text-gold hover:opacity-80"
+          >
+            View All Chapters
+            <ArrowRight className="size-3.5" />
+          </Link>
         </section>
 
         {/* Recent Activity */}
         <section className="card p-5 sm:p-6">
           <div className="flex items-center justify-between">
             <h2 className="font-display text-lg text-ink">Recent Activity</h2>
+            <Link
+              href={`/projects/${project.id}/analytics`}
+              className="text-xs text-gold hover:opacity-80"
+            >
+              View All
+            </Link>
           </div>
           <ul className="mt-2 divide-y divide-line">
             {activity.map((a) => {
@@ -158,9 +178,17 @@ export default function ProjectOverviewPage() {
   );
 }
 
-function MiniStat({ value, label }: { value: string | number; label: string }) {
+function MiniStat({
+  value,
+  label,
+  className = "",
+}: {
+  value: string | number;
+  label: string;
+  className?: string;
+}) {
   return (
-    <div>
+    <div className={className}>
       <div className="font-num text-xl text-gilded">{value}</div>
       <div className="label-caps mt-0.5 text-[0.58rem]">{label}</div>
     </div>

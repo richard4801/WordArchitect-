@@ -3,6 +3,7 @@
 import {
   BarChart3,
   Calendar,
+  Check,
   ChevronDown,
   ChevronLeft,
   CircleDot,
@@ -13,12 +14,15 @@ import {
   MoreHorizontal,
   PenLine,
   Plus,
+  Settings as SettingsIcon,
   Users,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useParams } from "next/navigation";
+import { useState } from "react";
 import { CoverArt } from "@/components/ui/cover-art";
-import { useProject } from "@/lib/project-store";
+import { updateProjectTarget, useProject } from "@/lib/project-store";
 import type { Project } from "@/lib/projects-data";
 
 const TABS = [
@@ -29,6 +33,7 @@ const TABS = [
   { key: "outlines", label: "Outlines", icon: ListTree },
   { key: "notes", label: "Notes", icon: FileText },
   { key: "analytics", label: "Analytics", icon: BarChart3 },
+  { key: "settings", label: "Settings", icon: SettingsIcon },
 ];
 
 const STATUS_BADGE: Record<string, { label: string; varName: string }> = {
@@ -183,24 +188,31 @@ function CoverCard({ project }: { project: Project }) {
 }
 
 function DetailsCard({ project }: { project: Project }) {
-  const rows = [
-    { label: "Genre", value: project.genre },
-    { label: "POV", value: project.pov ?? "—" },
-    { label: "Tense", value: project.tense ?? "—" },
-    { label: "Target Words", value: project.target.toLocaleString() },
-    { label: "Language", value: project.language ?? "—" },
-    { label: "Deadline", value: project.deadline ?? "Not set" },
-  ];
   return (
     <section className="card p-5">
       <h2 className="font-display text-lg text-ink">Project Details</h2>
       <dl className="mt-3 space-y-2.5 text-sm">
-        {rows.map((r) => (
-          <div key={r.label} className="flex items-center justify-between gap-3">
-            <dt className="text-ink-muted">{r.label}</dt>
-            <dd className="truncate text-ink">{r.value}</dd>
-          </div>
-        ))}
+        <div className="flex items-center justify-between gap-3">
+          <dt className="text-ink-muted">Genre</dt>
+          <dd className="truncate text-ink">{project.genre}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <dt className="text-ink-muted">POV</dt>
+          <dd className="truncate text-ink">{project.pov ?? "—"}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <dt className="text-ink-muted">Tense</dt>
+          <dd className="truncate text-ink">{project.tense ?? "—"}</dd>
+        </div>
+        <TargetWordsRow project={project} />
+        <div className="flex items-center justify-between gap-3">
+          <dt className="text-ink-muted">Language</dt>
+          <dd className="truncate text-ink">{project.language ?? "—"}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <dt className="text-ink-muted">Deadline</dt>
+          <dd className="truncate text-ink">{project.deadline ?? "Not set"}</dd>
+        </div>
       </dl>
       <button
         type="button"
@@ -209,6 +221,78 @@ function DetailsCard({ project }: { project: Project }) {
         Edit Details
       </button>
     </section>
+  );
+}
+
+/**
+ * The one detail meant to change over the life of a project: if actual
+ * words end up exceeding the original goal, bump the target right here
+ * instead of it staying a fixed, uneditable number forever.
+ */
+function TargetWordsRow({ project }: { project: Project }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(String(project.target));
+
+  function save() {
+    const next = Number(draft);
+    if (next > 0) updateProjectTarget(project.id, next);
+    setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <div className="flex items-center justify-between gap-3">
+        <dt className="text-ink-muted">Target Words</dt>
+        <dd className="flex items-center gap-1.5">
+          <input
+            type="number"
+            min={1}
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") save();
+              if (e.key === "Escape") setEditing(false);
+            }}
+            className="w-24 rounded-lg border border-line-strong bg-surface px-2 py-1 text-right text-sm text-ink focus:outline-none"
+          />
+          <button
+            type="button"
+            aria-label="Save target words"
+            onClick={save}
+            className="grid size-6 shrink-0 place-items-center rounded-md text-success transition-colors hover:bg-surface-2"
+          >
+            <Check className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            aria-label="Cancel"
+            onClick={() => setEditing(false)}
+            className="grid size-6 shrink-0 place-items-center rounded-md text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink"
+          >
+            <X className="size-3.5" />
+          </button>
+        </dd>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <dt className="text-ink-muted">Target Words</dt>
+      <dd>
+        <button
+          type="button"
+          onClick={() => {
+            setDraft(String(project.target));
+            setEditing(true);
+          }}
+          className="rounded-md text-ink transition-colors hover:text-gold"
+        >
+          {project.target.toLocaleString()}
+        </button>
+      </dd>
+    </div>
   );
 }
 

@@ -18,7 +18,7 @@ export function Ring({
   size?: number;
   stroke?: number;
   label: string;
-  sublabel?: string;
+  sublabel?: React.ReactNode;
   /** Font-size class for the centre label — override for longer numbers. */
   labelClassName?: string;
 }) {
@@ -82,7 +82,7 @@ export function Ring({
         <span className={`font-num ${labelClassName} leading-none text-ink`}>
           {label}
         </span>
-        {sublabel && <span className="label-caps mt-1">{sublabel}</span>}
+        {sublabel && <div className="mt-1">{sublabel}</div>}
       </div>
     </div>
   );

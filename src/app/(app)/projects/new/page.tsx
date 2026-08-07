@@ -21,6 +21,7 @@ import {
   Sparkles,
   Strikethrough,
   Sword,
+  Target,
   Underline,
   UserPlus,
   Users,
@@ -116,6 +117,7 @@ export default function NewProjectPage() {
   const [pov, setPov] = useState("");
   const [tense, setTense] = useState("");
   const [language, setLanguage] = useState("English");
+  const [targetWords, setTargetWords] = useState("50000");
   const [audience, setAudience] = useState("");
   const [isPublic, setIsPublic] = useState(false);
   const [allowCollab, setAllowCollab] = useState(false);
@@ -153,6 +155,7 @@ export default function NewProjectPage() {
       pov,
       tense,
       language,
+      targetWords: Number(targetWords),
     });
     router.push(`/projects/${id}`);
   }
@@ -327,6 +330,24 @@ export default function NewProjectPage() {
                 placeholder="Select audience"
                 options={AUDIENCE_OPTIONS}
               />
+              <div>
+                <label className="flex items-center gap-1.5 text-sm text-ink">
+                  <Target className="size-3.5 text-ink-faint" />
+                  Target Word Count
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  step={1000}
+                  value={targetWords}
+                  onChange={(e) => setTargetWords(e.target.value)}
+                  placeholder="50,000"
+                  className="mt-1.5 w-full rounded-xl border border-line bg-surface px-4 py-2.5 text-sm text-ink placeholder:text-ink-faint focus:border-line-strong focus:outline-none"
+                />
+                <p className="mt-1.5 text-xs text-ink-faint">
+                  Just a goal — you can raise it later if the book runs long.
+                </p>
+              </div>
             </div>
 
             <div className="mt-5 space-y-4 border-t border-line pt-4">

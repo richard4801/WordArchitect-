@@ -421,7 +421,7 @@ function WordCountCard({ stats }: { stats: ReturnType<typeof activeWordStats> })
         <Ring
           value={stats.percent}
           label={stats.written.toLocaleString()}
-          sublabel="Total Words"
+          sublabel={<span className="label-caps">Total Words</span>}
           size={152}
           labelClassName="text-2xl"
         />

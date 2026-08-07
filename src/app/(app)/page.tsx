@@ -186,7 +186,7 @@ function StatsOverviewCard() {
         <Ring
           value={statsOverview.goalPercent}
           label={`${statsOverview.goalPercent}%`}
-          sublabel="Writing Goal"
+          sublabel={<span className="label-caps">Writing Goal</span>}
         />
         <ul className="w-full flex-1 divide-y divide-line">
           {statsOverview.metrics.map((m) => (

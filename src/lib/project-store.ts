@@ -61,6 +61,7 @@ export type NewProjectInput = {
   pov?: string;
   tense?: string;
   language?: string;
+  targetWords?: number;
 };
 
 /** Fake-create a project (in-memory only) and return its id. */
@@ -76,9 +77,10 @@ export function createProject(input: NewProjectInput): string {
       input.description?.trim().slice(0, 160) ||
       "A new story, waiting to be written.",
     words: 0,
-    target: 50000,
+    target: input.targetWords && input.targetWords > 0 ? Math.round(input.targetWords) : 50000,
     chapters: 0,
     sessions: 0,
+    daysActive: 0,
     updated: "Just now",
     updatedRank: 0,
     status: "active",
@@ -100,4 +102,15 @@ export function createProject(input: NewProjectInput): string {
   projects = [project, ...projects.map((p) => ({ ...p, updatedRank: p.updatedRank + 1 }))];
   emit();
   return id;
+}
+
+/**
+ * Raise (or otherwise change) a project's target word count — e.g. from the
+ * detail page once actual words are approaching or past the original goal.
+ * In-memory only, like everything else in this store.
+ */
+export function updateProjectTarget(id: string, target: number): void {
+  if (!(target > 0)) return;
+  projects = projects.map((p) => (p.id === id ? { ...p, target: Math.round(target) } : p));
+  emit();
 }

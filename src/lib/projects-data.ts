@@ -34,6 +34,8 @@ export type Project = {
   target: number;
   chapters: number;
   sessions: number;
+  /** Distinct calendar days with at least one writing session. */
+  daysActive: number;
   /** Human label for the "Updated …" meta line. */
   updated: string;
   /** Smaller = more recently updated; drives the "Recently Updated" sort. */
@@ -69,6 +71,7 @@ export const projects: Project[] = [
     target: 25000,
     chapters: 18,
     sessions: 42,
+    daysActive: 12,
     updated: "2h ago",
     updatedRank: 1,
     status: "active",
@@ -105,6 +108,7 @@ export const projects: Project[] = [
     target: 20000,
     chapters: 15,
     sessions: 28,
+    daysActive: 9,
     updated: "5h ago",
     updatedRank: 2,
     status: "active",
@@ -127,6 +131,7 @@ export const projects: Project[] = [
     target: 15000,
     chapters: 12,
     sessions: 19,
+    daysActive: 7,
     updated: "1d ago",
     updatedRank: 3,
     status: "active",
@@ -149,6 +154,7 @@ export const projects: Project[] = [
     target: 10000,
     chapters: 9,
     sessions: 11,
+    daysActive: 5,
     updated: "2d ago",
     updatedRank: 4,
     status: "active",
@@ -170,6 +176,7 @@ export const projects: Project[] = [
     target: 8000,
     chapters: 7,
     sessions: 8,
+    daysActive: 4,
     updated: "3d ago",
     updatedRank: 5,
     status: "active",
@@ -191,6 +198,7 @@ export const projects: Project[] = [
     target: 5000,
     chapters: 5,
     sessions: 0,
+    daysActive: 0,
     updated: "5d ago",
     updatedRank: 6,
     status: "active",
@@ -212,6 +220,7 @@ export const projects: Project[] = [
     target: 32000,
     chapters: 24,
     sessions: 58,
+    daysActive: 21,
     updated: "3w ago",
     updatedRank: 7,
     status: "completed",
@@ -232,6 +241,7 @@ export const projects: Project[] = [
     target: 41500,
     chapters: 30,
     sessions: 71,
+    daysActive: 26,
     updated: "1mo ago",
     updatedRank: 8,
     status: "completed",
@@ -252,6 +262,7 @@ export const projects: Project[] = [
     target: 28000,
     chapters: 20,
     sessions: 44,
+    daysActive: 16,
     updated: "2mo ago",
     updatedRank: 9,
     status: "completed",
@@ -272,6 +283,7 @@ export const projects: Project[] = [
     target: 30000,
     chapters: 5,
     sessions: 9,
+    daysActive: 4,
     updated: "4mo ago",
     updatedRank: 10,
     status: "archived",
@@ -292,6 +304,7 @@ export const projects: Project[] = [
     target: 22000,
     chapters: 3,
     sessions: 6,
+    daysActive: 3,
     updated: "5mo ago",
     updatedRank: 11,
     status: "archived",
@@ -313,6 +326,7 @@ export const projects: Project[] = [
     target: 25000,
     chapters: 2,
     sessions: 4,
+    daysActive: 2,
     updated: "6mo ago",
     updatedRank: 12,
     status: "archived",
