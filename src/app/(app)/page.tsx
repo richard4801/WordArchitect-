@@ -498,6 +498,7 @@ const FEATURE_CALLOUTS = [
 const GET_STARTED = [
   {
     icon: FileText,
+    tint: "gold",
     title: "Create Your First Project",
     detail: "Start a new story from scratch or use a template.",
     button: "New Project",
@@ -506,6 +507,7 @@ const GET_STARTED = [
   },
   {
     icon: Globe2,
+    tint: "success",
     title: "Build Your World",
     detail: "Create places, cultures, magic systems and more.",
     button: "Create World Entry",
@@ -514,6 +516,7 @@ const GET_STARTED = [
   },
   {
     icon: Users,
+    tint: "brown",
     title: "Meet Your Characters",
     detail: "Design unforgettable characters.",
     button: "Create Character",
@@ -522,13 +525,14 @@ const GET_STARTED = [
   },
   {
     icon: ListTree,
+    tint: "purple",
     title: "Plan Your Story",
     detail: "Outline, organize and structure your story.",
     button: "Go to Outliner",
     href: "/outlines",
     primary: false,
   },
-];
+] as const;
 
 const HELPS_YOU_WRITE = [
   { icon: LayoutGrid, title: "Stay Organized", detail: "Everything in one place. Easy to find, easy to use." },
@@ -547,11 +551,11 @@ const HELPS_YOU_WRITE = [
 
 function NewUserDashboard() {
   return (
-    <div className="mx-auto max-w-[1180px] space-y-6">
+    <div className="mx-auto max-w-[1180px] space-y-8">
       <NewUserHero />
       <GetStartedCard />
       <HelpsYouWriteCard />
-      <div className="grid gap-6 lg:grid-cols-[1fr_360px] lg:items-start">
+      <div className="grid gap-8 lg:grid-cols-[1fr_320px] lg:items-start">
         <SuggestedForYouCard />
         <TipOfTheDayCard />
       </div>
@@ -561,26 +565,47 @@ function NewUserDashboard() {
 
 function NewUserHero() {
   return (
-    <section className="pt-6">
-      <p className="text-base text-ink-muted">Welcome to WordArchitect,</p>
-      <h1 className="mt-1 flex items-center gap-3 font-display text-6xl font-medium text-ink sm:text-7xl">
-        {user.name}
-        <Sparkle className="size-6 text-gold" />
-      </h1>
-      <blockquote className="mt-5 max-w-sm font-display text-lg italic leading-snug text-ink-muted">
-        &ldquo;{user.quote.text}&rdquo;
-      </blockquote>
-      <p className="mt-4 text-sm text-ink-muted">Let&rsquo;s bring your stories to life.</p>
+    <section className="relative pt-6">
+      {/* The hero art is always moody/dark-toned by design (same reason the
+          Sidebar forces `.dark` on its own artwork) — but in the light
+          theme, this upper-left region of the actual photo is genuinely
+          bright and warm-toned, and plain ink-colored text read at
+          near-zero contrast against it. This scrim plus the `dark` scope
+          below force the welcome block to always sit on a dark backdrop,
+          regardless of the site theme or what the photo is doing
+          underneath at any given point. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -inset-x-6 -inset-y-6 -z-10 rounded-[32px]"
+        style={{
+          background:
+            "linear-gradient(100deg, rgba(10,10,11,0.68) 0%, rgba(10,10,11,0.55) 45%, rgba(10,10,11,0.3) 70%, rgba(10,10,11,0.08) 88%, transparent 100%)",
+        }}
+      />
+      <div className="dark max-w-md">
+        <p className="text-base text-ink-muted">Welcome to WordArchitect,</p>
+        <h1 className="mt-1 flex items-center gap-3 font-display text-6xl font-medium text-ink sm:text-7xl">
+          {user.name}
+          <Sparkle className="size-6 text-gold" />
+        </h1>
+        <blockquote className="mt-5 font-display text-lg italic leading-snug text-ink-muted">
+          &ldquo;{user.quote.text}&rdquo;
+        </blockquote>
+        <p className="mt-4 text-sm text-ink-muted">Let&rsquo;s bring your stories to life.</p>
+      </div>
 
-      <div className="mt-8 flex flex-wrap gap-x-10 gap-y-4">
-        {FEATURE_CALLOUTS.map((f) => {
+      <div className="dark relative mt-8 flex w-fit items-center">
+        {FEATURE_CALLOUTS.map((f, i) => {
           const Icon = f.icon;
           return (
-            <div key={f.text} className="flex items-center gap-2.5">
-              <span className="grid size-8 shrink-0 place-items-center rounded-full border border-line text-gold">
-                <Icon className="size-3.5" strokeWidth={1.7} />
+            <div key={f.text} className="flex shrink-0 items-center gap-2.5 py-1 pr-6">
+              <span className="grid size-8 shrink-0 place-items-center rounded-full bg-gold text-gold-contrast">
+                <Icon className="size-3.5" strokeWidth={1.9} />
               </span>
               <span className="text-sm text-ink-muted">{f.text}</span>
+              {i < FEATURE_CALLOUTS.length - 1 && (
+                <span className="ml-6 hidden h-8 w-px bg-line-strong sm:block" aria-hidden />
+              )}
             </div>
           );
         })}
@@ -591,24 +616,31 @@ function NewUserHero() {
 
 function GetStartedCard() {
   return (
-    <section className="card p-5 sm:p-6">
+    <section>
       <h2 className="font-display text-xl text-ink">Let&rsquo;s Get You Started</h2>
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {GET_STARTED.map((g) => {
           const Icon = g.icon;
           return (
-            <div key={g.title} className="rounded-xl border border-line p-4">
-              <span className="grid size-10 place-items-center rounded-full border border-line text-gold">
-                <Icon className="size-4" strokeWidth={1.7} />
+            <div key={g.title} className="card-2 flex flex-col items-center p-5 text-center sm:p-6">
+              <span
+                className="grid size-16 shrink-0 place-items-center rounded-full border"
+                style={{
+                  background: `radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--${g.tint}) 30%, transparent), color-mix(in srgb, var(--${g.tint}) 8%, transparent) 75%)`,
+                  borderColor: `color-mix(in srgb, var(--${g.tint}) 40%, transparent)`,
+                  color: `var(--${g.tint})`,
+                }}
+              >
+                <Icon className="size-6" strokeWidth={1.6} />
               </span>
-              <h3 className="mt-3 text-sm font-medium text-ink">{g.title}</h3>
-              <p className="mt-1 text-xs text-ink-faint">{g.detail}</p>
+              <h3 className="mt-4 text-sm font-medium text-ink">{g.title}</h3>
+              <p className="mt-1.5 text-xs text-ink-faint">{g.detail}</p>
               <Link
                 href={g.href}
-                className={`mt-4 flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
+                className={`mt-4 flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
                   g.primary
                     ? "bg-gold text-gold-contrast hover:opacity-90"
-                    : "border border-line text-ink-muted hover:text-ink"
+                    : "border border-line-strong text-gold hover:bg-surface-2"
                 }`}
               >
                 {g.primary && <Plus className="size-3.5" />}
@@ -624,15 +656,15 @@ function GetStartedCard() {
 
 function HelpsYouWriteCard() {
   return (
-    <section className="card p-5 sm:p-6">
+    <section>
       <h2 className="font-display text-xl text-ink">How WordArchitect Helps You Write Better</h2>
-      <div className="mt-4 grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="card mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 xl:divide-x xl:divide-line">
         {HELPS_YOU_WRITE.map((h) => {
           const Icon = h.icon;
           return (
-            <div key={h.title} className="flex items-start gap-3">
-              <span className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-full border border-line text-gold">
-                <Icon className="size-4" strokeWidth={1.7} />
+            <div key={h.title} className="flex items-start gap-3 p-5 sm:p-6">
+              <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-full bg-gold text-gold-contrast">
+                <Icon className="size-3.5" strokeWidth={1.9} />
               </span>
               <div className="min-w-0">
                 <h3 className="text-sm text-ink">{h.title}</h3>
@@ -648,26 +680,26 @@ function HelpsYouWriteCard() {
 
 function SuggestedForYouCard() {
   return (
-    <section className="card p-5 sm:p-6">
+    <section>
       <h2 className="font-display text-xl text-ink">Suggested for You</h2>
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div className="rounded-xl border border-line p-4">
-          <span className="grid size-10 place-items-center rounded-full border border-line text-gold">
-            <Compass className="size-4" strokeWidth={1.7} />
-          </span>
-          <h3 className="mt-3 text-sm font-medium text-ink">Start with a Template</h3>
-          <p className="mt-1 text-xs text-ink-faint">
-            Save time and get inspired with beautiful story templates.
-          </p>
-          <Link
-            href="/templates"
-            className="mt-4 flex items-center justify-center rounded-lg border border-line px-3 py-2 text-xs text-ink-muted transition-colors hover:text-ink"
-          >
-            Explore Templates
-          </Link>
+        <div className="card-2 relative overflow-hidden p-5 sm:p-6">
+          <Sigil className="pointer-events-none absolute -left-8 top-1/2 size-40 -translate-y-1/2 text-gold opacity-[0.14]" />
+          <div className="relative pl-16">
+            <h3 className="text-sm font-medium text-ink">Start with a Template</h3>
+            <p className="mt-1 text-xs text-ink-faint">
+              Save time and get inspired with beautiful story templates.
+            </p>
+            <Link
+              href="/templates"
+              className="mt-4 inline-flex items-center justify-center rounded-lg border border-line-strong px-3 py-2 text-xs text-gold transition-colors hover:bg-surface-2"
+            >
+              Explore Templates
+            </Link>
+          </div>
         </div>
 
-        <div className="rounded-xl border border-line p-4">
+        <div className="card-2 p-5 sm:p-6">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <h3 className="text-sm font-medium text-ink">Daily Writing Goal</h3>
@@ -684,7 +716,7 @@ function SuggestedForYouCard() {
           </div>
           <button
             type="button"
-            className="mt-4 w-full rounded-lg border border-line px-3 py-2 text-xs text-ink-muted transition-colors hover:text-ink"
+            className="mt-4 w-full rounded-lg border border-line-strong px-3 py-2 text-xs text-gold transition-colors hover:bg-surface-2"
           >
             Set Your Goal
           </button>
