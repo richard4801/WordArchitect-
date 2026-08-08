@@ -20,6 +20,8 @@ import {
   UserX,
 } from "lucide-react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import { Sigil, Sparkle } from "@/components/brand-mark";
 import { CoverArt } from "@/components/ui/cover-art";
 import { MiniCalendar } from "@/components/ui/mini-calendar";
@@ -42,8 +44,26 @@ import {
 } from "@/lib/dashboard-data";
 
 export default function DashboardPage() {
+  return (
+    <Suspense fallback={null}>
+      <DashboardPageInner />
+    </Suspense>
+  );
+}
+
+/**
+ * ?newUser=1 forces the empty-state dashboard for design/QA preview,
+ * without touching the real (seeded) mock project data in project-store.ts
+ * — useSearchParams needs a Suspense boundary, hence the wrapper above.
+ */
+function DashboardPageInner() {
   const projects = useProjects();
-  return projects.length === 0 ? <NewUserDashboard /> : <ReturningUserDashboard projects={projects} />;
+  const forceNewUser = useSearchParams().get("newUser") === "1";
+  return projects.length === 0 || forceNewUser ? (
+    <NewUserDashboard />
+  ) : (
+    <ReturningUserDashboard projects={projects} />
+  );
 }
 
 /* ======================================================================= */
