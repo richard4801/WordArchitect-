@@ -608,7 +608,7 @@ function NewUserHero() {
 
 function GetStartedCard() {
   return (
-    <section>
+    <section className="card p-5 sm:p-6">
       <h2 className="font-display text-xl text-ink">Let&rsquo;s Get You Started</h2>
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {GET_STARTED.map((g) => {
@@ -648,9 +648,9 @@ function GetStartedCard() {
 
 function HelpsYouWriteCard() {
   return (
-    <section>
+    <section className="card p-5 sm:p-6">
       <h2 className="font-display text-xl text-ink">How WordArchitect Helps You Write Better</h2>
-      <div className="card mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 xl:divide-x xl:divide-line">
+      <div className="card-2 mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 xl:divide-x xl:divide-line">
         {HELPS_YOU_WRITE.map((h) => {
           const Icon = h.icon;
           return (
@@ -672,7 +672,7 @@ function HelpsYouWriteCard() {
 
 function SuggestedForYouCard() {
   return (
-    <section>
+    <section className="card p-5 sm:p-6">
       <h2 className="font-display text-xl text-ink">Suggested for You</h2>
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="card-2 relative overflow-hidden p-5 sm:p-6">
@@ -711,10 +711,10 @@ function SuggestedForYouCard() {
             <Ring
               value={0}
               label="0"
-              sublabel={<span className="text-[0.6rem] text-ink-faint">/ 500 words</span>}
-              size={56}
-              stroke={4}
-              labelClassName="text-sm"
+              sublabel={<span className="text-[0.65rem] text-ink-faint">/ 500 words</span>}
+              size={92}
+              stroke={6}
+              labelClassName="text-2xl"
             />
           </div>
           <button
