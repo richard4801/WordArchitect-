@@ -563,38 +563,30 @@ function NewUserDashboard() {
   );
 }
 
+// No scrim, no forced theme — just two fixed colors tuned directly for
+// legibility on the hero photo: plain white in dark mode (the art is dark
+// enough there that plain ink-muted was fine structurally, just needed to
+// be unambiguously white), and a darker warm brown in light mode (the
+// existing --ink-muted read too light against the photo's brighter
+// upper-left region).
+const HERO_TEXT = "text-[#3a2a1a] dark:text-white";
+
 function NewUserHero() {
   return (
-    <section className="relative pt-6">
-      {/* The hero art is always moody/dark-toned by design (same reason the
-          Sidebar forces `.dark` on its own artwork) — but in the light
-          theme, this upper-left region of the actual photo is genuinely
-          bright and warm-toned, and plain ink-colored text read at
-          near-zero contrast against it. This scrim plus the `dark` scope
-          below force the welcome block to always sit on a dark backdrop,
-          regardless of the site theme or what the photo is doing
-          underneath at any given point. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -inset-x-6 -inset-y-6 -z-10 rounded-[32px]"
-        style={{
-          background:
-            "linear-gradient(100deg, rgba(10,10,11,0.68) 0%, rgba(10,10,11,0.55) 45%, rgba(10,10,11,0.3) 70%, rgba(10,10,11,0.08) 88%, transparent 100%)",
-        }}
-      />
-      <div className="dark max-w-md">
-        <p className="text-base text-ink-muted">Welcome to WordArchitect,</p>
-        <h1 className="mt-1 flex items-center gap-3 font-display text-6xl font-medium text-ink sm:text-7xl">
+    <section className="pt-6">
+      <div className="max-w-md">
+        <p className={`text-base ${HERO_TEXT}`}>Welcome to WordArchitect,</p>
+        <h1 className="mt-1 flex items-center gap-3 font-display text-6xl font-medium text-ink dark:text-white sm:text-7xl">
           {user.name}
           <Sparkle className="size-6 text-gold" />
         </h1>
-        <blockquote className="mt-5 font-display text-lg italic leading-snug text-ink-muted">
+        <blockquote className={`mt-5 font-display text-lg italic leading-snug ${HERO_TEXT}`}>
           &ldquo;{user.quote.text}&rdquo;
         </blockquote>
-        <p className="mt-4 text-sm text-ink-muted">Let&rsquo;s bring your stories to life.</p>
+        <p className={`mt-4 text-sm ${HERO_TEXT}`}>Let&rsquo;s bring your stories to life.</p>
       </div>
 
-      <div className="dark relative mt-8 flex w-fit items-center">
+      <div className="relative mt-8 flex w-fit items-center">
         {FEATURE_CALLOUTS.map((f, i) => {
           const Icon = f.icon;
           return (
@@ -602,7 +594,7 @@ function NewUserHero() {
               <span className="grid size-8 shrink-0 place-items-center rounded-full bg-gold text-gold-contrast">
                 <Icon className="size-3.5" strokeWidth={1.9} />
               </span>
-              <span className="text-sm text-ink-muted">{f.text}</span>
+              <span className={`text-sm ${HERO_TEXT}`}>{f.text}</span>
               {i < FEATURE_CALLOUTS.length - 1 && (
                 <span className="ml-6 hidden h-8 w-px bg-line-strong sm:block" aria-hidden />
               )}
@@ -622,22 +614,22 @@ function GetStartedCard() {
         {GET_STARTED.map((g) => {
           const Icon = g.icon;
           return (
-            <div key={g.title} className="card-2 flex flex-col items-center p-5 text-center sm:p-6">
+            <div key={g.title} className="card-2 flex flex-col items-center p-6 text-center sm:p-7">
               <span
-                className="grid size-16 shrink-0 place-items-center rounded-full border"
+                className="grid size-20 shrink-0 place-items-center rounded-full border"
                 style={{
                   background: `radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--${g.tint}) 30%, transparent), color-mix(in srgb, var(--${g.tint}) 8%, transparent) 75%)`,
                   borderColor: `color-mix(in srgb, var(--${g.tint}) 40%, transparent)`,
                   color: `var(--${g.tint})`,
                 }}
               >
-                <Icon className="size-6" strokeWidth={1.6} />
+                <Icon className="size-7" strokeWidth={1.5} />
               </span>
-              <h3 className="mt-4 text-sm font-medium text-ink">{g.title}</h3>
-              <p className="mt-1.5 text-xs text-ink-faint">{g.detail}</p>
+              <h3 className="mt-5 text-base font-medium text-ink">{g.title}</h3>
+              <p className="mt-2 text-xs leading-relaxed text-ink-faint">{g.detail}</p>
               <Link
                 href={g.href}
-                className={`mt-4 flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
+                className={`mt-5 flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2.5 text-xs font-medium transition-colors ${
                   g.primary
                     ? "bg-gold text-gold-contrast hover:opacity-90"
                     : "border border-line-strong text-gold hover:bg-surface-2"
@@ -684,8 +676,19 @@ function SuggestedForYouCard() {
       <h2 className="font-display text-xl text-ink">Suggested for You</h2>
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="card-2 relative overflow-hidden p-5 sm:p-6">
-          <Sigil className="pointer-events-none absolute -left-8 top-1/2 size-40 -translate-y-1/2 text-gold opacity-[0.14]" />
-          <div className="relative pl-16">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0"
+            style={{
+              backgroundImage: "url(/start-temp.png)",
+              backgroundSize: "auto 140%",
+              backgroundPosition: "-15px -15px",
+              backgroundRepeat: "no-repeat",
+              maskImage: "linear-gradient(to right, black 0%, black 36%, transparent 55%)",
+              WebkitMaskImage: "linear-gradient(to right, black 0%, black 36%, transparent 55%)",
+            }}
+          />
+          <div className="relative pl-[48%] sm:pl-[44%]">
             <h3 className="text-sm font-medium text-ink">Start with a Template</h3>
             <p className="mt-1 text-xs text-ink-faint">
               Save time and get inspired with beautiful story templates.
