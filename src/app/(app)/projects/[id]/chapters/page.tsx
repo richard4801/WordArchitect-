@@ -33,6 +33,7 @@ import {
   Type,
   Underline,
   Undo2,
+  Wind,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -74,7 +75,7 @@ import { setFocusModeActive } from "@/lib/ui-store";
 const PANEL_TABS = ["Comments", "Versions", "Outline", "AI"] as const;
 type PanelTab = (typeof PANEL_TABS)[number];
 
-type FocusModeKind = "normal" | "typewriter" | "zen";
+type FocusModeKind = "normal" | "typewriter" | "zen" | "typewriterZen";
 
 export default function ChaptersPage() {
   const { id } = useParams<{ id: string }>();
@@ -187,10 +188,11 @@ export default function ChaptersPage() {
   const body = getChapterBody(project.id, activeChapter);
 
   // Normal and Typewriter both hide the side panels but keep the toolbar
-  // and status bar; Zen strips those too, leaving just the page.
+  // and status bar; Zen and Typewriter × Zen strip those too, leaving just
+  // the page. Typewriter and Typewriter × Zen both get caret-centering.
   const hidePanels = focusMode !== null;
-  const hideChrome = focusMode === "zen";
-  const typewriter = focusMode === "typewriter";
+  const hideChrome = focusMode === "zen" || focusMode === "typewriterZen";
+  const typewriter = focusMode === "typewriter" || focusMode === "typewriterZen";
 
   return (
     <div className="flex h-dvh min-w-0">
@@ -317,27 +319,12 @@ function FocusExitButton({ onClick }: { onClick: () => void }) {
 const FOCUS_MODE_OPTIONS: {
   key: FocusModeKind;
   label: string;
-  description: string;
   icon: typeof Maximize2;
 }[] = [
-  {
-    key: "normal",
-    label: "Normal Fullscreen",
-    description: "Hide the side panels and go fullscreen. Your toolbar stays right where it is.",
-    icon: Maximize2,
-  },
-  {
-    key: "typewriter",
-    label: "Typewriter Mode",
-    description: "Fullscreen, with the line you're writing always centered in view.",
-    icon: Type,
-  },
-  {
-    key: "zen",
-    label: "Zen Mode",
-    description: "Everything disappears — just you and the manuscript.",
-    icon: Feather,
-  },
+  { key: "normal", label: "Normal Fullscreen", icon: Maximize2 },
+  { key: "typewriter", label: "Typewriter Mode", icon: Type },
+  { key: "zen", label: "Zen Mode", icon: Feather },
+  { key: "typewriterZen", label: "Typewriter × Zen", icon: Wind },
 ];
 
 /** The picker Focus Mode opens into: pick a mode, or Escape/X/backdrop out. */
@@ -388,15 +375,12 @@ function FocusModePickerModal({
                 key={opt.key}
                 type="button"
                 onClick={() => onSelect(opt.key)}
-                className="flex items-start gap-3 rounded-xl border border-line p-3.5 text-left transition-colors hover:border-line-strong hover:bg-surface-2/60"
+                className="flex items-center gap-3 rounded-xl border border-line p-3.5 text-left transition-colors hover:border-line-strong hover:bg-surface-2/60"
               >
                 <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-surface-2 text-gold">
                   <opt.icon className="size-4" />
                 </span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium text-ink">{opt.label}</span>
-                  <span className="mt-0.5 block text-xs text-ink-muted">{opt.description}</span>
-                </span>
+                <span className="text-sm font-medium text-ink">{opt.label}</span>
               </button>
             ))}
           </div>
@@ -1123,17 +1107,64 @@ function EditorBody({
 }) {
   const baseline = useRef({ words: 0, characters: 0 });
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Top/bottom padding for typewriter mode, computed from the scroll
+  // container's own measured height (see the effect below) rather than a
+  // static vh value. A static value can't work: with box-sizing:border-box
+  // an element can never be shorter than its own padding, so a padding pair
+  // sized for a full-viewport container (e.g. Zen's, chrome hidden) would
+  // by itself exceed a chrome-visible container's smaller height and force
+  // it to grow past its flex allocation — no amount of flex-shrink/min-h-0
+  // can win against that, it's a hard geometric constraint, not a layout
+  // bug. Deriving the padding from each container's own height keeps the
+  // pair comfortably under 100% of it in every mode.
+  //
+  // The split is asymmetric to match centerCaret's 42%-from-top target:
+  // reaching that target on the very first line needs top padding of
+  // ~42% of the container height, and on the very last line needs bottom
+  // padding of ~58% — the two would sum to exactly 100%, leaving no room
+  // for actual text, so both are trimmed a bit short of exact. That only
+  // costs perfect centering in the (rare, momentary) case of typing at the
+  // true start or end of the whole document; anywhere else, real content
+  // fills what the padding doesn't.
+  const [typewriterPad, setTypewriterPad] = useState({ top: 0, bottom: 0 });
 
   useEffect(() => {
     const text = editableRef.current?.innerText ?? "";
     baseline.current = countText(text);
   }, [editableRef]);
 
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!typewriter || !container) return;
+    // Border-box size, not contentRect: contentRect is content-box (outer
+    // size minus padding), and since we're the ones setting that padding,
+    // reading it back here would create a feedback loop — grow the padding,
+    // watch contentRect shrink in response, shrink the padding, repeat.
+    // Border-box is what the flex parent actually allocated and stays put
+    // regardless of how this element divides that space into padding vs.
+    // content.
+    const ro = new ResizeObserver(([entry]) => {
+      const height = entry.borderBoxSize?.[0]?.blockSize ?? container.offsetHeight;
+      setTypewriterPad({ top: height * 0.35, bottom: height * 0.5 });
+    });
+    ro.observe(container, { box: "border-box" });
+    return () => ro.disconnect();
+  }, [typewriter]);
+
   // Keeps the caret's line pinned near the vertical middle of the viewport
-  // as you type or move around, so the page scrolls to you instead of you
-  // scrolling to the page. The generous top/bottom padding below (added
-  // only in typewriter mode) is what gives the first and last lines enough
-  // room to actually reach that middle position.
+  // as you type, so the page scrolls to you instead of you scrolling to the
+  // page — old lines climb off the top edge, new ones arrive from below,
+  // and you never have to touch the scrollbar. The padding above is what
+  // gives the first and last lines enough room to actually reach that
+  // middle position instead of stopping short.
+  //
+  // This has to be an instant scrollTop assignment, not a smooth/animated
+  // one: typing fires an input event per keystroke, and while our
+  // correction is still mid-animation the browser's own "keep the caret in
+  // view" auto-scroll (which snaps it to just barely inside the viewport,
+  // not centered) fires again and wins the fight — net effect, the caret
+  // never leaves the bottom edge. Setting scrollTop directly overrides
+  // whatever the browser just did, in the same tick, every time.
   function centerCaret() {
     if (!typewriter) return;
     const sel = window.getSelection();
@@ -1151,7 +1182,7 @@ function EditorBody({
     const containerRect = container.getBoundingClientRect();
     const target = containerRect.top + containerRect.height * 0.42;
     const delta = rect.top - target;
-    if (Math.abs(delta) > 4) container.scrollBy({ top: delta, behavior: "smooth" });
+    if (Math.abs(delta) > 1) container.scrollTop += delta;
   }
 
   function handleSelect() {
@@ -1164,12 +1195,20 @@ function EditorBody({
     const current = countText(text);
     onStatsChange(current.words - baseline.current.words, current.characters - baseline.current.characters);
     centerCaret();
+    // A second, deferred pass: on a line-wrap the browser's own
+    // scroll-into-view can land after this handler runs, nudging the caret
+    // back toward the edge between our correction and the next paint. This
+    // catches that straggler so fast, continuous typing doesn't drift.
+    requestAnimationFrame(centerCaret);
   }
 
   return (
     <div
       ref={scrollRef}
-      className={`scroll-slim flex-1 overflow-y-auto px-10 ${typewriter ? "py-[40vh]" : "py-12"}`}
+      className={`scroll-slim min-h-0 flex-1 overflow-y-auto px-10 ${typewriter ? "" : "py-12"}`}
+      style={
+        typewriter ? { paddingTop: typewriterPad.top, paddingBottom: typewriterPad.bottom } : undefined
+      }
     >
       <div className={`mx-auto max-w-[680px] ${centered ? "pt-[8vh]" : ""}`}>
         <p className="label-caps text-purple text-[0.68rem]">{body.heading}</p>
@@ -1276,7 +1315,7 @@ function StatusBar({
             }`}
           >
             <span
-              className={`absolute top-0.5 size-4 rounded-full bg-canvas transition-transform ${
+              className={`absolute top-0.5 size-4 rounded-full bg-white shadow-sm transition-transform ${
                 active ? "translate-x-[18px]" : "translate-x-0.5"
               }`}
             />
