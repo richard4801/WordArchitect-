@@ -555,7 +555,7 @@ function NewUserDashboard() {
       <NewUserHero />
       <GetStartedCard />
       <HelpsYouWriteCard />
-      <div className="grid gap-8 lg:grid-cols-[1fr_320px]">
+      <div className="grid gap-8 lg:grid-cols-[1fr_280px]">
         <SuggestedForYouCard />
         <TipOfTheDayCard />
       </div>
@@ -710,10 +710,10 @@ function SuggestedForYouCard() {
             <Ring
               value={0}
               label="0"
-              sublabel={<span className="text-[0.65rem] text-ink-faint">/ 500 words</span>}
-              size={92}
-              stroke={6}
-              labelClassName="text-2xl"
+              sublabel={<span className="text-[0.6rem] text-ink-faint">/ 500 words</span>}
+              size={72}
+              stroke={5}
+              labelClassName="text-xl"
             />
           </div>
           <button
