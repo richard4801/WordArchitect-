@@ -8,9 +8,13 @@ import { Progress } from "@/components/ui/progress";
 import { NAV_ITEMS, UTILITY_NAV_ITEMS } from "@/lib/nav";
 import { useProjects } from "@/lib/project-store";
 
-export function Sidebar() {
+export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
   const pathname = usePathname();
   const isNewUser = useProjects().length === 0;
+  // The manuscript editor (/projects/[id]/chapters) collapses the sidebar,
+  // but that route doesn't match any top-level NAV_ITEM href — highlight
+  // "Writing" there anyway since that's conceptually where it lives.
+  const forceActiveHref = /^\/projects\/[^/]+\/chapters/.test(pathname) ? "/writing" : null;
 
   return (
     <aside
@@ -19,7 +23,9 @@ export function Sidebar() {
       // text/border/card colours must stay the dark-theme values to read on
       // it. `.dark` here re-applies every `--var` the dark theme block sets,
       // scoped to this subtree only (see globals.css `.dark { ... }`).
-      className="dark fixed left-0 top-0 z-20 hidden h-dvh w-[264px] flex-col border-r border-line lg:flex"
+      className={`dark fixed left-0 top-0 z-20 hidden h-dvh flex-col border-r border-line transition-[width] duration-200 lg:flex ${
+        collapsed ? "w-[72px]" : "w-[264px]"
+      }`}
       style={{
         position: "fixed",
         // The ornate astrolabe/constellation panel (resources/sidebar-bg.webp)
@@ -45,42 +51,55 @@ export function Sidebar() {
       />
 
       {/* Logo */}
-      <div className="px-7 pt-8 pb-6">
-        <div className="flex flex-col items-start gap-2">
+      <div className={collapsed ? "flex flex-col items-center pt-8 pb-6" : "px-7 pt-8 pb-6"}>
+        {collapsed ? (
           <BrandMark className="size-6 text-gold" />
-          <div className="font-display text-2xl leading-none tracking-wide text-ink">
-            WORD<span className="text-gold">ARCHITECT</span>
+        ) : (
+          <div className="flex flex-col items-start gap-2">
+            <BrandMark className="size-6 text-gold" />
+            <div className="font-display text-2xl leading-none tracking-wide text-ink">
+              WORD<span className="text-gold">ARCHITECT</span>
+            </div>
+            <p className="label-caps text-[0.6rem]">Write. Craft. Conquer.</p>
           </div>
-          <p className="label-caps text-[0.6rem]">Write. Craft. Conquer.</p>
-        </div>
+        )}
       </div>
 
       {/* Nav */}
-      <nav className="scroll-slim flex-1 overflow-y-auto px-4">
+      <nav className={`scroll-slim flex-1 overflow-y-auto ${collapsed ? "px-3" : "px-4"}`}>
         <ul className="flex flex-col gap-1">
           {NAV_ITEMS.map((item) => {
             const active =
-              item.href === "/"
-                ? pathname === "/"
-                : pathname.startsWith(item.href);
+              forceActiveHref !== null
+                ? item.href === forceActiveHref
+                : item.href === "/"
+                  ? pathname === "/"
+                  : pathname.startsWith(item.href);
             const Icon = item.icon;
             return (
               <li key={item.href}>
                 <Link
                   href={item.href}
                   aria-current={active ? "page" : undefined}
-                  className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors ${
-                    active
-                      ? "bg-surface-2 text-ink"
-                      : "text-ink-muted hover:bg-surface-2/60 hover:text-ink"
-                  }`}
+                  title={collapsed ? item.label : undefined}
+                  className={
+                    collapsed
+                      ? `grid size-11 place-items-center justify-self-center rounded-xl transition-colors ${
+                          active ? "bg-surface-2 text-ink" : "text-ink-muted hover:bg-surface-2/60 hover:text-ink"
+                        }`
+                      : `group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors ${
+                          active
+                            ? "bg-surface-2 text-ink"
+                            : "text-ink-muted hover:bg-surface-2/60 hover:text-ink"
+                        }`
+                  }
                 >
                   <Icon
                     className={`size-[18px] ${active ? "text-gold" : ""}`}
                     strokeWidth={1.7}
                   />
-                  <span className="flex-1">{item.label}</span>
-                  {active && <ChevronRight className="size-4 text-gold" />}
+                  {!collapsed && <span className="flex-1">{item.label}</span>}
+                  {!collapsed && active && <ChevronRight className="size-4 text-gold" />}
                 </Link>
               </li>
             );
@@ -89,7 +108,7 @@ export function Sidebar() {
       </nav>
 
       {/* Utility nav — Settings, Help & Feedback */}
-      <nav className="px-4 pb-2">
+      <nav className={collapsed ? "px-3 pb-2" : "px-4 pb-2"}>
         <ul className="flex flex-col gap-1">
           {UTILITY_NAV_ITEMS.map((item) => {
             const active = pathname.startsWith(item.href);
@@ -99,14 +118,21 @@ export function Sidebar() {
                 <Link
                   href={item.href}
                   aria-current={active ? "page" : undefined}
-                  className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors ${
-                    active
-                      ? "bg-surface-2 text-ink"
-                      : "text-ink-muted hover:bg-surface-2/60 hover:text-ink"
-                  }`}
+                  title={collapsed ? item.label : undefined}
+                  className={
+                    collapsed
+                      ? `grid size-11 place-items-center justify-self-center rounded-xl transition-colors ${
+                          active ? "bg-surface-2 text-ink" : "text-ink-muted hover:bg-surface-2/60 hover:text-ink"
+                        }`
+                      : `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors ${
+                          active
+                            ? "bg-surface-2 text-ink"
+                            : "text-ink-muted hover:bg-surface-2/60 hover:text-ink"
+                        }`
+                  }
                 >
                   <Icon className={`size-[18px] ${active ? "text-gold" : ""}`} strokeWidth={1.7} />
-                  <span className="flex-1">{item.label}</span>
+                  {!collapsed && <span className="flex-1">{item.label}</span>}
                 </Link>
               </li>
             );
@@ -114,43 +140,53 @@ export function Sidebar() {
         </ul>
       </nav>
 
-      {/* Profile — a clean, self-contained panel */}
-      <div className="px-4 pb-5 pt-3">
-        <div className="card-2 p-4">
-          <div className="flex items-center gap-3">
-            <span
-              className="size-10 shrink-0 rounded-full border border-line-strong bg-cover"
-              style={{ backgroundImage: "var(--hero)", backgroundPosition: "75% 27%" }}
-              aria-hidden
-            />
-            <div className="min-w-0 flex-1">
-              <button
-                type="button"
-                className="flex items-center gap-1 text-sm font-medium text-ink"
-              >
-                <span className="truncate">Jessica</span>
-                <ChevronDown className="size-3.5 shrink-0 text-ink-muted" />
-              </button>
-              <p className="truncate text-xs text-ink-muted">
-                {isNewUser ? "New Writer" : "Level 7 • Storyweaver"}
-              </p>
-            </div>
-          </div>
-          {isNewUser ? (
-            <Link
-              href="/settings"
-              className="mt-3.5 block w-full rounded-lg bg-gold py-2 text-center text-xs font-medium text-gold-contrast transition-opacity hover:opacity-90"
-            >
-              Upgrade
-            </Link>
-          ) : (
-            <div className="mt-3.5">
-              <Progress value={49} />
-              <p className="mt-1.5 text-xs text-ink-faint">2,450 / 5,000 XP</p>
-            </div>
-          )}
+      {/* Profile */}
+      {collapsed ? (
+        <div className="flex justify-center px-3 pb-5 pt-3">
+          <span
+            className="size-10 shrink-0 rounded-full border border-line-strong bg-cover"
+            style={{ backgroundImage: "var(--hero)", backgroundPosition: "75% 27%" }}
+            aria-hidden
+          />
         </div>
-      </div>
+      ) : (
+        <div className="px-4 pb-5 pt-3">
+          <div className="card-2 p-4">
+            <div className="flex items-center gap-3">
+              <span
+                className="size-10 shrink-0 rounded-full border border-line-strong bg-cover"
+                style={{ backgroundImage: "var(--hero)", backgroundPosition: "75% 27%" }}
+                aria-hidden
+              />
+              <div className="min-w-0 flex-1">
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-sm font-medium text-ink"
+                >
+                  <span className="truncate">Jessica</span>
+                  <ChevronDown className="size-3.5 shrink-0 text-ink-muted" />
+                </button>
+                <p className="truncate text-xs text-ink-muted">
+                  {isNewUser ? "New Writer" : "Level 7 • Storyweaver"}
+                </p>
+              </div>
+            </div>
+            {isNewUser ? (
+              <Link
+                href="/settings"
+                className="mt-3.5 block w-full rounded-lg bg-gold py-2 text-center text-xs font-medium text-gold-contrast transition-opacity hover:opacity-90"
+              >
+                Upgrade
+              </Link>
+            ) : (
+              <div className="mt-3.5">
+                <Progress value={49} />
+                <p className="mt-1.5 text-xs text-ink-faint">2,450 / 5,000 XP</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

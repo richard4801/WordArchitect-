@@ -20,6 +20,19 @@ export default function AppLayout({
 }) {
   const pathname = usePathname();
   const isDashboard = pathname === "/";
+  // The manuscript editor is a full-bleed workspace with its own top bar —
+  // it replaces the standard header and collapses the sidebar to an icon
+  // rail, same as the mockup.
+  const isManuscriptEditor = /^\/projects\/[^/]+\/chapters/.test(pathname);
+
+  if (isManuscriptEditor) {
+    return (
+      <div className="relative h-dvh overflow-hidden">
+        <Sidebar collapsed />
+        <div className="relative h-dvh min-w-0 lg:pl-[72px]">{children}</div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative min-h-dvh">
