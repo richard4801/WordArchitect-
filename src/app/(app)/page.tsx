@@ -22,7 +22,7 @@ import {
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
-import { Sigil, Sparkle } from "@/components/brand-mark";
+import { Sparkle } from "@/components/brand-mark";
 import { CoverArt } from "@/components/ui/cover-art";
 import { MiniCalendar } from "@/components/ui/mini-calendar";
 import { Progress } from "@/components/ui/progress";
@@ -563,20 +563,19 @@ function NewUserDashboard() {
   );
 }
 
-// No scrim, no forced theme — just two fixed colors tuned directly for
-// legibility on the hero photo: plain white in dark mode (the art is dark
-// enough there that plain ink-muted was fine structurally, just needed to
-// be unambiguously white), and a darker warm brown in light mode (the
-// existing --ink-muted read too light against the photo's brighter
-// upper-left region).
-const HERO_TEXT = "text-[#3a2a1a] dark:text-white";
+// Plain white in both themes — this text sits directly on the hero photo
+// (not the page canvas), which stays a dark, busy image in either theme,
+// so a theme-dependent ink color was never going to read reliably. A soft
+// drop shadow lifts the glyphs off the artwork instead of relying on the
+// image being dark enough on its own.
+const HERO_TEXT = "text-white [text-shadow:0_2px_10px_rgba(0,0,0,0.6)]";
 
 function NewUserHero() {
   return (
     <section className="pt-6">
       <div className="max-w-md">
         <p className={`text-base ${HERO_TEXT}`}>Welcome to WordArchitect,</p>
-        <h1 className="mt-1 flex items-center gap-3 font-display text-6xl font-medium text-ink dark:text-white sm:text-7xl">
+        <h1 className="mt-1 flex items-center gap-3 font-display text-6xl font-medium text-white [text-shadow:0_2px_14px_rgba(0,0,0,0.6)] sm:text-7xl">
           {user.name}
           <Sparkle className="size-6 text-gold" />
         </h1>
@@ -733,9 +732,11 @@ function TipOfTheDayCard() {
   return (
     <section className="card flex h-full flex-col p-5 sm:p-6">
       <h2 className="font-display text-xl text-ink">Tip of the Day</h2>
-      <Sigil className="mt-4 size-8 text-gold" />
+      <span className="mt-4 font-display text-6xl leading-none text-gold" aria-hidden>
+        &ldquo;
+      </span>
       <blockquote className="mt-3 font-display text-base italic leading-snug text-ink-muted">
-        &ldquo;Don&rsquo;t worry about making it perfect. Just make it exist.&rdquo;
+        Don&rsquo;t worry about making it perfect. Just make it exist.
       </blockquote>
       <p className="mt-auto pt-3 text-xs text-ink-faint">— Your future reader</p>
     </section>
