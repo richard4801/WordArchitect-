@@ -56,7 +56,7 @@ function ReturningUserDashboard({ projects }: { projects: Project[] }) {
       <WelcomeBackHeader />
       <QuickActionsRow />
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_480px] lg:items-start">
+      <div className="grid gap-6 lg:grid-cols-[1fr_420px] lg:items-start">
         <ContinueWritingCard />
         <TodaysProgressCard />
       </div>
@@ -110,7 +110,7 @@ function QuickActionsRow() {
           <Link
             key={a.label}
             href={a.href}
-            className="card card-hover flex w-24 shrink-0 flex-col items-center gap-2.5 px-2 py-4 text-center sm:w-28"
+            className="card card-hover flex w-24 shrink-0 flex-col items-center gap-2 px-2 py-3.5 text-center sm:w-28"
           >
             <Icon className="size-4 text-gold" strokeWidth={1.7} />
             <span className="text-xs text-ink-muted">{a.label}</span>

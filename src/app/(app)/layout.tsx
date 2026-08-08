@@ -27,7 +27,7 @@ export default function AppLayout({
       <Sidebar />
       <div className="relative flex min-h-dvh min-w-0 flex-col overflow-x-clip lg:pl-[264px]">
         <header className="flex items-center gap-3 px-5 py-4 sm:px-8">
-          <div className="btn-raised flex min-w-0 flex-1 items-center gap-2 rounded-full px-4 py-2 text-sm text-ink-faint sm:max-w-xs">
+          <div className="btn-raised flex min-w-0 flex-1 items-center gap-2 rounded-full px-4 py-2 text-sm text-ink-faint sm:max-w-sm">
             <Search className="size-4 shrink-0" />
             <span className="min-w-0 flex-1 truncate text-left">Search anything...</span>
             <kbd className="label-caps shrink-0 rounded-md border border-line-strong px-1.5 py-0.5 text-[0.6rem]">
