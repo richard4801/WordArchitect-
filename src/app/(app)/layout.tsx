@@ -6,7 +6,7 @@ import { useEffect } from "react";
 import { PageBackground } from "@/components/page-background";
 import { Sidebar } from "@/components/sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { hydrateSidebarCollapsed, useSidebarCollapsed } from "@/lib/ui-store";
+import { hydrateSidebarCollapsed, useFocusModeActive, useSidebarCollapsed } from "@/lib/ui-store";
 
 /**
  * Shared application shell: fixed sidebar + a scrollable main column with a
@@ -31,6 +31,7 @@ export default function AppLayout({
   // it replaces the standard header entirely, same as the mockup.
   const isManuscriptEditor = /^\/projects\/[^/]+\/chapters/.test(pathname);
   const [collapsed] = useSidebarCollapsed();
+  const focusModeActive = useFocusModeActive();
 
   useEffect(() => {
     hydrateSidebarCollapsed();
@@ -39,8 +40,12 @@ export default function AppLayout({
   if (isManuscriptEditor) {
     return (
       <div className="relative h-dvh overflow-hidden">
-        <Sidebar />
-        <div className={`relative h-dvh min-w-0 ${collapsed ? "lg:pl-[72px]" : "lg:pl-[264px]"}`}>
+        {!focusModeActive && <Sidebar />}
+        <div
+          className={`relative h-dvh min-w-0 ${
+            focusModeActive ? "" : collapsed ? "lg:pl-[72px]" : "lg:pl-[264px]"
+          }`}
+        >
           {children}
         </div>
       </div>

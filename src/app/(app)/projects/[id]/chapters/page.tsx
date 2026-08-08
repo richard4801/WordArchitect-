@@ -7,6 +7,7 @@ import {
   ChevronRight,
   CircleCheck,
   CornerUpLeft,
+  Feather,
   Filter,
   Grip,
   Highlighter,
@@ -29,8 +30,10 @@ import {
   Sparkles,
   Strikethrough,
   Table2,
+  Type,
   Underline,
   Undo2,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -50,6 +53,7 @@ import {
 } from "@/lib/manuscript-data";
 import { Progress } from "@/components/ui/progress";
 import { useProject } from "@/lib/project-store";
+import { setFocusModeActive } from "@/lib/ui-store";
 
 /**
  * The manuscript editor — a dedicated, full-bleed workspace distinct from
@@ -70,6 +74,8 @@ import { useProject } from "@/lib/project-store";
 const PANEL_TABS = ["Comments", "Versions", "Outline", "AI"] as const;
 type PanelTab = (typeof PANEL_TABS)[number];
 
+type FocusModeKind = "normal" | "typewriter" | "zen";
+
 export default function ChaptersPage() {
   const { id } = useParams<{ id: string }>();
   const project = useProject(id);
@@ -81,7 +87,8 @@ export default function ChaptersPage() {
 
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
-  const [focusMode, setFocusMode] = useState(false);
+  const [focusMode, setFocusMode] = useState<FocusModeKind | null>(null);
+  const [showFocusPicker, setShowFocusPicker] = useState(false);
   const [panelTab, setPanelTab] = useState<PanelTab>("Comments");
   // The mockup's own numbers (4,580 words / 26,789 characters) — the demo
   // chapter's actual prose is much shorter, but this reads as "the whole
@@ -109,6 +116,45 @@ export default function ChaptersPage() {
     }
     fn();
   }
+
+  // Normal and Typewriter modes are meant to be fully immersive (the picker
+  // calls them "fullscreen"); Zen strips the chrome down so far that going
+  // fullscreen too just completes the effect. All three request it — if the
+  // browser denies it (no user gesture, embedded iframe, etc.) the mode
+  // still activates, just windowed.
+  function activateFocusMode(kind: FocusModeKind) {
+    setFocusMode(kind);
+    setShowFocusPicker(false);
+    document.documentElement.requestFullscreen?.().catch(() => {});
+  }
+
+  function exitFocusMode() {
+    setFocusMode(null);
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  }
+
+  // Escape backs out one layer at a time: close the picker if it's open,
+  // otherwise exit whichever focus mode is active. This is the documented
+  // way out alongside the corner X button — focus modes hide enough chrome
+  // that a keyboard escape hatch matters.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      if (showFocusPicker) setShowFocusPicker(false);
+      else if (focusMode) exitFocusMode();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showFocusPicker, focusMode]);
+
+  // Mirror local focus-mode state into the shared store so (app)/layout.tsx
+  // can hide the global Sidebar too — otherwise persistent app nav sits in
+  // what's supposed to be a distraction-free view. Reset on unmount so
+  // navigating away can never strand it hidden elsewhere.
+  useEffect(() => {
+    setFocusModeActive(focusMode !== null);
+  }, [focusMode]);
+  useEffect(() => () => setFocusModeActive(false), []);
 
   const activeChapter = useMemo(() => {
     if (!manuscript.length) return undefined;
@@ -140,9 +186,15 @@ export default function ChaptersPage() {
 
   const body = getChapterBody(project.id, activeChapter);
 
+  // Normal and Typewriter both hide the side panels but keep the toolbar
+  // and status bar; Zen strips those too, leaving just the page.
+  const hidePanels = focusMode !== null;
+  const hideChrome = focusMode === "zen";
+  const typewriter = focusMode === "typewriter";
+
   return (
     <div className="flex h-dvh min-w-0">
-      {!focusMode && (
+      {!hidePanels && (
         <ManuscriptPanel
           manuscript={manuscript}
           activeChapterId={activeChapter.id}
@@ -156,15 +208,18 @@ export default function ChaptersPage() {
       )}
 
       <div className="relative flex min-w-0 flex-1 flex-col border-r border-line">
-        <TopBar
-          project={project}
-          chapterTitle={`Chapter ${activeChapter.number} – ${body.title}`}
-          onOpenPanel={(tab) => {
-            setFocusMode(false);
-            setPanelTab(tab);
-          }}
-        />
-        <FormattingToolbar withSelection={withSelection} />
+        {!hideChrome && (
+          <TopBar
+            project={project}
+            chapterTitle={`Chapter ${activeChapter.number} – ${body.title}`}
+            onOpenPanel={(tab) => {
+              setFocusMode(null);
+              setPanelTab(tab);
+            }}
+            makeRoomForExitButton={hidePanels}
+          />
+        )}
+        {!hideChrome && <FormattingToolbar withSelection={withSelection} />}
         <EditorBody
           key={activeChapter.id}
           body={body}
@@ -173,25 +228,35 @@ export default function ChaptersPage() {
           onStatsChange={(deltaWords, deltaCharacters) =>
             setStats({ words: 4580 + deltaWords, characters: 26789 + deltaCharacters })
           }
+          typewriter={typewriter}
+          centered={hideChrome}
         />
-        <StatusBar
-          words={stats.words}
-          characters={stats.characters}
-          focusMode={focusMode}
-          onToggleFocusMode={() => setFocusMode((f) => !f)}
-        />
+        {!hideChrome && (
+          <StatusBar
+            words={stats.words}
+            characters={stats.characters}
+            focusMode={focusMode}
+            onOpenPicker={() => setShowFocusPicker(true)}
+            onExitFocusMode={exitFocusMode}
+          />
+        )}
 
-        {focusMode && (
+        {hidePanels && !hideChrome && (
           <FocusModeTabStrip
             onSelect={(tab) => {
               setPanelTab(tab);
-              setFocusMode(false);
+              setFocusMode(null);
             }}
           />
         )}
       </div>
 
-      {!focusMode && <CommentsPanel tab={panelTab} onTabChange={setPanelTab} />}
+      {!hidePanels && <CommentsPanel tab={panelTab} onTabChange={setPanelTab} />}
+
+      {hidePanels && <FocusExitButton onClick={exitFocusMode} />}
+      {showFocusPicker && (
+        <FocusModePickerModal onSelect={activateFocusMode} onClose={() => setShowFocusPicker(false)} />
+      )}
     </div>
   );
 }
@@ -227,6 +292,117 @@ function FocusModeTabStrip({ onSelect }: { onSelect: (tab: PanelTab) => void }) 
         );
       })}
     </div>
+  );
+}
+
+/**
+ * The way out of any focus mode besides Escape — a subtle, low-opacity X
+ * pinned to the corner the side panel used to occupy, so it reads as part
+ * of the page rather than another toolbar control.
+ */
+function FocusExitButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label="Exit focus mode"
+      title="Exit focus mode (Esc)"
+      onClick={onClick}
+      className="fixed left-4 top-4 z-30 grid size-8 place-items-center rounded-full text-ink-faint opacity-40 transition-opacity hover:bg-surface-2 hover:opacity-100"
+    >
+      <X className="size-4" />
+    </button>
+  );
+}
+
+const FOCUS_MODE_OPTIONS: {
+  key: FocusModeKind;
+  label: string;
+  description: string;
+  icon: typeof Maximize2;
+}[] = [
+  {
+    key: "normal",
+    label: "Normal Fullscreen",
+    description: "Hide the side panels and go fullscreen. Your toolbar stays right where it is.",
+    icon: Maximize2,
+  },
+  {
+    key: "typewriter",
+    label: "Typewriter Mode",
+    description: "Fullscreen, with the line you're writing always centered in view.",
+    icon: Type,
+  },
+  {
+    key: "zen",
+    label: "Zen Mode",
+    description: "Everything disappears — just you and the manuscript.",
+    icon: Feather,
+  },
+];
+
+/** The picker Focus Mode opens into: pick a mode, or Escape/X/backdrop out. */
+function FocusModePickerModal({
+  onSelect,
+  onClose,
+}: {
+  onSelect: (kind: FocusModeKind) => void;
+  onClose: () => void;
+}) {
+  const [entered, setEntered] = useState(false);
+
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setEntered(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  return (
+    <>
+      <button
+        type="button"
+        aria-label="Close"
+        onClick={onClose}
+        className={`fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity duration-200 ${
+          entered ? "opacity-100" : "opacity-0"
+        }`}
+      />
+      <div
+        className={`fixed inset-0 z-50 grid place-items-center p-6 transition-all duration-200 ${
+          entered ? "scale-100 opacity-100" : "scale-95 opacity-0"
+        }`}
+      >
+        <div className="card-2 w-full max-w-md p-6">
+          <div className="flex items-center justify-between">
+            <h2 className="font-display text-xl text-ink">Choose a focus mode</h2>
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={onClose}
+              className="grid size-7 shrink-0 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+          <div className="mt-4 flex flex-col gap-2">
+            {FOCUS_MODE_OPTIONS.map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                onClick={() => onSelect(opt.key)}
+                className="flex items-start gap-3 rounded-xl border border-line p-3.5 text-left transition-colors hover:border-line-strong hover:bg-surface-2/60"
+              >
+                <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-surface-2 text-gold">
+                  <opt.icon className="size-4" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-ink">{opt.label}</span>
+                  <span className="mt-0.5 block text-xs text-ink-muted">{opt.description}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -444,13 +620,19 @@ function TopBar({
   project,
   chapterTitle,
   onOpenPanel,
+  makeRoomForExitButton = false,
 }: {
   project: { id: string; title: string };
   chapterTitle: string;
   onOpenPanel: (tab: PanelTab) => void;
+  makeRoomForExitButton?: boolean;
 }) {
   return (
-    <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line px-5 text-sm">
+    <header
+      className={`flex h-14 shrink-0 items-center gap-2 border-b border-line text-sm ${
+        makeRoomForExitButton ? "pl-14 pr-5" : "px-5"
+      }`}
+    >
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
         <Link
           href={`/projects/${project.id}`}
@@ -929,28 +1111,67 @@ function EditorBody({
   editableRef,
   onSelect,
   onStatsChange,
+  typewriter = false,
+  centered = false,
 }: {
   body: { heading: string; title: string; paragraphs: ChapterParagraph[] };
   editableRef: React.RefObject<HTMLDivElement | null>;
   onSelect: () => void;
   onStatsChange: (deltaWords: number, deltaCharacters: number) => void;
+  typewriter?: boolean;
+  centered?: boolean;
 }) {
   const baseline = useRef({ words: 0, characters: 0 });
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const text = editableRef.current?.innerText ?? "";
     baseline.current = countText(text);
   }, [editableRef]);
 
+  // Keeps the caret's line pinned near the vertical middle of the viewport
+  // as you type or move around, so the page scrolls to you instead of you
+  // scrolling to the page. The generous top/bottom padding below (added
+  // only in typewriter mode) is what gives the first and last lines enough
+  // room to actually reach that middle position.
+  function centerCaret() {
+    if (!typewriter) return;
+    const sel = window.getSelection();
+    const container = scrollRef.current;
+    if (!sel || sel.rangeCount === 0 || !container) return;
+    const range = sel.getRangeAt(0).cloneRange();
+    range.collapse(true);
+    let rect = range.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0 && rect.top === 0) {
+      const node = range.startContainer;
+      const el = node instanceof Element ? node : node.parentElement;
+      if (!el) return;
+      rect = el.getBoundingClientRect();
+    }
+    const containerRect = container.getBoundingClientRect();
+    const target = containerRect.top + containerRect.height * 0.42;
+    const delta = rect.top - target;
+    if (Math.abs(delta) > 4) container.scrollBy({ top: delta, behavior: "smooth" });
+  }
+
+  function handleSelect() {
+    onSelect();
+    centerCaret();
+  }
+
   function handleInput() {
     const text = editableRef.current?.innerText ?? "";
     const current = countText(text);
     onStatsChange(current.words - baseline.current.words, current.characters - baseline.current.characters);
+    centerCaret();
   }
 
   return (
-    <div className="scroll-slim flex-1 overflow-y-auto px-10 py-12">
-      <div className="mx-auto max-w-[680px]">
+    <div
+      ref={scrollRef}
+      className={`scroll-slim flex-1 overflow-y-auto px-10 ${typewriter ? "py-[40vh]" : "py-12"}`}
+    >
+      <div className={`mx-auto max-w-[680px] ${centered ? "pt-[8vh]" : ""}`}>
         <p className="label-caps text-purple text-[0.68rem]">{body.heading}</p>
         <h1 className="mt-2 font-display text-4xl text-ink">{body.title}</h1>
 
@@ -959,8 +1180,8 @@ function EditorBody({
           contentEditable
           suppressContentEditableWarning
           onInput={handleInput}
-          onMouseUp={onSelect}
-          onKeyUp={onSelect}
+          onMouseUp={handleSelect}
+          onKeyUp={handleSelect}
           className="mt-8 font-display text-[17px] leading-[1.85] text-ink/90 focus:outline-none [&_p]:mb-5"
         >
           {body.paragraphs.map((p) => (
@@ -1022,14 +1243,17 @@ function StatusBar({
   words,
   characters,
   focusMode,
-  onToggleFocusMode,
+  onOpenPicker,
+  onExitFocusMode,
 }: {
   words: number;
   characters: number;
-  focusMode: boolean;
-  onToggleFocusMode: () => void;
+  focusMode: FocusModeKind | null;
+  onOpenPicker: () => void;
+  onExitFocusMode: () => void;
 }) {
   const readMinutes = Math.max(1, Math.round(words / 250));
+  const active = focusMode !== null;
   return (
     <footer className="flex h-11 shrink-0 items-center gap-4 border-t border-line px-5 text-xs text-ink-muted">
       <span>{words.toLocaleString()} words</span>
@@ -1045,15 +1269,15 @@ function StatusBar({
           <button
             type="button"
             role="switch"
-            aria-checked={focusMode}
-            onClick={onToggleFocusMode}
+            aria-checked={active}
+            onClick={active ? onExitFocusMode : onOpenPicker}
             className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-              focusMode ? "bg-gold" : "bg-surface-2"
+              active ? "bg-gold" : "bg-surface-2"
             }`}
           >
             <span
               className={`absolute top-0.5 size-4 rounded-full bg-canvas transition-transform ${
-                focusMode ? "translate-x-[18px]" : "translate-x-0.5"
+                active ? "translate-x-[18px]" : "translate-x-0.5"
               }`}
             />
           </button>

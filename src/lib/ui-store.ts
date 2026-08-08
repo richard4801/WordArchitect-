@@ -58,3 +58,42 @@ export function hydrateSidebarCollapsed(): void {
     // ignore
   }
 }
+
+/**
+ * Whether a manuscript-editor focus mode (Normal/Typewriter/Zen) is active.
+ * The picker and its modes live entirely inside the chapters page, but the
+ * global Sidebar is rendered one level up in (app)/layout.tsx — this bridges
+ * the two so focus mode can hide it too, rather than leaving app nav sitting
+ * in what's supposed to be a distraction-free view. Ephemeral (no
+ * persistence): it always starts false and the chapters page resets it on
+ * unmount, so it can never strand the Sidebar hidden on another page.
+ */
+let focusModeActive = false;
+const focusListeners = new Set<() => void>();
+
+function emitFocus() {
+  for (const listener of focusListeners) listener();
+}
+
+function subscribeFocus(listener: () => void) {
+  focusListeners.add(listener);
+  return () => focusListeners.delete(listener);
+}
+
+function getFocusSnapshot() {
+  return focusModeActive;
+}
+
+function getFocusServerSnapshot() {
+  return false;
+}
+
+export function useFocusModeActive(): boolean {
+  return useSyncExternalStore(subscribeFocus, getFocusSnapshot, getFocusServerSnapshot);
+}
+
+export function setFocusModeActive(active: boolean): void {
+  if (focusModeActive === active) return;
+  focusModeActive = active;
+  emitFocus();
+}
