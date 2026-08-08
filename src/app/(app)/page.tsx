@@ -555,7 +555,7 @@ function NewUserDashboard() {
       <NewUserHero />
       <GetStartedCard />
       <HelpsYouWriteCard />
-      <div className="grid gap-8 lg:grid-cols-[1fr_320px] lg:items-start">
+      <div className="grid gap-8 lg:grid-cols-[1fr_320px]">
         <SuggestedForYouCard />
         <TipOfTheDayCard />
       </div>
@@ -731,13 +731,13 @@ function SuggestedForYouCard() {
 
 function TipOfTheDayCard() {
   return (
-    <section className="card p-5 sm:p-6">
+    <section className="card flex h-full flex-col p-5 sm:p-6">
       <h2 className="font-display text-xl text-ink">Tip of the Day</h2>
       <Sigil className="mt-4 size-8 text-gold" />
       <blockquote className="mt-3 font-display text-base italic leading-snug text-ink-muted">
         &ldquo;Don&rsquo;t worry about making it perfect. Just make it exist.&rdquo;
       </blockquote>
-      <p className="mt-3 text-xs text-ink-faint">— Your future reader</p>
+      <p className="mt-auto pt-3 text-xs text-ink-faint">— Your future reader</p>
     </section>
   );
 }
