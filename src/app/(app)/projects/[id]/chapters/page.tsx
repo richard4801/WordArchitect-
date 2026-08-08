@@ -1,9 +1,6 @@
 "use client";
 
 import {
-  AlignJustify,
-  AlignLeft,
-  Baseline,
   Bold,
   Check,
   ChevronDown,
@@ -20,15 +17,16 @@ import {
   ListChecks,
   ListOrdered,
   List as ListIcon,
+  ListTree,
   LockOpen,
   Maximize2,
   MessageSquare,
   Minus,
-  MoreHorizontal,
   MoreVertical,
   Plus,
   Redo2,
   Search,
+  Sparkles,
   Strikethrough,
   Table2,
   Underline,
@@ -55,17 +53,23 @@ import { useProject } from "@/lib/project-store";
 
 /**
  * The manuscript editor — a dedicated, full-bleed workspace distinct from
- * every other page in the app (no standard header, sidebar collapsed to an
- * icon rail; see (app)/layout.tsx). Three columns: the manuscript outline,
- * the editor itself, and a comments/versions/outline/AI panel. Matches
- * resources/writing-mockup.png.
+ * every other page in the app (no standard header; sidebar collapse is a
+ * user toggle, see (app)/layout.tsx + ui-store.ts). Three columns: the
+ * manuscript outline, the editor itself, and a comments/versions/outline/AI
+ * panel. Matches resources/writing-mockup.png.
  *
- * The prose body is a real contentEditable region (typing, selecting, and
- * the Bold/Italic/Underline/Strikethrough toolbar buttons all work via
- * document.execCommand) rather than a static screenshot — consistent with
- * the rest of the app being interactive-but-unpersisted. Word/character
- * counts in the status bar are computed live from the editable content.
+ * The prose body is a real contentEditable region. Formatting commands
+ * (bold/italic/underline/strike/lists/links/color/highlight/font/size/
+ * image/table/checklist) all actually apply to the current selection —
+ * selection is captured on every mouseup/keyup inside the editor and
+ * restored before each command runs, since clicking a toolbar button (or
+ * opening a native <select>) steals the browser's live selection otherwise.
+ * Word/character counts are computed live from the editable content.
  */
+
+const PANEL_TABS = ["Comments", "Versions", "Outline", "AI"] as const;
+type PanelTab = (typeof PANEL_TABS)[number];
+
 export default function ChaptersPage() {
   const { id } = useParams<{ id: string }>();
   const project = useProject(id);
@@ -78,11 +82,33 @@ export default function ChaptersPage() {
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
   const [focusMode, setFocusMode] = useState(false);
+  const [panelTab, setPanelTab] = useState<PanelTab>("Comments");
   // The mockup's own numbers (4,580 words / 26,789 characters) — the demo
   // chapter's actual prose is much shorter, but this reads as "the whole
   // manuscript so far," not just what's visible in this one editable div,
   // so live edits adjust from that baseline rather than replacing it.
   const [stats, setStats] = useState({ words: 4580, characters: 26789 });
+
+  const editableRef = useRef<HTMLDivElement>(null);
+  const savedRangeRef = useRef<Range | null>(null);
+
+  function saveSelection() {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && editableRef.current?.contains(sel.anchorNode)) {
+      savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+    }
+  }
+
+  /** Restore the last selection inside the editor, then run a formatting action against it. */
+  function withSelection(fn: () => void) {
+    editableRef.current?.focus();
+    const sel = window.getSelection();
+    if (sel && savedRangeRef.current) {
+      sel.removeAllRanges();
+      sel.addRange(savedRangeRef.current);
+    }
+    fn();
+  }
 
   const activeChapter = useMemo(() => {
     if (!manuscript.length) return undefined;
@@ -129,12 +155,21 @@ export default function ChaptersPage() {
         />
       )}
 
-      <div className="flex min-w-0 flex-1 flex-col border-r border-line">
-        <TopBar project={project} chapterTitle={`Chapter ${activeChapter.number} – ${body.title}`} />
-        <FormattingToolbar />
+      <div className="relative flex min-w-0 flex-1 flex-col border-r border-line">
+        <TopBar
+          project={project}
+          chapterTitle={`Chapter ${activeChapter.number} – ${body.title}`}
+          onOpenPanel={(tab) => {
+            setFocusMode(false);
+            setPanelTab(tab);
+          }}
+        />
+        <FormattingToolbar withSelection={withSelection} />
         <EditorBody
           key={activeChapter.id}
           body={body}
+          editableRef={editableRef}
+          onSelect={saveSelection}
           onStatsChange={(deltaWords, deltaCharacters) =>
             setStats({ words: 4580 + deltaWords, characters: 26789 + deltaCharacters })
           }
@@ -145,9 +180,52 @@ export default function ChaptersPage() {
           focusMode={focusMode}
           onToggleFocusMode={() => setFocusMode((f) => !f)}
         />
+
+        {focusMode && (
+          <FocusModeTabStrip
+            onSelect={(tab) => {
+              setPanelTab(tab);
+              setFocusMode(false);
+            }}
+          />
+        )}
       </div>
 
-      {!focusMode && <CommentsPanel />}
+      {!focusMode && <CommentsPanel tab={panelTab} onTabChange={setPanelTab} />}
+    </div>
+  );
+}
+
+/**
+ * Compact icon-only switcher for Comments/Versions/Outline/AI — the full
+ * text-labeled tabs live in the comments panel, which Focus Mode hides so
+ * the prose isn't crowded. This is what stays reachable while focused:
+ * click one and it exits focus mode straight into that tab.
+ */
+function FocusModeTabStrip({ onSelect }: { onSelect: (tab: PanelTab) => void }) {
+  const ICONS: Record<PanelTab, typeof MessageSquare> = {
+    Comments: MessageSquare,
+    Versions: History,
+    Outline: ListTree,
+    AI: Sparkles,
+  };
+  return (
+    <div className="absolute right-4 top-4 z-10 flex flex-col gap-1 rounded-xl border border-line bg-surface/90 p-1 shadow-lg backdrop-blur">
+      {PANEL_TABS.map((tab) => {
+        const Icon = ICONS[tab];
+        return (
+          <button
+            key={tab}
+            type="button"
+            title={tab}
+            aria-label={tab}
+            onClick={() => onSelect(tab)}
+            className="grid size-9 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+          >
+            <Icon className="size-4" />
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -282,20 +360,6 @@ function ManuscriptPanel({
           </p>
         </div>
       </div>
-
-      <div className="flex items-center gap-2.5 border-t border-line px-4 py-3.5">
-        <span
-          className="size-8 shrink-0 rounded-full border border-line-strong bg-cover"
-          style={{ backgroundImage: "var(--hero)", backgroundPosition: "75% 27%" }}
-          aria-hidden
-        />
-        <div className="min-w-0 flex-1">
-          <p className="flex items-center gap-1 truncate text-sm font-medium text-ink">
-            Jessica <ChevronDown className="size-3 text-ink-muted" />
-          </p>
-          <p className="truncate text-xs text-ink-muted">Level 7 • Storyweaver</p>
-        </div>
-      </div>
     </aside>
   );
 }
@@ -376,32 +440,48 @@ function ChapterRow({
 /*  Center — top bar, formatting toolbar, editor body, status bar          */
 /* ======================================================================= */
 
-function TopBar({ project, chapterTitle }: { project: { id: string; title: string }; chapterTitle: string }) {
+function TopBar({
+  project,
+  chapterTitle,
+  onOpenPanel,
+}: {
+  project: { id: string; title: string };
+  chapterTitle: string;
+  onOpenPanel: (tab: PanelTab) => void;
+}) {
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line px-5 text-sm">
-      <Link
-        href={`/projects/${project.id}`}
-        className="grid size-7 shrink-0 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
-        aria-label="Back to project"
-      >
-        <BookIcon />
-      </Link>
-      <Link href={`/projects/${project.id}`} className="shrink-0 truncate text-ink-muted hover:text-ink">
-        {project.title}
-      </Link>
-      <ChevronRight className="size-3.5 shrink-0 text-ink-faint" />
-      <Link href={`/projects/${project.id}/chapters`} className="shrink-0 text-ink-muted hover:text-ink">
-        Manuscript
-      </Link>
-      <ChevronRight className="size-3.5 shrink-0 text-ink-faint" />
-      <span className="min-w-0 truncate font-medium text-ink">{chapterTitle}</span>
+      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+        <Link
+          href={`/projects/${project.id}`}
+          className="grid size-7 shrink-0 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+          aria-label="Back to project"
+        >
+          <BookIcon />
+        </Link>
+        <Link
+          href={`/projects/${project.id}`}
+          className="hidden max-w-[140px] shrink-0 truncate text-ink-muted hover:text-ink lg:block"
+        >
+          {project.title}
+        </Link>
+        <ChevronRight className="hidden size-3.5 shrink-0 text-ink-faint lg:block" />
+        <Link
+          href={`/projects/${project.id}/chapters`}
+          className="hidden shrink-0 text-ink-muted hover:text-ink md:block"
+        >
+          Manuscript
+        </Link>
+        <ChevronRight className="hidden size-3.5 shrink-0 text-ink-faint md:block" />
+        <span className="min-w-0 flex-1 truncate font-medium text-ink">{chapterTitle}</span>
+      </div>
 
-      <span className="ml-4 hidden shrink-0 items-center gap-1.5 text-xs text-success sm:flex">
+      <span className="hidden shrink-0 items-center gap-1.5 text-xs text-success xl:flex">
         <CircleCheck className="size-3.5" />
         All changes saved
       </span>
 
-      <div className="ml-auto flex shrink-0 items-center gap-1">
+      <div className="flex shrink-0 items-center gap-1">
         <button
           type="button"
           aria-label="Undo"
@@ -428,17 +508,12 @@ function TopBar({ project, chapterTitle }: { project: { id: string; title: strin
           </span>
         </div>
 
-        <button
-          type="button"
-          className="ml-1 flex items-center gap-1.5 rounded-xl bg-surface-2 px-3.5 py-2 text-sm text-ink transition-colors hover:bg-surface-2/70"
-        >
-          <LockOpen className="size-4" />
-          Share
-        </button>
+        <ShareButton />
 
         <button
           type="button"
           aria-label="Comments"
+          onClick={() => onOpenPanel("Comments")}
           className="ml-1 grid size-8 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
         >
           <MessageSquare className="size-4" />
@@ -446,19 +521,98 @@ function TopBar({ project, chapterTitle }: { project: { id: string; title: strin
         <button
           type="button"
           aria-label="Version history"
+          onClick={() => onOpenPanel("Versions")}
           className="grid size-8 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
         >
           <History className="size-4" />
         </button>
-        <button
-          type="button"
-          aria-label="More"
-          className="grid size-8 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
-        >
-          <MoreVertical className="size-4" />
-        </button>
+        <MoreMenu projectId={project.id} />
       </div>
     </header>
+  );
+}
+
+function ShareButton() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="ml-1 flex items-center gap-1.5 rounded-xl bg-surface-2 px-3.5 py-2 text-sm text-ink transition-colors hover:bg-surface-2/70"
+      >
+        <LockOpen className="size-4" />
+        Share
+      </button>
+      {open && (
+        <>
+          <button
+            type="button"
+            aria-label="Close"
+            className="fixed inset-0 z-10 cursor-default"
+            onClick={() => setOpen(false)}
+          />
+          <div className="absolute right-0 top-full z-20 mt-2 w-64">
+            <div className="card-2 p-3">
+              <p className="text-sm font-medium text-ink">Share this chapter</p>
+              <p className="mt-1 text-xs text-ink-muted">
+                Anyone with the link and an invite can view or comment. There&rsquo;s no backend here
+                yet, so this is a preview of the flow.
+              </p>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="mt-3 w-full rounded-lg border border-line py-1.5 text-xs text-ink-muted transition-colors hover:text-ink"
+              >
+                Copy link
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function MoreMenu({ projectId }: { projectId: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        aria-label="More"
+        onClick={() => setOpen((o) => !o)}
+        className="grid size-8 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+      >
+        <MoreVertical className="size-4" />
+      </button>
+      {open && (
+        <>
+          <button
+            type="button"
+            aria-label="Close"
+            className="fixed inset-0 z-10 cursor-default"
+            onClick={() => setOpen(false)}
+          />
+          <div className="absolute right-0 top-full z-20 mt-2 w-48">
+            <div className="card-2 p-1.5">
+              <Link
+                href={`/projects/${projectId}/settings`}
+                className="block rounded-lg px-3 py-2 text-sm text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+              >
+                Chapter settings
+              </Link>
+              <Link
+                href={`/projects/${projectId}`}
+                className="block rounded-lg px-3 py-2 text-sm text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+              >
+                Export chapter
+              </Link>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -473,15 +627,78 @@ function BookIcon() {
 
 const TOOLBAR_DIVIDER = <span className="mx-1 h-5 w-px shrink-0 bg-line" aria-hidden />;
 
-function FormattingToolbar() {
-  function exec(command: string) {
-    document.execCommand(command);
+const FONT_OPTIONS = [
+  { label: "Lora", value: "Lora, Georgia, serif" },
+  { label: "Georgia", value: "Georgia, serif" },
+  { label: "Arial", value: "Arial, sans-serif" },
+];
+const SIZE_OPTIONS = [10, 12, 14, 16, 18, 24, 32];
+const BLOCK_OPTIONS = [
+  { label: "Normal Text", value: "P" },
+  { label: "Heading 1", value: "H1" },
+  { label: "Heading 2", value: "H2" },
+  { label: "Quote", value: "BLOCKQUOTE" },
+];
+const SWATCHES = ["#d4af7a", "#e06a6a", "#6ca8e6", "#3fa46a", "#8868d6", "#f5f1ec"];
+
+function FormattingToolbar({ withSelection }: { withSelection: (fn: () => void) => void }) {
+  function exec(command: string, value?: string) {
+    withSelection(() => document.execCommand(command, false, value));
   }
+
+  function wrapStyle(styleText: string) {
+    withSelection(() => {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+      const range = sel.getRangeAt(0);
+
+      // A triple-click selection can extend into the very start of the next
+      // paragraph (a common browser quirk). Left alone, extractContents +
+      // insertNode would then wrap that whole next <p> inside this inline
+      // <span> too, corrupting the document. Clamp the range to the end of
+      // the start paragraph so formatting never crosses a block boundary.
+      const startBlock = closestBlock(range.startContainer);
+      if (startBlock && !startBlock.contains(range.endContainer)) {
+        range.setEnd(startBlock, startBlock.childNodes.length);
+      }
+      if (range.collapsed) return;
+
+      const span = document.createElement("span");
+      span.setAttribute("style", styleText);
+      try {
+        range.surroundContents(span);
+      } catch {
+        const contents = range.extractContents();
+        span.appendChild(contents);
+        range.insertNode(span);
+      }
+      sel.removeAllRanges();
+      const next = document.createRange();
+      next.selectNodeContents(span);
+      sel.addRange(next);
+    });
+  }
+
   return (
     <div className="scroll-slim flex h-11 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-line px-4 text-sm text-ink-muted">
-      <ToolbarDropdown label="Normal Text" className="w-28" />
-      <ToolbarDropdown label="Lora" className="w-20" />
-      <ToolbarDropdown label="12" className="w-14" />
+      <ToolbarSelect
+        options={BLOCK_OPTIONS.map((o) => ({ label: o.label, value: o.value }))}
+        defaultValue="P"
+        onChange={(v) => exec("formatBlock", v)}
+        className="w-28"
+      />
+      <ToolbarSelect
+        options={FONT_OPTIONS}
+        defaultValue={FONT_OPTIONS[0].value}
+        onChange={(v) => wrapStyle(`font-family:${v}`)}
+        className="w-20"
+      />
+      <ToolbarSelect
+        options={SIZE_OPTIONS.map((n) => ({ label: String(n), value: String(n) }))}
+        defaultValue="12"
+        onChange={(v) => wrapStyle(`font-size:${v}px`)}
+        className="w-14"
+      />
       {TOOLBAR_DIVIDER}
       <ToolbarButton label="Bold" onClick={() => exec("bold")}>
         <Bold className="size-4" />
@@ -495,20 +712,55 @@ function FormattingToolbar() {
       <ToolbarButton label="Strikethrough" onClick={() => exec("strikeThrough")}>
         <Strikethrough className="size-4" />
       </ToolbarButton>
-      <ToolbarButton label="Text color">
-        <Baseline className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton label="Highlight">
-        <Highlighter className="size-4" />
-      </ToolbarButton>
+      <ColorPickerButton
+        icon={<Baseline className="size-4" />}
+        label="Text color"
+        onPick={(color) => exec("foreColor", color)}
+      />
+      <ColorPickerButton
+        icon={<Highlighter className="size-4" />}
+        label="Highlight"
+        onPick={(color) => exec("hiliteColor", color)}
+      />
       {TOOLBAR_DIVIDER}
-      <ToolbarButton label="Link">
+      <ToolbarButton
+        label="Link"
+        onClick={() =>
+          withSelection(() => {
+            const url = window.prompt("Link URL");
+            if (url) document.execCommand("createLink", false, url);
+          })
+        }
+      >
         <Link2 className="size-4" />
       </ToolbarButton>
-      <ToolbarButton label="Image">
+      <ToolbarButton
+        label="Image"
+        onClick={() =>
+          withSelection(() => {
+            const url = window.prompt("Image URL");
+            if (url) document.execCommand("insertImage", false, url);
+          })
+        }
+      >
         <ImageIcon className="size-4" />
       </ToolbarButton>
-      <ToolbarDropdown label={<Table2 className="size-4" />} className="w-14" />
+      <ToolbarButton
+        label="Table"
+        onClick={() =>
+          exec(
+            "insertHTML",
+            "<table><tbody>" +
+              Array.from(
+                { length: 3 },
+                () => "<tr>" + "<td>&nbsp;</td>".repeat(3) + "</tr>",
+              ).join("") +
+              "</tbody></table><p><br></p>",
+          )
+        }
+      >
+        <Table2 className="size-4" />
+      </ToolbarButton>
       {TOOLBAR_DIVIDER}
       <ToolbarButton label="Bulleted list" onClick={() => exec("insertUnorderedList")}>
         <ListIcon className="size-4" />
@@ -516,16 +768,39 @@ function FormattingToolbar() {
       <ToolbarButton label="Numbered list" onClick={() => exec("insertOrderedList")}>
         <ListOrdered className="size-4" />
       </ToolbarButton>
-      <ToolbarButton label="Checklist">
+      <ToolbarButton
+        label="Checklist"
+        onClick={() =>
+          exec(
+            "insertHTML",
+            '<ul style="list-style:none;padding-left:0"><li><input type="checkbox" style="margin-right:0.5em" />New to-do</li></ul>',
+          )
+        }
+      >
         <ListChecks className="size-4" />
       </ToolbarButton>
-      <ToolbarButton label="Indent" onClick={() => exec("indent")}>
-        <AlignJustify className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton label="More">
-        <MoreHorizontal className="size-4" />
-      </ToolbarButton>
     </div>
+  );
+}
+
+const BLOCK_TAGS = new Set(["P", "H1", "H2", "H3", "BLOCKQUOTE", "LI"]);
+
+function closestBlock(node: Node): HTMLElement | null {
+  let el: Node | null = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+  while (el instanceof HTMLElement) {
+    if (BLOCK_TAGS.has(el.tagName)) return el;
+    el = el.parentElement;
+  }
+  return null;
+}
+
+function Baseline({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} strokeWidth={1.7} stroke="currentColor">
+      <path d="m6 16 4-9 4 9M7.5 12.5h5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 20h16" strokeLinecap="round" />
+      <path d="M15 16h4l-4 4h4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
 
@@ -552,32 +827,120 @@ function ToolbarButton({
   );
 }
 
-function ToolbarDropdown({ label, className = "" }: { label: React.ReactNode; className?: string }) {
+function ToolbarSelect({
+  options,
+  defaultValue,
+  onChange,
+  className = "",
+}: {
+  options: { label: string; value: string }[];
+  defaultValue: string;
+  onChange: (value: string) => void;
+  className?: string;
+}) {
   return (
-    <button
-      type="button"
-      className={`flex shrink-0 items-center justify-between gap-1 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-surface-2 hover:text-ink ${className}`}
-    >
-      <span className="truncate">{label}</span>
-      <ChevronDown className="size-3.5 shrink-0 text-ink-faint" />
-    </button>
+    <div className={`relative shrink-0 ${className}`}>
+      <select
+        defaultValue={defaultValue}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full cursor-pointer appearance-none rounded-lg bg-transparent py-1.5 pl-2 pr-6 text-sm text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink focus:outline-none"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value} className="bg-surface text-ink">
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 size-3.5 -translate-y-1/2 text-ink-faint" />
+    </div>
+  );
+}
+
+function ColorPickerButton({
+  icon,
+  label,
+  onPick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onPick: (color: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  // The toolbar scrolls horizontally (overflow-x-auto), which per the CSS
+  // spec forces overflow-y to auto too, clipping any absolutely-positioned
+  // popover that extends below it. position:fixed with a measured offset
+  // escapes that clipping the same way the close-scrim already does.
+  function openPicker() {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (rect) setPos({ top: rect.bottom + 8, left: rect.left });
+    setOpen(true);
+  }
+
+  return (
+    <div className="relative shrink-0">
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label={label}
+        title={label}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => (open ? setOpen(false) : openPicker())}
+        className="grid size-8 place-items-center rounded-lg transition-colors hover:bg-surface-2 hover:text-ink"
+      >
+        {icon}
+      </button>
+      {open && (
+        <>
+          <button
+            type="button"
+            aria-label="Close"
+            className="fixed inset-0 z-10 cursor-default"
+            onMouseDown={() => setOpen(false)}
+          />
+          <div className="fixed z-20 w-28" style={{ top: pos.top, left: pos.left }}>
+            <div className="card-2 grid grid-cols-3 gap-1.5 p-2">
+              {SWATCHES.map((color) => (
+                <button
+                  key={color}
+                  type="button"
+                  aria-label={color}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    onPick(color);
+                    setOpen(false);
+                  }}
+                  className="size-6 rounded-full border border-line-strong"
+                  style={{ backgroundColor: color }}
+                />
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
 function EditorBody({
   body,
+  editableRef,
+  onSelect,
   onStatsChange,
 }: {
   body: { heading: string; title: string; paragraphs: ChapterParagraph[] };
+  editableRef: React.RefObject<HTMLDivElement | null>;
+  onSelect: () => void;
   onStatsChange: (deltaWords: number, deltaCharacters: number) => void;
 }) {
-  const editableRef = useRef<HTMLDivElement>(null);
   const baseline = useRef({ words: 0, characters: 0 });
 
   useEffect(() => {
     const text = editableRef.current?.innerText ?? "";
     baseline.current = countText(text);
-  }, []);
+  }, [editableRef]);
 
   function handleInput() {
     const text = editableRef.current?.innerText ?? "";
@@ -596,6 +959,8 @@ function EditorBody({
           contentEditable
           suppressContentEditableWarning
           onInput={handleInput}
+          onMouseUp={onSelect}
+          onKeyUp={onSelect}
           className="mt-8 font-display text-[17px] leading-[1.85] text-ink/90 focus:outline-none [&_p]:mb-5"
         >
           {body.paragraphs.map((p) => (
@@ -694,23 +1059,6 @@ function StatusBar({
           </button>
         </label>
 
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            aria-label="Reading view"
-            className="grid size-7 place-items-center rounded-lg transition-colors hover:bg-surface-2 hover:text-ink"
-          >
-            <AlignLeft className="size-4" />
-          </button>
-          <button
-            type="button"
-            aria-label="Outline view"
-            className="grid size-7 place-items-center rounded-lg transition-colors hover:bg-surface-2 hover:text-ink"
-          >
-            <ListChecks className="size-4" />
-          </button>
-        </div>
-
         <div className="flex items-center gap-2">
           <button type="button" aria-label="Zoom out" className="text-ink-muted hover:text-ink">
             <Minus className="size-3.5" />
@@ -724,6 +1072,10 @@ function StatusBar({
         <button
           type="button"
           aria-label="Fullscreen"
+          onClick={() => {
+            if (document.fullscreenElement) document.exitFullscreen();
+            else document.documentElement.requestFullscreen();
+          }}
           className="grid size-7 place-items-center rounded-lg transition-colors hover:bg-surface-2 hover:text-ink"
         >
           <Maximize2 className="size-3.5" />
@@ -737,12 +1089,13 @@ function StatusBar({
 /*  Right — comments / versions / outline / AI                             */
 /* ======================================================================= */
 
-const PANEL_TABS = ["Comments", "Versions", "Outline", "AI"] as const;
+type CommentFilter = "All" | "Open" | "Resolved";
 
-function CommentsPanel() {
-  const [tab, setTab] = useState<(typeof PANEL_TABS)[number]>("Comments");
+function CommentsPanel({ tab, onTabChange }: { tab: PanelTab; onTabChange: (tab: PanelTab) => void }) {
   const [comments, setComments] = useState<CommentThread[]>(CHAPTER_18_COMMENTS);
   const [draft, setDraft] = useState("");
+  const [filter, setFilter] = useState<CommentFilter>("All");
+  const draftInputRef = useRef<HTMLInputElement>(null);
 
   function submitComment() {
     const text = draft.trim();
@@ -754,6 +1107,23 @@ function CommentsPanel() {
     setDraft("");
   }
 
+  function toggleResolved(id: string) {
+    setComments((prev) => prev.map((c) => (c.id === id ? { ...c, resolved: !c.resolved } : c)));
+  }
+
+  function resolveAll() {
+    setComments((prev) => prev.map((c) => ({ ...c, resolved: true })));
+  }
+
+  function replyTo(author: string) {
+    setDraft(`@${author} `);
+    draftInputRef.current?.focus();
+  }
+
+  const visible = comments.filter((c) =>
+    filter === "All" ? true : filter === "Resolved" ? c.resolved : !c.resolved,
+  );
+
   return (
     <aside className="flex w-[360px] shrink-0 flex-col">
       <div className="flex items-center gap-5 border-b border-line px-5 pt-4 text-sm">
@@ -761,7 +1131,7 @@ function CommentsPanel() {
           <button
             key={t}
             type="button"
-            onClick={() => setTab(t)}
+            onClick={() => onTabChange(t)}
             className={`relative pb-3 transition-colors ${
               tab === t ? "text-ink" : "text-ink-muted hover:text-ink"
             }`}
@@ -775,10 +1145,7 @@ function CommentsPanel() {
       {tab === "Comments" ? (
         <>
           <div className="flex items-center gap-1 px-5 py-3">
-            <button className="flex flex-1 items-center justify-between gap-1 rounded-lg border border-line px-2.5 py-1.5 text-xs text-ink-muted transition-colors hover:text-ink">
-              All
-              <ChevronDown className="size-3.5 text-ink-faint" />
-            </button>
+            <FilterDropdown value={filter} onChange={setFilter} />
             <button
               aria-label="Filter"
               className="grid size-8 shrink-0 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
@@ -786,7 +1153,10 @@ function CommentsPanel() {
               <Filter className="size-4" />
             </button>
             <button
+              type="button"
               aria-label="Mark all resolved"
+              title="Mark all resolved"
+              onClick={resolveAll}
               className="grid size-8 shrink-0 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
             >
               <CircleCheck className="size-4" />
@@ -800,14 +1170,18 @@ function CommentsPanel() {
           </div>
 
           <ul className="scroll-slim flex-1 space-y-3 overflow-y-auto px-5 pb-3">
-            {comments.map((c) => (
-              <CommentCard key={c.id} comment={c} />
+            {visible.length === 0 && (
+              <p className="pt-8 text-center text-sm text-ink-faint">No {filter.toLowerCase()} comments.</p>
+            )}
+            {visible.map((c) => (
+              <CommentCard key={c.id} comment={c} onToggleResolved={() => toggleResolved(c.id)} onReply={() => replyTo(c.author)} />
             ))}
           </ul>
 
           <div className="border-t border-line p-4">
             <div className="flex items-center gap-2 rounded-xl border border-line bg-surface px-3 py-2">
               <input
+                ref={draftInputRef}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
@@ -857,10 +1231,47 @@ function CommentsPanel() {
   );
 }
 
-function CommentCard({ comment }: { comment: CommentThread }) {
+function FilterDropdown({
+  value,
+  onChange,
+}: {
+  value: CommentFilter;
+  onChange: (v: CommentFilter) => void;
+}) {
+  return (
+    <div className="relative flex-1">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as CommentFilter)}
+        className="w-full cursor-pointer appearance-none rounded-lg border border-line bg-transparent py-1.5 pl-2.5 pr-7 text-xs text-ink-muted transition-colors hover:text-ink focus:outline-none"
+      >
+        <option className="bg-surface text-ink" value="All">
+          All
+        </option>
+        <option className="bg-surface text-ink" value="Open">
+          Open
+        </option>
+        <option className="bg-surface text-ink" value="Resolved">
+          Resolved
+        </option>
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 size-3.5 -translate-y-1/2 text-ink-faint" />
+    </div>
+  );
+}
+
+function CommentCard({
+  comment,
+  onToggleResolved,
+  onReply,
+}: {
+  comment: CommentThread;
+  onToggleResolved: () => void;
+  onReply: () => void;
+}) {
   const tone = COMMENTER_TONE[comment.author];
   return (
-    <li className="card-2 relative p-4">
+    <li className={`card-2 relative p-4 ${comment.resolved ? "opacity-50" : ""}`}>
       <span
         className="absolute right-3 top-3 size-2 rounded-full"
         style={{ backgroundColor: `var(--${tone})` }}
@@ -880,10 +1291,14 @@ function CommentCard({ comment }: { comment: CommentThread }) {
           <MoreVertical className="size-3.5" />
         </button>
       </div>
-      <p className="mt-2.5 text-sm text-ink-muted">{comment.text}</p>
+      <p className="mt-2.5 text-sm text-ink-muted">
+        {comment.text}
+        {comment.resolved && <span className="ml-2 text-xs text-success">Resolved</span>}
+      </p>
       <div className="mt-3 flex items-center justify-between">
         <button
           type="button"
+          onClick={onReply}
           className="flex items-center gap-1.5 text-xs text-ink-faint transition-colors hover:text-ink"
         >
           <CornerUpLeft className="size-3.5" />
@@ -893,7 +1308,13 @@ function CommentCard({ comment }: { comment: CommentThread }) {
           <button type="button" aria-label="Mark as question" className="hover:text-ink">
             <MessageSquare className="size-3.5" />
           </button>
-          <button type="button" aria-label="Resolve" className="hover:text-success">
+          <button
+            type="button"
+            aria-label={comment.resolved ? "Reopen" : "Resolve"}
+            title={comment.resolved ? "Reopen" : "Resolve"}
+            onClick={onToggleResolved}
+            className={comment.resolved ? "text-success" : "hover:text-success"}
+          >
             <Check className="size-3.5" />
           </button>
         </div>

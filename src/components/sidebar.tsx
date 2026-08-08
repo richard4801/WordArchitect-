@@ -1,19 +1,33 @@
 "use client";
 
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect } from "react";
 import { BrandMark } from "@/components/brand-mark";
 import { Progress } from "@/components/ui/progress";
 import { NAV_ITEMS, UTILITY_NAV_ITEMS } from "@/lib/nav";
 import { useProjects } from "@/lib/project-store";
+import { hydrateSidebarCollapsed, useSidebarCollapsed } from "@/lib/ui-store";
 
-export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
+/**
+ * The collapse toggle is user-initiated and persisted (see ui-store.ts) —
+ * it's a general "give me more room" control available everywhere, not
+ * something any single route forces on load. The manuscript editor is
+ * simply the place it's most useful.
+ */
+export function Sidebar() {
   const pathname = usePathname();
   const isNewUser = useProjects().length === 0;
-  // The manuscript editor (/projects/[id]/chapters) collapses the sidebar,
-  // but that route doesn't match any top-level NAV_ITEM href — highlight
-  // "Writing" there anyway since that's conceptually where it lives.
+  const [collapsed, toggle] = useSidebarCollapsed();
+
+  useEffect(() => {
+    hydrateSidebarCollapsed();
+  }, []);
+
+  // The manuscript editor (/projects/[id]/chapters) doesn't match any
+  // top-level NAV_ITEM href — highlight "Writing" there anyway since
+  // that's conceptually where it lives.
   const forceActiveHref = /^\/projects\/[^/]+\/chapters/.test(pathname) ? "/writing" : null;
 
   return (
@@ -49,6 +63,18 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
         className="pointer-events-none absolute inset-0"
         style={{ zIndex: -1, backgroundColor: "#000000", opacity: 0.45 }}
       />
+
+      {/* Collapse/expand toggle — straddles the sidebar's right edge so it
+          reads as a control on the boundary itself, not buried inside. */}
+      <button
+        type="button"
+        onClick={toggle}
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        className="absolute -right-3 top-9 z-10 grid size-6 place-items-center rounded-full border border-line-strong bg-surface-2 text-ink-muted shadow-sm transition-colors hover:text-ink"
+      >
+        {collapsed ? <PanelLeftOpen className="size-3.5" /> : <PanelLeftClose className="size-3.5" />}
+      </button>
 
       {/* Logo */}
       <div className={collapsed ? "flex flex-col items-center pt-8 pb-6" : "px-7 pt-8 pb-6"}>

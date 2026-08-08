@@ -2,9 +2,11 @@
 
 import { Bell, ChevronDown, Mail, Search } from "lucide-react";
 import { usePathname } from "next/navigation";
+import { useEffect } from "react";
 import { PageBackground } from "@/components/page-background";
 import { Sidebar } from "@/components/sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { hydrateSidebarCollapsed, useSidebarCollapsed } from "@/lib/ui-store";
 
 /**
  * Shared application shell: fixed sidebar + a scrollable main column with a
@@ -12,6 +14,11 @@ import { ThemeToggle } from "@/components/theme-toggle";
  * oracle-face hero background is dashboard-only (per design: it "should only
  * exist in the home"), so it's gated on the route here rather than living in
  * every page.
+ *
+ * The sidebar's collapsed/expanded state is a user-initiated toggle (see
+ * ui-store.ts), not tied to any particular route — it applies everywhere,
+ * so the content column's own left padding has to track it here too or a
+ * collapsed sidebar leaves a dead gap.
  */
 export default function AppLayout({
   children,
@@ -21,15 +28,21 @@ export default function AppLayout({
   const pathname = usePathname();
   const isDashboard = pathname === "/";
   // The manuscript editor is a full-bleed workspace with its own top bar —
-  // it replaces the standard header and collapses the sidebar to an icon
-  // rail, same as the mockup.
+  // it replaces the standard header entirely, same as the mockup.
   const isManuscriptEditor = /^\/projects\/[^/]+\/chapters/.test(pathname);
+  const [collapsed] = useSidebarCollapsed();
+
+  useEffect(() => {
+    hydrateSidebarCollapsed();
+  }, []);
 
   if (isManuscriptEditor) {
     return (
       <div className="relative h-dvh overflow-hidden">
-        <Sidebar collapsed />
-        <div className="relative h-dvh min-w-0 lg:pl-[72px]">{children}</div>
+        <Sidebar />
+        <div className={`relative h-dvh min-w-0 ${collapsed ? "lg:pl-[72px]" : "lg:pl-[264px]"}`}>
+          {children}
+        </div>
       </div>
     );
   }
@@ -38,7 +51,11 @@ export default function AppLayout({
     <div className="relative min-h-dvh">
       {isDashboard && <PageBackground />}
       <Sidebar />
-      <div className="relative flex min-h-dvh min-w-0 flex-col overflow-x-clip lg:pl-[264px]">
+      <div
+        className={`relative flex min-h-dvh min-w-0 flex-col overflow-x-clip ${
+          collapsed ? "lg:pl-[72px]" : "lg:pl-[264px]"
+        }`}
+      >
         <header className="flex items-center gap-3 px-5 py-4 sm:px-8">
           <div className="btn-raised flex min-w-0 flex-1 items-center gap-2 rounded-full px-4 py-2 text-sm text-ink-faint sm:max-w-sm">
             <Search className="size-4 shrink-0" />
