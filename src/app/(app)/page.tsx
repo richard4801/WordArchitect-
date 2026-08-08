@@ -127,7 +127,7 @@ function ContinueWritingCard() {
     <section className="card card-hover p-6">
       <SectionHeading title="Continue Writing" />
 
-      <div className="flex flex-col gap-5 sm:flex-row">
+      <div className="mt-1 flex flex-col gap-6 sm:flex-row">
         <div className="w-full shrink-0 sm:w-48">
           <div className="relative overflow-hidden rounded-xl border border-line">
             <CoverArt seed={continueWriting.title} className="block aspect-square w-full" />
@@ -137,7 +137,7 @@ function ContinueWritingCard() {
           </div>
           <Link
             href={`/projects/${continueWriting.projectId}/chapters`}
-            className="mt-3 block w-full rounded-xl bg-gold px-4 py-2.5 text-center text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
+            className="mt-4 block w-full rounded-xl bg-gold px-4 py-2.5 text-center text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
           >
             Resume Writing
           </Link>
@@ -145,11 +145,11 @@ function ContinueWritingCard() {
 
         <div className="flex min-w-0 flex-1 flex-col">
           <h3 className="font-display text-2xl text-ink">{continueWriting.title}</h3>
-          <p className="text-sm text-ink-muted">{continueWriting.chapter}</p>
+          <p className="mt-1 text-sm text-ink-muted">{continueWriting.chapter}</p>
 
-          <div className="mt-4">
+          <div className="mt-5">
             <Progress value={percent} />
-            <div className="mt-2 flex items-center justify-between text-sm">
+            <div className="mt-2.5 flex items-center justify-between text-sm">
               <span className="text-ink-muted">
                 {continueWriting.words.toLocaleString()} / {continueWriting.target.toLocaleString()} words
               </span>
@@ -159,7 +159,7 @@ function ContinueWritingCard() {
 
           <Link
             href={`/projects/${continueWriting.projectId}`}
-            className="mt-4 block w-full rounded-xl border border-line px-4 py-2.5 text-center text-sm text-ink-muted transition-colors hover:text-ink"
+            className="mt-5 block w-full rounded-xl border border-line px-4 py-2.5 text-center text-sm text-ink-muted transition-colors hover:text-ink"
           >
             Open Project
           </Link>
@@ -180,7 +180,7 @@ function TodaysProgressCard() {
         </Link>
       </div>
 
-      <div className="mt-4 flex flex-col items-center gap-6 sm:flex-row sm:items-start">
+      <div className="mt-5 flex flex-col items-center gap-6 sm:flex-row sm:items-start">
         <div className="shrink-0">
           <Ring
             value={percent}
@@ -198,7 +198,7 @@ function TodaysProgressCard() {
         </div>
       </div>
 
-      <div className="mt-4 flex items-center justify-between border-t border-line pt-3">
+      <div className="mt-5 flex items-center justify-between border-t border-line pt-4">
         <div>
           <div className="font-num text-lg text-gilded">{todaysProgress.streakDays}</div>
           <div className="label-caps text-[0.6rem]">Day Streak</div>
@@ -295,7 +295,7 @@ function AiInsightsCard() {
           {aiInsights.length} new
         </span>
       </div>
-      <ul className="mt-3 space-y-4">
+      <ul className="mt-4 space-y-5">
         {aiInsights.map((insight) => {
           const badge = INSIGHT_TONE_BADGE[insight.tone];
           const Icon = badge.icon;
@@ -343,7 +343,7 @@ function ActivityCard() {
         {activity.map((item) => {
           const Icon = ACTIVITY_ICON[item.kind];
           return (
-            <li key={item.id} className="flex items-center gap-3 py-3">
+            <li key={item.id} className="flex items-center gap-3 py-4">
               <span
                 className={`grid size-8 shrink-0 place-items-center rounded-lg ${ACTIVITY_TONE[item.kind]}`}
               >
@@ -370,20 +370,20 @@ function WritingGoalCard() {
         </button>
       </div>
 
-      <div className="mt-4 rounded-xl bg-surface-2/60 p-4">
+      <div className="mt-5 rounded-xl bg-surface-2/60 p-5">
         <p className="text-sm font-medium text-ink">Monthly Goal</p>
-        <div className="mt-2 flex items-center justify-between text-sm text-ink">
+        <div className="mt-2.5 flex items-center justify-between text-sm text-ink">
           <span>
             {writingGoal.current.toLocaleString()} / {writingGoal.target.toLocaleString()} words
           </span>
           <span className="text-gold">{percent}%</span>
         </div>
-        <Progress value={percent} className="mt-2" />
+        <Progress value={percent} className="mt-2.5" />
       </div>
 
-      <div className="mt-5">
+      <div className="mt-6">
         <p className="label-caps">This Month</p>
-        <div className="mt-2 flex items-center justify-between gap-2">
+        <div className="mt-3 flex items-center justify-between gap-2">
           <MiniStat value={writingGoal.daysActive} label="Days Active" />
           <MiniStat value={`${writingGoal.consistencyPercent}%`} label="Consistency" />
           <MiniStat value={writingGoal.writingTime} label="Writing Time" />
