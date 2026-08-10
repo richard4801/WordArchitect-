@@ -555,7 +555,7 @@ function NewUserDashboard() {
       <NewUserHero />
       <GetStartedCard />
       <HelpsYouWriteCard />
-      <div className="grid gap-8 lg:grid-cols-[1fr_280px]">
+      <div className="grid gap-8 lg:grid-cols-[1fr_190px]">
         <SuggestedForYouCard />
         <TipOfTheDayCard />
       </div>
