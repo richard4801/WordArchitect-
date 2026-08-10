@@ -20,7 +20,7 @@ import {
   UserX,
 } from "lucide-react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import { Sparkle } from "@/components/brand-mark";
 import { CoverArt } from "@/components/ui/cover-art";
@@ -29,7 +29,7 @@ import { Progress } from "@/components/ui/progress";
 import { Ring } from "@/components/ui/ring";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { Sparkline } from "@/components/ui/sparkline";
-import { useProjects } from "@/lib/project-store";
+import { createProject, useProjects } from "@/lib/project-store";
 import {
   activity,
   type ActivityKind,
@@ -504,6 +504,10 @@ const GET_STARTED = [
     button: "New Project",
     href: "/projects/new",
     primary: true,
+    // Skips the New Project form entirely — one click creates a starter
+    // project and drops you straight into it, same as the mockup's intent
+    // for a brand-new writer's very first action on the dashboard.
+    directCreate: true,
   },
   {
     icon: Globe2,
@@ -513,6 +517,7 @@ const GET_STARTED = [
     button: "Create World Entry",
     href: "/worldbuilding",
     primary: false,
+    directCreate: false,
   },
   {
     icon: Users,
@@ -522,6 +527,7 @@ const GET_STARTED = [
     button: "Create Character",
     href: "/characters",
     primary: false,
+    directCreate: false,
   },
   {
     icon: ListTree,
@@ -531,6 +537,7 @@ const GET_STARTED = [
     button: "Go to Outliner",
     href: "/outlines",
     primary: false,
+    directCreate: false,
   },
 ] as const;
 
@@ -609,12 +616,24 @@ function NewUserHero() {
 }
 
 function GetStartedCard() {
+  const router = useRouter();
+
+  function handleQuickCreate() {
+    const id = createProject({ title: "Untitled Project", genre: "Fiction" });
+    router.push(`/projects/${id}`);
+  }
+
   return (
     <section className="card p-5 sm:p-6">
       <h2 className="font-display text-xl text-ink">Let&rsquo;s Get You Started</h2>
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {GET_STARTED.map((g) => {
           const Icon = g.icon;
+          const buttonClassName = `mt-5 flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2.5 text-xs font-medium transition-colors ${
+            g.primary
+              ? "bg-gold text-gold-contrast hover:opacity-90"
+              : "border border-line-strong text-gold hover:bg-surface-2"
+          }`;
           return (
             <div key={g.title} className="card-2 flex flex-col items-center p-6 text-center sm:p-7">
               <span
@@ -629,17 +648,17 @@ function GetStartedCard() {
               </span>
               <h3 className="mt-5 text-base font-medium text-ink">{g.title}</h3>
               <p className="mt-2 text-xs leading-relaxed text-ink-faint">{g.detail}</p>
-              <Link
-                href={g.href}
-                className={`mt-5 flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2.5 text-xs font-medium transition-colors ${
-                  g.primary
-                    ? "bg-gold text-gold-contrast hover:opacity-90"
-                    : "border border-line-strong text-gold hover:bg-surface-2"
-                }`}
-              >
-                {g.primary && <Plus className="size-3.5" />}
-                {g.button}
-              </Link>
+              {g.directCreate ? (
+                <button type="button" onClick={handleQuickCreate} className={buttonClassName}>
+                  {g.primary && <Plus className="size-3.5" />}
+                  {g.button}
+                </button>
+              ) : (
+                <Link href={g.href} className={buttonClassName}>
+                  {g.primary && <Plus className="size-3.5" />}
+                  {g.button}
+                </Link>
+              )}
             </div>
           );
         })}
