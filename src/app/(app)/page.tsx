@@ -563,19 +563,22 @@ function NewUserDashboard() {
   );
 }
 
-// Plain white in both themes — this text sits directly on the hero photo
-// (not the page canvas), which stays a dark, busy image in either theme,
-// so a theme-dependent ink color was never going to read reliably. A soft
-// drop shadow lifts the glyphs off the artwork instead of relying on the
-// image being dark enough on its own.
-const HERO_TEXT = "text-white [text-shadow:0_2px_10px_rgba(0,0,0,0.6)]";
+// This text sits directly on the hero photo (not the page canvas), which
+// is a bright, pale sky/castle scene in light mode and a dark eye/hair
+// scene in dark mode — the two themes' art isn't just a color-inverted
+// version of each other, so the text needs to flip color per theme too:
+// dark warm ink in light mode, white in dark mode. A soft shadow (light
+// in light mode, dark in dark mode) lifts the glyphs off the artwork
+// either way instead of relying on the image alone for contrast.
+const HERO_TEXT =
+  "text-[#2a1c10] [text-shadow:0_1px_3px_rgba(255,255,255,0.7)] dark:text-white dark:[text-shadow:0_2px_10px_rgba(0,0,0,0.6)]";
 
 function NewUserHero() {
   return (
     <section className="pt-6">
       <div className="max-w-md">
         <p className={`text-base ${HERO_TEXT}`}>Welcome to WordArchitect,</p>
-        <h1 className="mt-1 flex items-center gap-3 font-display text-6xl font-medium text-white [text-shadow:0_2px_14px_rgba(0,0,0,0.6)] sm:text-7xl">
+        <h1 className="mt-1 flex items-center gap-3 font-display text-6xl font-medium text-[#2a1c10] [text-shadow:0_1px_4px_rgba(255,255,255,0.7)] dark:text-white dark:[text-shadow:0_2px_14px_rgba(0,0,0,0.6)] sm:text-7xl">
           {user.name}
           <Sparkle className="size-6 text-gold" />
         </h1>
@@ -590,7 +593,7 @@ function NewUserHero() {
           const Icon = f.icon;
           return (
             <div key={f.text} className="flex shrink-0 items-center gap-2.5 py-1 pr-6">
-              <span className="grid size-8 shrink-0 place-items-center rounded-full bg-gold text-gold-contrast">
+              <span className="grid size-8 shrink-0 place-items-center rounded-full bg-gold text-gold-contrast shadow-[0_3px_10px_rgba(0,0,0,0.45)]">
                 <Icon className="size-3.5" strokeWidth={1.9} />
               </span>
               <span className={`text-sm ${HERO_TEXT}`}>{f.text}</span>
