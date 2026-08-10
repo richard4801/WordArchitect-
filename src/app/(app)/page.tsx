@@ -735,7 +735,7 @@ function TipOfTheDayCard() {
       <span className="mt-4 font-display text-6xl leading-none text-gold" aria-hidden>
         &ldquo;
       </span>
-      <blockquote className="mt-3 font-display text-base italic leading-snug text-ink-muted">
+      <blockquote className="-mt-4 font-display text-base italic leading-snug text-ink-muted">
         Don&rsquo;t worry about making it perfect. Just make it exist.
       </blockquote>
       <p className="mt-auto pt-3 text-xs text-ink-faint">— Your future reader</p>
