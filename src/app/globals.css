@@ -338,6 +338,16 @@ body {
   }
 }
 
+/* Outliner's beat-detail panel sliding in as an overlay, not a layout shift */
+@keyframes wa-slide-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
 @layer utilities {
   .wa-fill {
     position: relative;

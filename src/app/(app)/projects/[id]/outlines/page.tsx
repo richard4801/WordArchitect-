@@ -249,7 +249,7 @@ export default function OutlinerPage() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
       <TopBar project={project} navOpen={navOpen} onToggleNav={() => setNavOpen((o) => !o)} />
-      <div className="flex flex-1 overflow-hidden">
+      <div className="relative flex flex-1 overflow-hidden">
         {navOpen && (
           <OutlineNavSidebar
             acts={acts}
@@ -277,6 +277,9 @@ export default function OutlinerPage() {
           setFullscreen={setFullscreen}
           onAutoArrange={autoArrange}
         />
+        {/* Overlays the board on the right rather than participating in the
+            flex row — opening a beat's details shouldn't reflow/shrink the
+            board underneath it, it should float over it like a drawer. */}
         {selectedBeat && (
           <DetailPanel
             beat={selectedBeat}
@@ -838,7 +841,7 @@ function DetailPanel({
 }) {
   const color = COLOR_HEX[beat.color];
   return (
-    <aside className="scroll-slim hidden w-[300px] shrink-0 overflow-y-auto border-l border-line p-4 xl:block">
+    <aside className="scroll-slim absolute inset-y-0 right-0 z-30 hidden w-[300px] animate-[wa-slide-in-right_180ms_ease-out] overflow-y-auto border-l border-line bg-canvas p-4 shadow-2xl lg:block">
       <div className="flex items-start justify-between gap-2">
         <h2 className="min-w-0 font-display text-lg leading-snug text-ink">
           {beat.number}. {beat.title}
