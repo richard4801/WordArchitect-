@@ -36,7 +36,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { DropdownSelect } from "@/components/ui/dropdown-select";
 import { Ring } from "@/components/ui/ring";
@@ -276,23 +276,18 @@ export default function OutlinerPage() {
           fullscreen={fullscreen}
           setFullscreen={setFullscreen}
           onAutoArrange={autoArrange}
+          selectedBeat={selectedBeat}
+          project={project}
+          rightTab={rightTab}
+          setRightTab={setRightTab}
+          onCloseBeat={() => setSelectedId("")}
+          onChangeStatus={(status) =>
+            selectedBeat && patchBeat(selectedBeat.id, { status, color: STATUS_TO_COLOR[status] })
+          }
+          onChangeColor={(color) => selectedBeat && patchBeat(selectedBeat.id, { color })}
+          onDuplicateBeat={() => selectedBeat && duplicateBeat(selectedBeat.id)}
+          onDeleteBeat={() => selectedBeat && deleteBeat(selectedBeat.id)}
         />
-        {/* Overlays the board on the right rather than participating in the
-            flex row — opening a beat's details shouldn't reflow/shrink the
-            board underneath it, it should float over it like a drawer. */}
-        {selectedBeat && (
-          <DetailPanel
-            beat={selectedBeat}
-            project={project}
-            tab={rightTab}
-            setTab={setRightTab}
-            onClose={() => setSelectedId("")}
-            onChangeStatus={(status) => patchBeat(selectedBeat.id, { status, color: STATUS_TO_COLOR[status] })}
-            onChangeColor={(color) => patchBeat(selectedBeat.id, { color })}
-            onDuplicate={() => duplicateBeat(selectedBeat.id)}
-            onDelete={() => deleteBeat(selectedBeat.id)}
-          />
-        )}
       </div>
     </div>
   );
@@ -502,6 +497,15 @@ function BoardArea({
   fullscreen,
   setFullscreen,
   onAutoArrange,
+  selectedBeat,
+  project,
+  rightTab,
+  setRightTab,
+  onCloseBeat,
+  onChangeStatus,
+  onChangeColor,
+  onDuplicateBeat,
+  onDeleteBeat,
 }: {
   acts: Act[];
   columns: Column[];
@@ -518,9 +522,46 @@ function BoardArea({
   fullscreen: boolean;
   setFullscreen: (fn: (f: boolean) => boolean) => void;
   onAutoArrange: () => void;
+  selectedBeat: Beat | undefined;
+  project: Project;
+  rightTab: RightTab;
+  setRightTab: (t: RightTab) => void;
+  onCloseBeat: () => void;
+  onChangeStatus: (s: BeatStatus) => void;
+  onChangeColor: (c: BeatColor) => void;
+  onDuplicateBeat: () => void;
+  onDeleteBeat: () => void;
 }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const panState = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  const [panning, setPanning] = useState(false);
+
+  // Click-drag-to-pan, canvas-style — only starts when the pointer comes
+  // down on the scroll area's own background or the grid's gutter (not a
+  // beat card or button), so it never fights normal card clicks.
+  function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.target !== scrollRef.current && e.target !== gridRef.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    panState.current = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop };
+    setPanning(true);
+    el.setPointerCapture(e.pointerId);
+  }
+  function onPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    const start = panState.current;
+    const el = scrollRef.current;
+    if (!start || !el) return;
+    el.scrollLeft = start.left - (e.clientX - start.x);
+    el.scrollTop = start.top - (e.clientY - start.y);
+  }
+  function onPointerUp() {
+    panState.current = null;
+    setPanning(false);
+  }
+
   return (
-    <main className="scroll-slim flex min-w-0 flex-1 flex-col overflow-y-auto">
+    <main className="scroll-slim flex min-w-0 flex-1 flex-col overflow-hidden">
       <div className="border-b border-line px-6 py-5">
         <div className="flex flex-wrap items-center justify-between gap-5">
           <div className="max-w-xl">
@@ -617,15 +658,33 @@ function BoardArea({
         </div>
       </div>
 
+      {/* Everything below the toolbar shares one relative wrapper, so the
+          detail panel (absolutely positioned within it) only ever overlays
+          the board/list/legend area — never the header stat ring or the
+          toolbar's view tabs, group/zoom/fullscreen controls above it. */}
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
       {view === "board" && (
-        <div className="scroll-slim flex-1 overflow-x-auto px-6 py-6">
+        <div
+          ref={scrollRef}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+          className={`scroll-slim flex-1 overflow-auto px-6 py-6 ${panning ? "cursor-grabbing" : "cursor-grab"}`}
+        >
           <div
-            className="grid gap-5"
+            ref={gridRef}
+            className={`grid gap-5 pb-[320px] ${panning ? "select-none" : ""}`}
             style={{
               gridTemplateColumns: `repeat(${columns.length}, minmax(232px, 1fr))`,
               transform: `scale(${zoom / 100})`,
               transformOrigin: "top left",
-              width: `${10000 / zoom}%`,
+              // The extra +320px (beyond the zoom-compensated 100%) is dead
+              // space past the last column/row — scroll room so a beat card
+              // near the far edge can be dragged clear of the detail panel
+              // overlay (which covers the board's right ~300px) instead of
+              // being permanently stuck underneath it.
+              width: `calc(${10000 / zoom}% + 320px)`,
             }}
           >
             {columns.map((col) => (
@@ -705,6 +764,20 @@ function BoardArea({
           </button>
         </div>
       )}
+      {selectedBeat && (
+        <DetailPanel
+          beat={selectedBeat}
+          project={project}
+          tab={rightTab}
+          setTab={setRightTab}
+          onClose={onCloseBeat}
+          onChangeStatus={onChangeStatus}
+          onChangeColor={onChangeColor}
+          onDuplicate={onDuplicateBeat}
+          onDelete={onDeleteBeat}
+        />
+      )}
+      </div>
       <span className="sr-only">{allBeatsCount} beats total</span>
     </main>
   );
@@ -750,7 +823,7 @@ function BoardColumn({
         <button
           type="button"
           onClick={onAddBeat}
-          className="mt-3 flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-line-strong py-2.5 text-sm text-gold transition-colors hover:bg-surface-2"
+          className="mt-3 flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-dashed border-line-strong py-2.5 text-sm text-gold transition-colors hover:bg-surface-2"
         >
           <Plus className="size-4" />
           Add Beat
@@ -767,7 +840,7 @@ function BeatCard({ beat, selected, onSelect }: { beat: Beat; selected: boolean;
     <button
       type="button"
       onClick={onSelect}
-      className="card-2 block w-full p-4 text-left transition-colors"
+      className="card-2 block w-full cursor-pointer p-4 text-left transition-colors"
       style={highlight ? { borderColor: color } : undefined}
     >
       <div className="flex items-start justify-between gap-2">
