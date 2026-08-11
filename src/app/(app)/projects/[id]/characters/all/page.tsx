@@ -152,13 +152,13 @@ export default function AllCharactersPage() {
           </div>
         </div>
 
-        <div className="card mt-5 grid grid-cols-3 gap-4 p-5 sm:grid-cols-6">
+        <div className="card mt-5 flex flex-wrap items-stretch divide-x divide-line p-5">
           {stats.map((s) => (
-            <div key={s.label} className="flex items-center gap-2.5">
+            <div key={s.label} className="flex items-center gap-2.5 px-6 first:pl-0 last:pr-0">
               <s.Icon className="size-5 shrink-0" style={{ color: s.color }} />
-              <div className="min-w-0">
+              <div>
                 <div className="font-num text-xl leading-none text-ink">{s.value}</div>
-                <div className="truncate text-xs text-ink-faint">{s.label}</div>
+                <div className="whitespace-nowrap text-xs text-ink-faint">{s.label}</div>
               </div>
             </div>
           ))}
