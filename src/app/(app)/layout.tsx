@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, ChevronDown, Mail, Search } from "lucide-react";
+import { Bell, Mail, Search } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { PageBackground } from "@/components/page-background";
@@ -87,18 +87,6 @@ export default function AppLayout({
               <Mail className="size-4" />
             </button>
             <ThemeToggle />
-            <button
-              type="button"
-              aria-label="Account"
-              className="btn-raised flex items-center gap-1.5 rounded-full py-1 pl-1 pr-2.5"
-            >
-              <span
-                className="size-7 shrink-0 rounded-full border border-line-strong bg-cover"
-                style={{ backgroundImage: "var(--hero)", backgroundPosition: "75% 27%" }}
-                aria-hidden
-              />
-              <ChevronDown className="size-3.5 text-ink-muted" />
-            </button>
           </div>
         </header>
         <main className="flex-1 px-5 pb-12 sm:px-8">{children}</main>
