@@ -27,9 +27,12 @@ export default function AppLayout({
 }) {
   const pathname = usePathname();
   const isDashboard = pathname === "/";
-  // The manuscript editor is a full-bleed workspace with its own top bar —
-  // it replaces the standard header entirely, same as the mockup.
-  const isManuscriptEditor = /^\/projects\/[^/]+\/chapters/.test(pathname);
+  // The manuscript editor and the outliner are both full-bleed workspaces
+  // with their own top bar — they replace the standard header entirely,
+  // same as their mockups (too much horizontal content — mode/structure
+  // sidebar, multi-column board, detail rail — to fit the standard
+  // tab-chrome + right-rail project layout).
+  const isFullBleedWorkspace = /^\/projects\/[^/]+\/(chapters|outlines)/.test(pathname);
   const [collapsed] = useSidebarCollapsed();
   const focusModeActive = useFocusModeActive();
 
@@ -37,7 +40,7 @@ export default function AppLayout({
     hydrateSidebarCollapsed();
   }, []);
 
-  if (isManuscriptEditor) {
+  if (isFullBleedWorkspace) {
     return (
       <div className="relative h-dvh overflow-hidden">
         {!focusModeActive && <Sidebar />}
