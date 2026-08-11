@@ -541,7 +541,7 @@ function BoardArea({
               </span>
             }
             size={124}
-            stroke={11}
+            stroke={7}
             labelClassName="text-2xl"
           />
         </div>
