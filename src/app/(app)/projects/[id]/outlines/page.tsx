@@ -496,14 +496,14 @@ function BoardArea({
 }) {
   return (
     <main className="scroll-slim flex min-w-0 flex-1 flex-col overflow-y-auto">
-      <div className="border-b border-line px-6 pb-6 pt-6">
-        <div className="flex flex-wrap items-start justify-between gap-6">
+      <div className="border-b border-line px-6 py-5">
+        <div className="flex flex-wrap items-center justify-between gap-5">
           <div className="max-w-xl">
-            <h1 className="flex items-center gap-2 font-display text-3xl text-ink">
+            <h1 className="flex items-center gap-2 font-display text-2xl text-ink">
               Three Act Structure
               <Info className="size-4 text-ink-faint" />
             </h1>
-            <p className="mt-2 text-sm text-ink-muted">
+            <p className="mt-1.5 text-sm text-ink-muted">
               The classic 3-act structure is a timeless framework that builds a compelling story through
               setup, confrontation, and resolution.
             </p>
@@ -512,15 +512,15 @@ function BoardArea({
             value={76}
             label="76%"
             sublabel={
-              <span className="text-sm leading-snug text-ink-faint">
+              <span className="text-xs leading-snug text-ink-faint">
                 Outline Progress
                 <br />
                 38 of 50 beats
               </span>
             }
-            size={188}
-            stroke={18}
-            labelClassName="text-4xl"
+            size={124}
+            stroke={11}
+            labelClassName="text-2xl"
           />
         </div>
       </div>
