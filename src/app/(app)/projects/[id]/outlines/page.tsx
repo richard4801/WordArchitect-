@@ -512,15 +512,15 @@ function BoardArea({
             value={76}
             label="76%"
             sublabel={
-              <span className="text-xs leading-snug text-ink-faint">
+              <span className="text-sm leading-snug text-ink-faint">
                 Outline Progress
                 <br />
                 38 of 50 beats
               </span>
             }
-            size={104}
-            stroke={7}
-            labelClassName="text-2xl"
+            size={188}
+            stroke={18}
+            labelClassName="text-4xl"
           />
         </div>
       </div>
