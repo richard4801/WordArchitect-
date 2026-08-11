@@ -21,6 +21,8 @@ import {
   Minimize2,
   Minus,
   Network,
+  PanelLeftClose,
+  PanelLeftOpen,
   PenLine,
   Plus,
   Search,
@@ -123,6 +125,7 @@ export default function OutlinerPage() {
   const [zoom, setZoom] = useState(100);
   const [collapsedActs, setCollapsedActs] = useState<Set<string>>(new Set());
   const [fullscreen, setFullscreen] = useState(false);
+  const [navOpen, setNavOpen] = useState(true);
 
   useEffect(() => {
     setFocusModeActive(fullscreen);
@@ -245,16 +248,18 @@ export default function OutlinerPage() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
-      <TopBar project={project} />
+      <TopBar project={project} navOpen={navOpen} onToggleNav={() => setNavOpen((o) => !o)} />
       <div className="flex flex-1 overflow-hidden">
-        <OutlineNavSidebar
-          acts={acts}
-          selectedId={selectedId}
-          onSelect={selectBeat}
-          collapsedActs={collapsedActs}
-          onToggleAct={toggleAct}
-          onAddBeat={() => addBeat(acts[0].id)}
-        />
+        {navOpen && (
+          <OutlineNavSidebar
+            acts={acts}
+            selectedId={selectedId}
+            onSelect={selectBeat}
+            collapsedActs={collapsedActs}
+            onToggleAct={toggleAct}
+            onAddBeat={() => addBeat(acts[0].id)}
+          />
+        )}
         <BoardArea
           acts={acts}
           columns={columns}
@@ -294,9 +299,26 @@ export default function OutlinerPage() {
 /*  Top bar — replaces the standard app header for this full-bleed page    */
 /* ======================================================================= */
 
-function TopBar({ project }: { project: Project }) {
+function TopBar({
+  project,
+  navOpen,
+  onToggleNav,
+}: {
+  project: Project;
+  navOpen: boolean;
+  onToggleNav: () => void;
+}) {
   return (
     <header className="flex shrink-0 items-center gap-3 border-b border-line px-5 py-3 sm:px-6">
+      <button
+        type="button"
+        onClick={onToggleNav}
+        aria-label={navOpen ? "Hide outline modes & structure" : "Show outline modes & structure"}
+        title={navOpen ? "Hide outline sidebar" : "Show outline sidebar"}
+        className="hidden shrink-0 items-center justify-center rounded-lg p-1.5 text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink lg:flex"
+      >
+        {navOpen ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
+      </button>
       <Link
         href={`/projects/${project.id}`}
         className="flex shrink-0 items-center gap-1.5 text-sm text-ink-muted transition-colors hover:text-ink"
@@ -361,7 +383,7 @@ function OutlineNavSidebar({
   onAddBeat: () => void;
 }) {
   return (
-    <aside className="scroll-slim hidden w-72 shrink-0 flex-col overflow-y-auto border-r border-line px-4 py-5 lg:flex">
+    <aside className="scroll-slim hidden w-64 shrink-0 flex-col overflow-y-auto border-r border-line px-3.5 py-5 lg:flex">
       <div className="flex items-center justify-between">
         <h2 className="label-caps text-ink-faint">Outline Modes</h2>
         <ListIcon className="size-4 text-ink-faint" />
@@ -597,7 +619,7 @@ function BoardArea({
           <div
             className="grid gap-5"
             style={{
-              gridTemplateColumns: `repeat(${columns.length}, minmax(280px, 1fr))`,
+              gridTemplateColumns: `repeat(${columns.length}, minmax(232px, 1fr))`,
               transform: `scale(${zoom / 100})`,
               transformOrigin: "top left",
               width: `${10000 / zoom}%`,
@@ -816,9 +838,9 @@ function DetailPanel({
 }) {
   const color = COLOR_HEX[beat.color];
   return (
-    <aside className="scroll-slim hidden w-[340px] shrink-0 overflow-y-auto border-l border-line p-5 xl:block">
+    <aside className="scroll-slim hidden w-[300px] shrink-0 overflow-y-auto border-l border-line p-4 xl:block">
       <div className="flex items-start justify-between gap-2">
-        <h2 className="min-w-0 truncate font-display text-xl text-ink">
+        <h2 className="min-w-0 font-display text-lg leading-snug text-ink">
           {beat.number}. {beat.title}
         </h2>
         <div className="flex shrink-0 items-center gap-1.5">
