@@ -1,6 +1,7 @@
 "use client";
 
 import { Check, ChevronDown } from "lucide-react";
+import { createPortal } from "react-dom";
 import { useLayoutEffect, useRef, useState } from "react";
 
 /**
@@ -9,6 +10,15 @@ import { useLayoutEffect, useRef, useState } from "react";
  * the browser's own unstyled OS popup — completely breaking the theme — no
  * matter how the closed trigger is styled. This keeps every dropdown in the
  * app on-brand, open or closed.
+ *
+ * The panel is rendered through a portal into document.body rather than as
+ * a normal absolutely-positioned child. `.card`/`.card-2` set `z-index: 0`
+ * on a `position: relative` element to layer their own inner glow/shadow —
+ * which also opens a new stacking context. A panel positioned inside one
+ * card can never paint above a later sibling card no matter how high its
+ * own z-index goes, since stacking is resolved per-context and cards are
+ * compared to each other in DOM order. Escaping to body sidesteps that
+ * entirely (and any future ancestor `overflow: hidden` too).
  */
 
 const TRIGGER_BASE =
@@ -17,50 +27,75 @@ const TRIGGER_BASE =
 // Panel height estimate (max-h-60 = 240px + the top/bottom margin gap).
 const PANEL_HEIGHT_ESTIMATE = 256;
 
+type PanelRect = { top: number; bottom: number; left: number; width: number; openUpward: boolean };
+
 /**
- * Flips the panel above the trigger when there isn't enough viewport room
- * below it — without this, a trigger low on a long form opens a panel that
- * renders off-screen, so the user's cursor never actually reaches it and
- * scroll input falls through to the page instead of the panel.
+ * Tracks the trigger's viewport position while the panel is open, flipping
+ * the panel above the trigger when there isn't enough room below — without
+ * this, a trigger low on a long form opens a panel that renders off-screen.
+ * Recomputed on open and kept in sync with scroll/resize since the panel
+ * is now positioned in fixed/viewport space, independent of the trigger's
+ * scrolling ancestor.
  */
 function usePanelPlacement(open: boolean) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [openUpward, setOpenUpward] = useState(false);
+  const [rect, setRect] = useState<PanelRect | null>(null);
 
   useLayoutEffect(() => {
-    if (!open || !containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const spaceAbove = rect.top;
-    setOpenUpward(spaceBelow < PANEL_HEIGHT_ESTIMATE && spaceAbove > spaceBelow);
+    if (!open || !containerRef.current) {
+      setRect(null);
+      return;
+    }
+    function measure() {
+      const el = containerRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - r.bottom;
+      const spaceAbove = r.top;
+      const openUpward = spaceBelow < PANEL_HEIGHT_ESTIMATE && spaceAbove > spaceBelow;
+      setRect({ top: r.bottom, bottom: window.innerHeight - r.top, left: r.left, width: r.width, openUpward });
+    }
+    measure();
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
   }, [open]);
 
-  return { containerRef, openUpward };
+  return { containerRef, rect };
 }
 
 function Panel({
   children,
   onClose,
-  openUpward,
+  rect,
 }: {
   children: React.ReactNode;
   onClose: () => void;
-  openUpward: boolean;
+  rect: PanelRect;
 }) {
-  return (
+  return createPortal(
     <>
       <button
         type="button"
         aria-label="Close menu"
         onClick={onClose}
-        className="fixed inset-0 z-10 cursor-default"
+        className="fixed inset-0 z-40 cursor-default"
       />
       <div
-        className={`absolute inset-x-0 z-20 ${openUpward ? "bottom-full mb-1.5" : "top-full mt-1.5"}`}
+        className="fixed z-50"
+        style={{
+          left: rect.left,
+          width: rect.width,
+          ...(rect.openUpward ? { bottom: rect.bottom + 6 } : { top: rect.top + 6 }),
+        }}
       >
         <div className="card-2 max-h-60 overflow-y-auto p-2">{children}</div>
       </div>
-    </>
+    </>,
+    document.body,
   );
 }
 
@@ -82,7 +117,7 @@ export function DropdownSelect({
   error?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const { containerRef, openUpward } = usePanelPlacement(open);
+  const { containerRef, rect } = usePanelPlacement(open);
 
   return (
     <div ref={containerRef} className={`relative ${className}`}>
@@ -99,8 +134,8 @@ export function DropdownSelect({
         />
       </button>
 
-      {open && (
-        <Panel onClose={() => setOpen(false)} openUpward={openUpward}>
+      {open && rect && (
+        <Panel onClose={() => setOpen(false)} rect={rect}>
           {options.map((o) => (
             <button
               key={o}
@@ -135,7 +170,7 @@ export function MultiSelectDropdown({
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const { containerRef, openUpward } = usePanelPlacement(open);
+  const { containerRef, rect } = usePanelPlacement(open);
 
   function toggle(name: string) {
     onChange(value.includes(name) ? value.filter((v) => v !== name) : [...value, name]);
@@ -156,8 +191,8 @@ export function MultiSelectDropdown({
         />
       </button>
 
-      {open && (
-        <Panel onClose={() => setOpen(false)} openUpward={openUpward}>
+      {open && rect && (
+        <Panel onClose={() => setOpen(false)} rect={rect}>
           {options.map((s) => (
             <label
               key={s}
