@@ -13,6 +13,20 @@ is currently mock data held in module-level in-memory arrays — there is no
 database and no real backend integration yet.** That is precisely the gap
 this document exists to close.
 
+**The app has been purged (all 5 domains).** Every seed array described in
+§4 (`projects`, `CHARACTERS`, `WORLD_ENTRIES`/`WORLD_TIMELINE`/
+`WORLD_OVERVIEW`/`PINNED_WORLD_ITEMS`, `NOTES`, the shadows-of-elarion
+manuscript/outline content) has been emptied to `[]` (or zeroed, for
+`WORLD_OVERVIEW`'s numeric fields) in the actual source files — the type
+shapes documented below are still exactly accurate, only the demo content
+is gone. The app now boots into every page's genuine empty/new-user state
+(the Dashboard's "Let's Get You Started" onboarding variant, "No projects
+yet" on every full-bleed workspace redirect, empty grids/lists everywhere
+else) rather than the shadows-of-elarion demo data. This was intentional,
+done ahead of the real backend connection, so the current build is a clean
+slate to develop and test the real integration against — not a bug, and
+not something to restore mock content for.
+
 ---
 
 ## 1. What this is
