@@ -209,7 +209,7 @@ export default function ChaptersPage() {
         />
       )}
 
-      <div className="relative flex min-w-0 flex-1 flex-col border-r border-line">
+      <div className="@container relative flex min-w-0 flex-1 flex-col border-r border-line">
         {!hideChrome && (
           <TopBar
             project={project}
@@ -627,27 +627,27 @@ function TopBar({
         </Link>
         <Link
           href={`/projects/${project.id}`}
-          className="hidden max-w-[140px] shrink-0 truncate text-ink-muted hover:text-ink lg:block"
+          className="hidden max-w-[140px] shrink-0 truncate text-ink-muted hover:text-ink @[480px]:block"
         >
           {project.title}
         </Link>
-        <ChevronRight className="hidden size-3.5 shrink-0 text-ink-faint lg:block" />
+        <ChevronRight className="hidden size-3.5 shrink-0 text-ink-faint @[480px]:block" />
         <Link
           href={`/projects/${project.id}/chapters`}
-          className="hidden shrink-0 text-ink-muted hover:text-ink md:block"
+          className="hidden shrink-0 text-ink-muted hover:text-ink @[400px]:block"
         >
           Manuscript
         </Link>
-        <ChevronRight className="hidden size-3.5 shrink-0 text-ink-faint md:block" />
+        <ChevronRight className="hidden size-3.5 shrink-0 text-ink-faint @[400px]:block" />
         <span className="min-w-0 flex-1 truncate font-medium text-ink">{chapterTitle}</span>
       </div>
 
-      <span className="hidden shrink-0 items-center gap-1.5 text-xs text-success xl:flex">
+      <span className="hidden shrink-0 items-center gap-1.5 text-xs text-success @[600px]:flex">
         <CircleCheck className="size-3.5" />
         All changes saved
       </span>
 
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="hidden shrink-0 items-center gap-1 @[420px]:flex">
         <button
           type="button"
           aria-label="Undo"
@@ -664,16 +664,18 @@ function TopBar({
         >
           <Redo2 className="size-4" />
         </button>
+      </div>
 
-        <div className="mx-2 flex items-center -space-x-2">
-          {ACTIVE_COLLABORATORS.slice(0, 3).map((c) => (
-            <CommenterAvatar key={c.name} name={c.name} tone={c.tone} className="ring-2 ring-canvas" />
-          ))}
-          <span className="z-10 grid size-7 place-items-center rounded-full bg-surface-2 text-[0.65rem] font-medium text-ink-muted ring-2 ring-canvas">
-            +{Math.max(0, ACTIVE_COLLABORATORS.length - 3)}
-          </span>
-        </div>
+      <div className="mx-2 hidden shrink-0 items-center -space-x-2 @[500px]:flex">
+        {ACTIVE_COLLABORATORS.slice(0, 3).map((c) => (
+          <CommenterAvatar key={c.name} name={c.name} tone={c.tone} className="ring-2 ring-canvas" />
+        ))}
+        <span className="z-10 grid size-7 place-items-center rounded-full bg-surface-2 text-[0.65rem] font-medium text-ink-muted ring-2 ring-canvas">
+          +{Math.max(0, ACTIVE_COLLABORATORS.length - 3)}
+        </span>
+      </div>
 
+      <div className="flex shrink-0 items-center gap-1">
         <ShareButton />
 
         <button
@@ -1294,21 +1296,24 @@ function StatusBar({
   const readMinutes = Math.max(1, Math.round(words / 250));
   const active = focusMode !== null;
   return (
-    <footer className="flex h-11 shrink-0 items-center gap-4 border-t border-line px-5 text-xs text-ink-muted">
-      <span>{words.toLocaleString()} words</span>
-      <span>{characters.toLocaleString()} characters</span>
-      <span className="hidden items-center gap-1.5 sm:flex">
+    <footer className="flex h-11 shrink-0 items-center gap-4 overflow-hidden border-t border-line px-5 text-xs text-ink-muted">
+      <span className="shrink-0 whitespace-nowrap">{words.toLocaleString()} words</span>
+      <span className="hidden shrink-0 whitespace-nowrap @[300px]:inline">
+        {characters.toLocaleString()} characters
+      </span>
+      <span className="hidden shrink-0 items-center gap-1.5 whitespace-nowrap @[440px]:flex">
         <History className="size-3.5" />
         Est. read time: {readMinutes} min
       </span>
 
-      <div className="ml-auto flex items-center gap-4">
-        <label className="flex items-center gap-2">
-          <span>Focus Mode</span>
+      <div className="ml-auto flex shrink-0 items-center gap-4">
+        <label className="flex shrink-0 items-center gap-2">
+          <span className="hidden whitespace-nowrap @[520px]:inline">Focus Mode</span>
           <button
             type="button"
             role="switch"
             aria-checked={active}
+            aria-label="Focus Mode"
             onClick={active ? onExitFocusMode : onOpenPicker}
             className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
               active ? "bg-gold" : "bg-surface-2"
@@ -1322,7 +1327,7 @@ function StatusBar({
           </button>
         </label>
 
-        <div className="flex items-center gap-2">
+        <div className="hidden shrink-0 items-center gap-2 @[380px]:flex">
           <button type="button" aria-label="Zoom out" className="text-ink-muted hover:text-ink">
             <Minus className="size-3.5" />
           </button>
