@@ -25,10 +25,17 @@ export function Sidebar() {
     hydrateSidebarCollapsed();
   }, []);
 
-  // The manuscript editor (/projects/[id]/chapters) doesn't match any
-  // top-level NAV_ITEM href — highlight "Writing" there anyway since
-  // that's conceptually where it lives.
-  const forceActiveHref = /^\/projects\/[^/]+\/chapters/.test(pathname) ? "/writing" : null;
+  // Full-bleed workspaces (/projects/[id]/chapters|outlines|characters) don't
+  // match any top-level NAV_ITEM href, and their own path starts with
+  // "/projects" — which would otherwise light up "Projects" instead. Force
+  // the conceptually-correct top-level item active there instead.
+  const forceActiveHref = /^\/projects\/[^/]+\/chapters/.test(pathname)
+    ? "/writing"
+    : /^\/projects\/[^/]+\/outlines/.test(pathname)
+      ? "/outlines"
+      : /^\/projects\/[^/]+\/characters/.test(pathname)
+        ? "/characters"
+        : null;
 
   return (
     <aside
