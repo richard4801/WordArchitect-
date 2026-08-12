@@ -20,7 +20,7 @@ import {
   UserX,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import { Sparkle } from "@/components/brand-mark";
 import { CoverArt } from "@/components/ui/cover-art";
@@ -29,7 +29,7 @@ import { Progress } from "@/components/ui/progress";
 import { Ring } from "@/components/ui/ring";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { Sparkline } from "@/components/ui/sparkline";
-import { createProject, useProjects } from "@/lib/project-store";
+import { useProjects } from "@/lib/project-store";
 import { deriveRecentChapters } from "@/lib/projects-data";
 import {
   activity,
@@ -258,11 +258,9 @@ function WeeklyStatsRow({ projects }: { projects: Project[] }) {
       </StatTile>
       <StatTile label="Characters" badgeIcon={UserPlus} badgeTone="bg-purple/15 text-purple">
         <span className="font-num text-2xl text-ink">{characters}</span>
-        <StatCaption text="3 this week" />
       </StatTile>
       <StatTile label="World Entries" badgeIcon={Globe2} badgeTone="bg-info/15 text-info">
         <span className="font-num text-2xl text-ink">{worldEntries}</span>
-        <StatCaption text="7 this week" />
       </StatTile>
       <StatTile label="Writing Time (This Week)">
         <span className="font-num text-2xl text-ink">{weeklyStats.writingTime.value}</span>
@@ -318,10 +316,17 @@ function AiInsightsCard() {
     <section className="card card-hover p-6">
       <div className="flex items-center gap-2">
         <h2 className="font-display text-xl text-ink">AI Insights</h2>
-        <span className="rounded-full bg-gold/15 px-2 py-0.5 text-[0.65rem] font-medium text-gold">
-          {aiInsights.length} new
-        </span>
+        {aiInsights.length > 0 && (
+          <span className="rounded-full bg-gold/15 px-2 py-0.5 text-[0.65rem] font-medium text-gold">
+            {aiInsights.length} new
+          </span>
+        )}
       </div>
+      {aiInsights.length === 0 && (
+        <p className="mt-3 text-sm text-ink-muted">
+          No insights yet — the AI Assistant will surface findings here as you write.
+        </p>
+      )}
       <ul className="mt-3 space-y-4">
         {aiInsights.map((insight) => {
           const badge = INSIGHT_TONE_BADGE[insight.tone];
@@ -516,10 +521,6 @@ const GET_STARTED = [
     button: "New Project",
     href: "/projects/new",
     primary: true,
-    // Skips the New Project form entirely — one click creates a starter
-    // project and drops you straight into it, same as the mockup's intent
-    // for a brand-new writer's very first action on the dashboard.
-    directCreate: true,
   },
   {
     icon: Globe2,
@@ -529,7 +530,6 @@ const GET_STARTED = [
     button: "Create World Entry",
     href: "/worldbuilding",
     primary: false,
-    directCreate: false,
   },
   {
     icon: Users,
@@ -539,7 +539,6 @@ const GET_STARTED = [
     button: "Create Character",
     href: "/characters",
     primary: false,
-    directCreate: false,
   },
   {
     icon: ListTree,
@@ -549,7 +548,6 @@ const GET_STARTED = [
     button: "Go to Outliner",
     href: "/outlines",
     primary: false,
-    directCreate: false,
   },
 ] as const;
 
@@ -628,13 +626,6 @@ function NewUserHero() {
 }
 
 function GetStartedCard() {
-  const router = useRouter();
-
-  function handleQuickCreate() {
-    const id = createProject({ title: "Untitled Project", genre: "Fiction" });
-    router.push(`/projects/${id}`);
-  }
-
   return (
     <section className="card p-5 sm:p-6">
       <h2 className="font-display text-xl text-ink">Let&rsquo;s Get You Started</h2>
@@ -660,17 +651,10 @@ function GetStartedCard() {
               </span>
               <h3 className="mt-5 text-base font-medium text-ink">{g.title}</h3>
               <p className="mt-2 text-xs leading-relaxed text-ink-faint">{g.detail}</p>
-              {g.directCreate ? (
-                <button type="button" onClick={handleQuickCreate} className={buttonClassName}>
-                  {g.primary && <Plus className="size-3.5" />}
-                  {g.button}
-                </button>
-              ) : (
-                <Link href={g.href} className={buttonClassName}>
-                  {g.primary && <Plus className="size-3.5" />}
-                  {g.button}
-                </Link>
-              )}
+              <Link href={g.href} className={buttonClassName}>
+                {g.primary && <Plus className="size-3.5" />}
+                {g.button}
+              </Link>
             </div>
           );
         })}

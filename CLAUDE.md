@@ -48,11 +48,37 @@ whichever real project actually exists, and the one insight referencing
 the now-deleted "Kaelen Duskryn" by name was reworded generically. The
 `activity` mock feed (also all shadows-of-elarion flavor text) was emptied
 to `[]` with a proper "No activity yet" empty state added to `ActivityCard`
-rather than left showing fabricated history. `todaysProgress`/
-`weeklyStats.wordsWritten`/`weeklyStats.writingTime`/`writingGoal` remain
-intentionally mock (no real link/id to break, per the original Dashboard
-mock-widget decision above) — only the widgets that pointed at a specific,
-now-nonexistent project id needed fixing.
+rather than left showing fabricated history.
+
+**Second post-purge fix — the earlier "mock-widget decision" above is now
+superseded; nothing on the Dashboard fabricates numbers anymore.** Two
+more problems surfaced after the first fix:
+
+1. **"Create Your First Project" bypassed the real form entirely.**
+   `GetStartedCard`'s primary card (`src/app/(app)/page.tsx`) had a
+   `directCreate` path that called `createProject({ title: "Untitled
+   Project", genre: "Fiction" })` directly on click and navigated straight
+   into the new project — skipping `/projects/new` (title/genre/POV/tense/
+   template selection) altogether. This is why a project called
+   "Untitled Project" / "untitled-project" could appear without the user
+   ever filling anything in. Fixed: that card is now a plain `Link` to
+   `/projects/new` like every other action on the page. The `directCreate`
+   flag, `handleQuickCreate()`, and the now-unused `createProject`/
+   `useRouter` imports were removed from `page.tsx` entirely — the only
+   way to create a project anywhere in the app is now the real form.
+2. **The remaining Dashboard mock widgets still showed fabricated
+   numbers** (Today's Progress: 1,250/2,000 words, a 12-day streak, ~20
+   filled calendar days; Weekly Stats: 24,560 words written, 8h 45m
+   writing time; Writing Goal: 24,560/50,000, 78% consistency) even
+   though zero real writing activity had ever happened. These are now
+   honestly zeroed in `dashboard-data.ts` (`todaysProgress`, `weeklyStats`,
+   `writingGoal`) rather than showing invented activity — `words: 0`,
+   `streakDays: 0`, `activeDays: []`, `wordsWritten.value: 0`, etc. The
+   Characters/World Entries stat tiles' fake "3 this week"/"7 this week"
+   captions were removed (those tiles' totals were already live; only the
+   trend caption was fabricated, so it's gone rather than faked). None of
+   this data has a real backend resource yet (see §4.7) — it now reads as
+   an honest empty state instead of a populated demo.
 
 ---
 

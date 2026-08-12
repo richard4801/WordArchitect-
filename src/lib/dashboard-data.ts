@@ -11,67 +11,54 @@ export const user = {
   },
 };
 
-/** Today's word-count ring + writing streak + a month of activity dots. */
+/**
+ * Today's word-count ring + writing streak + a month of activity dots.
+ * No writing-session tracking exists yet, so this is honestly zeroed —
+ * not fabricated activity — until that backend resource exists.
+ */
 export const todaysProgress = {
-  words: 1250,
+  words: 0,
   target: 2000,
-  streakDays: 12,
+  streakDays: 0,
+  // Fixed placeholder day-of-month (not real Date math — see MiniCalendar's
+  // own doc comment on why: this avoids a server/client hydration mismatch
+  // for a cosmetic "today" ring with no real activity data behind it yet).
   today: 18,
-  // Days of the mock month with at least one writing session (deterministic
-  // mock pattern — no real Date math, so server/client render identically).
-  activeDays: [1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 16, 17, 18, 20, 21, 23, 24, 25, 27, 28],
+  activeDays: [] as number[],
 };
 
-/** The five headline stat tiles above the AI Insights / Activity / Goal row. */
+/**
+ * The five headline stat tiles above the AI Insights / Activity / Goal row.
+ * wordsWritten/writingTime have no real time-tracking backend yet, so they
+ * stay honestly zeroed rather than showing fabricated numbers.
+ */
 export const weeklyStats = {
-  wordsWritten: { value: 24560, trendPercent: 18, sparkline: [12, 18, 15, 22, 19, 27, 24] },
-  writingTime: { value: "8h 45m", trendPercent: 12 },
+  wordsWritten: { value: 0, trendPercent: 0, sparkline: [0, 0] },
+  writingTime: { value: "0h 0m", trendPercent: 0 },
 };
 
 export const writingGoal = {
-  current: 24560,
+  current: 0,
   target: 50000,
-  daysActive: 18,
-  consistencyPercent: 78,
-  writingTime: "8h 45m",
+  daysActive: 0,
+  consistencyPercent: 0,
+  writingTime: "0h 0m",
 };
 
 export type AiInsightTone = "warn" | "purple" | "success";
 
-// linkHref points at the top-level workspace redirects (/writing,
-// /characters — see the writing|characters|.../page.tsx redirect pages),
-// never a hardcoded project id: those redirects always resolve to whatever
-// the user's own most-recently-active real project is, so these stay
-// functional no matter which project(s) actually exist.
+/**
+ * No real AI plot/pacing analysis runs yet, so this stays empty rather than
+ * showing fabricated findings — AiInsightsCard renders a proper empty state
+ * for it, same treatment as `activity` below.
+ */
 export const aiInsights: {
   id: string;
   tone: AiInsightTone;
   text: string;
   linkLabel: string;
   linkHref: string;
-}[] = [
-  {
-    id: "i1",
-    tone: "warn",
-    text: "Possible plot inconsistency detected in your latest chapter.",
-    linkLabel: "Review",
-    linkHref: "/writing",
-  },
-  {
-    id: "i2",
-    tone: "purple",
-    text: "A POV character hasn't appeared in 5 chapters.",
-    linkLabel: "View Character",
-    linkHref: "/characters",
-  },
-  {
-    id: "i3",
-    tone: "success",
-    text: "Dialogue ratio dropped 18% in your last chapter.",
-    linkLabel: "See Analysis",
-    linkHref: "/writing",
-  },
-];
+}[] = [];
 
 // Single source of truth for project data lives in projects-data.ts (it also
 // backs the full /projects page); re-exported here so the dashboard's "Your
