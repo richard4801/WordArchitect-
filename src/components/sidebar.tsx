@@ -10,6 +10,13 @@ import { NAV_ITEMS, UTILITY_NAV_ITEMS } from "@/lib/nav";
 import { useProjects } from "@/lib/project-store";
 import { hydrateSidebarCollapsed, useSidebarCollapsed } from "@/lib/ui-store";
 
+const FULL_BLEED_WORKSPACES = [
+  { pattern: /^\/projects\/[^/]+\/chapters/, href: "/writing" },
+  { pattern: /^\/projects\/[^/]+\/outlines/, href: "/outlines" },
+  { pattern: /^\/projects\/[^/]+\/characters/, href: "/characters" },
+  { pattern: /^\/projects\/[^/]+\/world/, href: "/worldbuilding" },
+];
+
 /**
  * The collapse toggle is user-initiated and persisted (see ui-store.ts) —
  * it's a general "give me more room" control available everywhere, not
@@ -25,17 +32,11 @@ export function Sidebar() {
     hydrateSidebarCollapsed();
   }, []);
 
-  // Full-bleed workspaces (/projects/[id]/chapters|outlines|characters) don't
-  // match any top-level NAV_ITEM href, and their own path starts with
+  // Full-bleed workspaces (/projects/[id]/chapters|outlines|characters|world)
+  // don't match any top-level NAV_ITEM href, and their own path starts with
   // "/projects" — which would otherwise light up "Projects" instead. Force
   // the conceptually-correct top-level item active there instead.
-  const forceActiveHref = /^\/projects\/[^/]+\/chapters/.test(pathname)
-    ? "/writing"
-    : /^\/projects\/[^/]+\/outlines/.test(pathname)
-      ? "/outlines"
-      : /^\/projects\/[^/]+\/characters/.test(pathname)
-        ? "/characters"
-        : null;
+  const forceActiveHref = FULL_BLEED_WORKSPACES.find((w) => w.pattern.test(pathname))?.href ?? null;
 
   return (
     <aside
