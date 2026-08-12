@@ -176,7 +176,7 @@ export default function WorldbuildingPage() {
                   { label: "Major Nations", value: WORLD_OVERVIEW.majorNations, Icon: Landmark },
                   { label: "Years of History", value: WORLD_OVERVIEW.yearsOfHistory.toLocaleString(), Icon: Flag },
                 ].map((s) => (
-                  <div key={s.label} className="card-2 flex items-center gap-2.5 p-3.5">
+                  <div key={s.label} className="card-2 flex items-start gap-2.5 p-3.5">
                     <s.Icon className="size-4 shrink-0 text-gold" />
                     <div className="min-w-0">
                       <div className="font-num text-lg leading-none text-ink">{s.value}</div>
