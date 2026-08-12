@@ -100,7 +100,75 @@ src/
                          #   the workspace's own page builds its own top bar.
                          #   Renders <PageBackground /> ONLY when pathname === "/".
       page.tsx           # DASHBOARD (built). Switches New User vs Returning User
-                         #   on useProjects().length — see §1.
+                         #   on useProjects().length (or ?newUser=1, a QA-only
+                         #   override that force-shows the empty state without
+                         #   touching real project-store data — needs a
+                         #   Suspense boundary around its useSearchParams()) —
+                         #   see §1. Every widget on both variants is
+                         #   documented below by whether it's LIVE (reads
+                         #   through project-store, so it's already correct
+                         #   once Projects has a real backend) or MOCK-ONLY
+                         #   (a hardcoded number in dashboard-data.ts with no
+                         #   real backend equivalent yet — these are the ones
+                         #   that need a new API resource, not just Projects
+                         #   made real).
+                         #
+                         #   Returning User variant (has ≥1 project):
+                         #     - Quick Actions row — 6 real links (Write/New
+                         #       Project/Character/World Entry/Outline/Ask AI),
+                         #       no data.
+                         #     - Continue Writing — LIVE only in that its two
+                         #       buttons link to a real project id; the title/
+                         #       chapter/word-count shown are MOCK-ONLY
+                         #       (dashboard-data.ts's `continueWriting`,
+                         #       hardcoded to shadows-of-elarion, not derived
+                         #       from whichever project was actually last
+                         #       edited).
+                         #     - Today's Progress — MOCK-ONLY throughout: the
+                         #       word-count ring, the MiniCalendar's active-day
+                         #       dots (see ui/mini-calendar.tsx below), and the
+                         #       streak counter are all `todaysProgress` in
+                         #       dashboard-data.ts. "View Calendar" links to
+                         #       /timeline, itself still a stub.
+                         #     - Weekly Stats row (5 tiles) — MIXED: "Projects"
+                         #       count and the "Characters"/"World Entries"
+                         #       totals ARE live, computed in-component from
+                         #       `projects.reduce(...)` over each project's
+                         #       `povCharacters`/`worldEntries` fields (see
+                         #       projects-data.ts). "Words Written (This
+                         #       Week)" and "Writing Time (This Week)" —
+                         #       including their trend %s and the sparkline —
+                         #       are MOCK-ONLY (`weeklyStats`); there's no
+                         #       real writing-session/time-tracking data
+                         #       anywhere yet.
+                         #     - AI Insights — MOCK-ONLY, a fixed 3-item list
+                         #       (`aiInsights`) with real link hrefs into
+                         #       shadows-of-elarion specifically. No actual AI
+                         #       analysis runs to produce these.
+                         #     - Recent Activity — MOCK-ONLY, a fixed 5-item
+                         #       feed (`activity`); nothing in the app
+                         #       currently appends to it when a real action
+                         #       happens (creating a character, editing a
+                         #       chapter, etc. don't log activity today).
+                         #     - Writing Goal — MOCK-ONLY (`writingGoal`);
+                         #       "Edit" button is a decorative no-op.
+                         #     - Your Projects grid — LIVE, `projects.filter(
+                         #       status === "active").slice(0, 5)` + a New
+                         #       Project card.
+                         #
+                         #   New User variant (0 projects):
+                         #     - "Let's Get You Started" — 4 cards. Only
+                         #       "Create Your First Project" is a real action:
+                         #       it calls project-store's createProject()
+                         #       directly (no form) and navigates straight
+                         #       in. The other 3 (World/Character/Outline) are
+                         #       just links to their top-level redirect pages.
+                         #     - "How WordArchitect Helps You Write Better",
+                         #       "Tip of the Day" — fully static, decorative.
+                         #     - "Suggested for You" — "Explore Templates"
+                         #       links to /templates (a stub); "Set Your Goal"
+                         #       is a decorative no-op button next to a Ring
+                         #       hardcoded to 0/500.
       projects/page.tsx  # PROJECTS (built). Search/filter/sort/tabs/pagination
                          #   over the shared mock dataset + a stats right-rail.
       projects/new/page.tsx  # NEW PROJECT (built). Multi-section form (incl.
@@ -261,9 +329,18 @@ src/
   lib/
     nav.ts               # NAV_ITEMS (main sidebar list) + UTILITY_NAV_ITEMS
                          #   (Settings, Help & Feedback)
-    dashboard-data.ts    # dashboard-only mock data (user, continueWriting,
-                         #   todaysProgress, weeklyStats, writingGoal, aiInsights,
-                         #   activity); re-exports projects/Project from projects-data.ts
+    dashboard-data.ts    # dashboard-only mock data — user, continueWriting,
+                         #   todaysProgress, weeklyStats, writingGoal,
+                         #   aiInsights, activity — all MOCK-ONLY, see the
+                         #   Dashboard's LIVE-vs-MOCK-ONLY breakdown above.
+                         #   Its own file comment already flags this as a
+                         #   placeholder "until the data layer ... and auth
+                         #   are wired up." No reactive store of its own —
+                         #   nothing on the dashboard creates/edits these
+                         #   values today, so there was nothing to make
+                         #   reactive yet. Also re-exports projects/Project
+                         #   from projects-data.ts so the dashboard's "Your
+                         #   Projects" grid doesn't need a second import path.
     projects-data.ts + project-store.ts  # PROJECTS domain. projects-data.ts is
                          #   the single source of truth for the Project type
                          #   (logline, chapters/sessions/daysActive, status
