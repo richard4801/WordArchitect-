@@ -198,19 +198,75 @@ src/
                          #   manuscript progress ring, recent chapters, activity.
       projects/[id]/(tabs)/{analytics,settings}/page.tsx  # still stubs → <ComingSoon>
       projects/[id]/chapters/page.tsx      # WRITING — the manuscript editor
-                         #   (built, full-bleed). Three columns: manuscript
-                         #   outline, a real contentEditable prose body with
-                         #   working formatting commands, and a Comments/
-                         #   Versions/Outline/AI panel. Focus Mode (Normal/
-                         #   Typewriter/Zen/Typewriter×Zen) hides the global
-                         #   Sidebar via ui-store's setFocusModeActive(). The
-                         #   center column is `@container`-queried (Tailwind v4
-                         #   native container queries) so its toolbar/status-bar
-                         #   chrome degrades by ACTUAL available width, not
-                         #   viewport width — see the dropdown-select.tsx note
-                         #   below (components/ui/) for the same-shaped bug in
-                         #   a different component, and why viewport-based
-                         #   breakpoints/positioning broke in both places.
+                         #   (built, full-bleed, 1600+ lines — the single
+                         #   biggest page in the app). Three columns:
+                         #   manuscript outline, the prose editor, and a
+                         #   Comments/Versions/Outline/AI panel. LIVE-vs-
+                         #   MOCK-ONLY breakdown, same as the Dashboard's:
+                         #
+                         #     - Prose editor — a REAL contentEditable region;
+                         #       formatting commands (bold/italic/underline/
+                         #       strike/lists/links/color/highlight/font/size/
+                         #       image/table/checklist) genuinely apply to the
+                         #       live selection via document.execCommand. But
+                         #       ⚠️ THERE IS NO PERSISTENCE ANYWHERE: edits
+                         #       live only in the DOM for the current mount.
+                         #       Switch chapters, refresh, or navigate away
+                         #       and back, and the body resets to the static
+                         #       text from getChapterBody() every time — a
+                         #       user's actual prose is silently lost. This is
+                         #       the single most important gap to close before
+                         #       anyone tries to genuinely write in the app.
+                         #     - Word/character counts — computed live as
+                         #       deltas off a hardcoded baseline (4,580 words /
+                         #       26,789 characters, `useState({words,
+                         #       characters})` in ChaptersPage) as you type,
+                         #       but that baseline (and any typing since) also
+                         #       resets on remount — not derived from anything
+                         #       real either.
+                         #     - "All changes saved" indicator — purely
+                         #       decorative static text; nothing is ever
+                         #       actually saved, so this is never false.
+                         #     - Comments panel — REAL interactive local state
+                         #       (add a comment, resolve/unresolve, filter by
+                         #       All/Unresolved/Resolved) seeded from
+                         #       CHAPTER_18_COMMENTS, but resets on remount
+                         #       same as the prose; authorship is hardcoded to
+                         #       "Jessica" (the fake dashboard user), not a
+                         #       real session.
+                         #     - Versions / Outline / AI side-panel tabs —
+                         #       explicit honest placeholders, not mocked-as-
+                         #       real: "Version history isn't wired up yet.",
+                         #       "A live outline of this chapter's beats will
+                         #       live here.", "Ask the AI Assistant about this
+                         #       chapter here."
+                         #     - Active Collaborators (the avatar stack) —
+                         #       fully static (Jessica/Michael/Sarah/Daniel,
+                         #       manuscript-data.ts's ACTIVE_COLLABORATORS),
+                         #       not real presence/multiplayer.
+                         #     - Share button — decorative; its own copy says
+                         #       "There's no backend here yet."
+                         #     - Manuscript structure (Parts → Chapters →
+                         #       Scenes, the left rail) — static from
+                         #       manuscript-data.ts, matches the mockup
+                         #       exactly for shadows-of-elarion, generic
+                         #       placeholder chapters for every other project.
+                         #       No UI to create/reorder/delete a chapter or
+                         #       scene.
+                         #     - Focus Mode (Normal/Typewriter/Zen/Typewriter×
+                         #       Zen, hides the global Sidebar via ui-store's
+                         #       setFocusModeActive()) — a real, fully working
+                         #       UI feature; nothing to persist here, it's
+                         #       pure client state.
+                         #
+                         #   Also: the center column is `@container`-queried
+                         #   (Tailwind v4 native container queries) so its
+                         #   toolbar/status-bar chrome degrades by ACTUAL
+                         #   available width, not viewport width — see the
+                         #   dropdown-select.tsx note below (components/ui/)
+                         #   for the same-shaped bug in a different component,
+                         #   and why viewport-based breakpoints/positioning
+                         #   broke in both places.
       projects/[id]/outlines/page.tsx      # OUTLINER (built, full-bleed).
                          #   Pannable/zoomable endless board (drag to pan,
                          #   scroll/pinch to zoom), a beat detail panel that
@@ -413,7 +469,17 @@ src/
                          #   creating new beats/structures.
     manuscript-data.ts    # WRITING (chapters editor)'s static mock data —
                          #   manuscript structure, chapter bodies, comment
-                         #   threads, active collaborators. No reactive store.
+                         #   threads, active collaborators. No reactive
+                         #   store — and unlike every domain above, the
+                         #   editor's own contentEditable prose isn't read
+                         #   from here at all after initial mount, so there's
+                         #   no in-memory store to even swap for a real one;
+                         #   real persistence means wiring the editor's actual
+                         #   DOM content to save/load calls, not just
+                         #   replacing this file's static exports. See the
+                         #   chapters/page.tsx entry above for the full
+                         #   LIVE-vs-MOCK-ONLY breakdown — this page has by
+                         #   far the biggest persistence gap in the app.
     ui-store.ts           # cross-cutting UI state that isn't any one domain's:
                          #   sidebar collapsed/expanded (persisted to
                          #   localStorage, hydrated client-side post-mount) and
