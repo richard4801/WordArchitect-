@@ -27,6 +27,33 @@ done ahead of the real backend connection, so the current build is a clean
 slate to develop and test the real integration against — not a bug, and
 not something to restore mock content for.
 
+**Post-purge follow-up fix:** the purge initially left one class of bug —
+Dashboard widgets that hardcoded a reference to the now-deleted
+`shadows-of-elarion` project id instead of reading live data. Specifically,
+`dashboard-data.ts`'s `continueWriting` export (id, title, chapter, word
+counts) was a fully static object always pointing at
+`/projects/shadows-of-elarion/...`; once a real project was created, the
+Dashboard's "Continue Writing" card still showed the old demo project and
+its "Resume Writing"/"Open Project" buttons linked to a project that no
+longer existed (landing on the "Project not found" page). This has been
+fixed: `ContinueWritingCard` (`src/app/(app)/page.tsx`) now takes a real
+`Project` — the most-recently-updated one from `useProjects()`, same
+"lowest `updatedRank` wins" convention the top-level workspace redirect
+pages already use — and derives title/chapter-label/word-count/links from
+it live. The `continueWriting` mock export has been deleted entirely (no
+longer needed). `aiInsights`' `linkHref`s were also hardcoded to
+`/projects/shadows-of-elarion/...`; they now point at the top-level
+workspace redirects (`/writing`, `/characters`) which always resolve to
+whichever real project actually exists, and the one insight referencing
+the now-deleted "Kaelen Duskryn" by name was reworded generically. The
+`activity` mock feed (also all shadows-of-elarion flavor text) was emptied
+to `[]` with a proper "No activity yet" empty state added to `ActivityCard`
+rather than left showing fabricated history. `todaysProgress`/
+`weeklyStats.wordsWritten`/`weeklyStats.writingTime`/`writingGoal` remain
+intentionally mock (no real link/id to break, per the original Dashboard
+mock-widget decision above) — only the widgets that pointed at a specific,
+now-nonexistent project id needed fixing.
+
 ---
 
 ## 1. What this is

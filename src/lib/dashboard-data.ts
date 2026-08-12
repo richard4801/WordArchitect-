@@ -11,14 +11,6 @@ export const user = {
   },
 };
 
-export const continueWriting = {
-  projectId: "shadows-of-elarion",
-  title: "Shadows of Elarion",
-  chapter: "Chapter 18: The Silence Beyond",
-  words: 12450,
-  target: 25000,
-};
-
 /** Today's word-count ring + writing streak + a month of activity dots. */
 export const todaysProgress = {
   words: 1250,
@@ -46,6 +38,11 @@ export const writingGoal = {
 
 export type AiInsightTone = "warn" | "purple" | "success";
 
+// linkHref points at the top-level workspace redirects (/writing,
+// /characters — see the writing|characters|.../page.tsx redirect pages),
+// never a hardcoded project id: those redirects always resolve to whatever
+// the user's own most-recently-active real project is, so these stay
+// functional no matter which project(s) actually exist.
 export const aiInsights: {
   id: string;
   tone: AiInsightTone;
@@ -56,23 +53,23 @@ export const aiInsights: {
   {
     id: "i1",
     tone: "warn",
-    text: "Possible plot inconsistency detected in Chapter 14.",
+    text: "Possible plot inconsistency detected in your latest chapter.",
     linkLabel: "Review",
-    linkHref: "/projects/shadows-of-elarion/chapters",
+    linkHref: "/writing",
   },
   {
     id: "i2",
     tone: "purple",
-    text: "Kaelen Duskryn hasn't appeared in 5 chapters.",
+    text: "A POV character hasn't appeared in 5 chapters.",
     linkLabel: "View Character",
-    linkHref: "/projects/shadows-of-elarion/characters",
+    linkHref: "/characters",
   },
   {
     id: "i3",
     tone: "success",
     text: "Dialogue ratio dropped 18% in your last chapter.",
     linkLabel: "See Analysis",
-    linkHref: "/projects/shadows-of-elarion/analytics",
+    linkHref: "/writing",
   },
 ];
 
@@ -90,40 +87,4 @@ export const activity: {
   text: string;
   context: string;
   time: string;
-}[] = [
-  {
-    id: "a1",
-    kind: "wrote",
-    text: "You wrote 2,450 words in Shadows of Elarion",
-    context: "Shadows of Elarion",
-    time: "2h ago",
-  },
-  {
-    id: "a2",
-    kind: "character",
-    text: "You created a new character: Lyriana Veyra",
-    context: "Bound by Stars",
-    time: "5h ago",
-  },
-  {
-    id: "a3",
-    kind: "world",
-    text: "You updated world entry: Valenor Kingdom",
-    context: "Shadows of Elarion",
-    time: "1d ago",
-  },
-  {
-    id: "a4",
-    kind: "note",
-    text: "You added a new note: Ancient Prophecies",
-    context: "Shadows of Elarion",
-    time: "2d ago",
-  },
-  {
-    id: "a5",
-    kind: "session",
-    text: "AI Assistant completed a rewrite",
-    context: "Shadows of Elarion",
-    time: "3d ago",
-  },
-];
+}[] = [];

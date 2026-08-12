@@ -30,12 +30,12 @@ import { Ring } from "@/components/ui/ring";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { Sparkline } from "@/components/ui/sparkline";
 import { createProject, useProjects } from "@/lib/project-store";
+import { deriveRecentChapters } from "@/lib/projects-data";
 import {
   activity,
   type ActivityKind,
   aiInsights,
   type AiInsightTone,
-  continueWriting,
   todaysProgress,
   type Project,
   user,
@@ -71,13 +71,17 @@ function DashboardPageInner() {
 /* ======================================================================= */
 
 function ReturningUserDashboard({ projects }: { projects: Project[] }) {
+  // Same "most recently active" convention as the top-level workspace
+  // redirect pages (/writing, /characters, etc.) — lowest updatedRank wins.
+  const activeProject = projects.reduce((a, b) => (b.updatedRank < a.updatedRank ? b : a));
+
   return (
     <div className="mx-auto max-w-[1400px] space-y-6">
       <WelcomeBackHeader />
       <QuickActionsRow />
 
       <div className="grid gap-6 lg:grid-cols-[1fr_420px] lg:items-start">
-        <ContinueWritingCard />
+        <ContinueWritingCard project={activeProject} />
         <TodaysProgressCard />
       </div>
 
@@ -141,8 +145,11 @@ function QuickActionsRow() {
   );
 }
 
-function ContinueWritingCard() {
-  const percent = Math.round((continueWriting.words / continueWriting.target) * 100);
+function ContinueWritingCard({ project }: { project: Project }) {
+  const percent = project.target > 0 ? Math.round((project.words / project.target) * 100) : 0;
+  const latestChapter = deriveRecentChapters(project, 1)[0];
+  const chapterLabel = latestChapter ? `Chapter ${latestChapter.number}: ${latestChapter.title}` : "No chapters yet";
+
   return (
     <section className="card card-hover p-6">
       <SectionHeading title="Continue Writing" />
@@ -150,13 +157,13 @@ function ContinueWritingCard() {
       <div className="flex flex-col gap-5 sm:flex-row">
         <div className="w-full shrink-0 sm:w-48">
           <div className="relative overflow-hidden rounded-xl border border-line">
-            <CoverArt seed={continueWriting.title} className="block aspect-square w-full" />
+            <CoverArt seed={project.title} className="block aspect-square w-full" />
             <span className="absolute right-2 top-2 rounded-md bg-canvas/70 px-2 py-0.5 text-[0.6rem] font-semibold tracking-widest text-gold backdrop-blur">
-              ACTIVE
+              {project.status === "active" ? (project.stage ?? "ACTIVE").toString().toUpperCase() : project.status.toUpperCase()}
             </span>
           </div>
           <Link
-            href={`/projects/${continueWriting.projectId}/chapters`}
+            href={`/projects/${project.id}/chapters`}
             className="mt-3 block w-full rounded-xl bg-gold px-4 py-2.5 text-center text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
           >
             Resume Writing
@@ -164,21 +171,21 @@ function ContinueWritingCard() {
         </div>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <h3 className="font-display text-2xl text-ink">{continueWriting.title}</h3>
-          <p className="text-sm text-ink-muted">{continueWriting.chapter}</p>
+          <h3 className="font-display text-2xl text-ink">{project.title}</h3>
+          <p className="text-sm text-ink-muted">{chapterLabel}</p>
 
           <div className="mt-4">
             <Progress value={percent} />
             <div className="mt-2 flex items-center justify-between text-sm">
               <span className="text-ink-muted">
-                {continueWriting.words.toLocaleString()} / {continueWriting.target.toLocaleString()} words
+                {project.words.toLocaleString()} / {project.target.toLocaleString()} words
               </span>
               <span className="text-gold">{percent}%</span>
             </div>
           </div>
 
           <Link
-            href={`/projects/${continueWriting.projectId}`}
+            href={`/projects/${project.id}`}
             className="mt-4 block w-full rounded-xl border border-line px-4 py-2.5 text-center text-sm text-ink-muted transition-colors hover:text-ink"
           >
             Open Project
@@ -359,6 +366,11 @@ function ActivityCard() {
   return (
     <section className="card card-hover p-6">
       <SectionHeading title="Recent Activity" actionLabel="View All" actionHref="/timeline" />
+      {activity.length === 0 && (
+        <p className="py-3 text-sm text-ink-muted">
+          No activity yet — start writing to see it appear here.
+        </p>
+      )}
       <ul className="divide-y divide-line">
         {activity.map((item) => {
           const Icon = ACTIVITY_ICON[item.kind];
