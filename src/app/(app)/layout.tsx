@@ -27,13 +27,13 @@ export default function AppLayout({
 }) {
   const pathname = usePathname();
   const isDashboard = pathname === "/";
-  // The manuscript editor, the outliner, the characters workspace, and the
-  // worldbuilding hub are all full-bleed pages with their own top bar — they
-  // replace the standard header entirely, same as their mockups (too much
-  // horizontal content — mode/structure sidebar, multi-column board,
-  // list+detail rail — to fit the standard tab-chrome + right-rail project
-  // layout).
-  const isFullBleedWorkspace = /^\/projects\/[^/]+\/(chapters|outlines|characters|world)/.test(pathname);
+  // The manuscript editor, the outliner, the characters workspace, the
+  // worldbuilding hub, and the notes hub are all full-bleed pages with
+  // their own top bar — they replace the standard header entirely, same
+  // as their mockups (too much horizontal content — mode/structure
+  // sidebar, multi-column board, list+detail rail — to fit the standard
+  // tab-chrome + right-rail project layout).
+  const isFullBleedWorkspace = /^\/projects\/[^/]+\/(chapters|outlines|characters|world|notes)/.test(pathname);
   const [collapsed] = useSidebarCollapsed();
   const focusModeActive = useFocusModeActive();
 

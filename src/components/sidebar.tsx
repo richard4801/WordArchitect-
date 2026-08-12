@@ -15,6 +15,7 @@ const FULL_BLEED_WORKSPACES = [
   { pattern: /^\/projects\/[^/]+\/outlines/, href: "/outlines" },
   { pattern: /^\/projects\/[^/]+\/characters/, href: "/characters" },
   { pattern: /^\/projects\/[^/]+\/world/, href: "/worldbuilding" },
+  { pattern: /^\/projects\/[^/]+\/notes/, href: "/notes" },
 ];
 
 /**
