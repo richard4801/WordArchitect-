@@ -17,10 +17,27 @@ writer's side). Tagline: **"Write. Craft. Conquer."**
   "NovelCrafter" in the product.
 - Live on Vercel: **word-architect-three.vercel.app** (auto-deploys on every
   push to the working branch).
-- Current state: **Dashboard, Projects, New Project, and the project detail
-  page's Overview tab are built and polished**. Every other destination
-  (including the detail page's other 7 tabs) is stubbed with `<ComingSoon>`
-  and gets built out as its mockup arrives.
+- Current state: **Dashboard, Projects, New Project, the project detail
+  page's Overview tab, and five full workspaces — Writing (the manuscript
+  editor), Outliner, Characters, Worldbuilding, and Notes — are built and
+  polished.** Still stubbed with `<ComingSoon>`: the project detail page's
+  Analytics and Settings tabs, and the top-level Timeline/AI
+  Assistant/Templates/Goals/Help nav destinations. Every one of the five
+  built workspaces follows the same shape: a top-level nav item at, e.g.,
+  `/characters` that has no page of its own — it just redirects to the
+  most-recently-active project's real workspace at `/projects/[id]/characters`
+  (see §4's "full-bleed workspace" note and `lib/*-store.ts` pattern below).
+  When the next mockup arrives for one of the still-stubbed destinations,
+  build it the same way: a project-scoped full-bleed route + a top-level
+  redirect page, not a tab inside `(tabs)/`.
+- **Every mock data domain (Projects, Characters, Worldbuilding, Notes)
+  follows one reactive-store pattern** — see the `lib/*-store.ts` files
+  under §4. This is the seam a real backend integration will replace: each
+  store's public hook signatures (`useProjects()`, `useCharacters()`,
+  `createProject()`, etc.) are what every page already depends on, so
+  swapping the store's internals for real `fetch` calls against an API
+  should not require touching the UI components themselves, only the
+  store files plus whatever loading/error states get added.
 - **The oracle-face hero background is dashboard-only.** It does not appear on
   Projects or any other page — confirmed explicitly against the Projects
   mockup. See §4/§5 (`(app)/layout.tsx` gates `<PageBackground />` on
@@ -75,10 +92,13 @@ src/
     layout.tsx           # root: loads fonts, ThemeProvider, <html> classes
     globals.css          # design tokens + Tailwind v4 config + utilities  ← the design system lives here
     (app)/               # authenticated app shell (route group) — "use client"
-                         #   (needs usePathname to gate the hero, see below)
+                         #   (needs usePathname to gate the hero + full-bleed workspaces)
       layout.tsx         # Sidebar + <header> (search w/ ⌘K, bell, mail, theme,
-                         #   avatar) + <main>. Renders <PageBackground /> ONLY
-                         #   when pathname === "/".
+                         #   avatar) + <main> for standard pages. For full-bleed
+                         #   workspaces (isFullBleedWorkspace regex below) it
+                         #   instead renders Sidebar + a bare padded column —
+                         #   the workspace's own page builds its own top bar.
+                         #   Renders <PageBackground /> ONLY when pathname === "/".
       page.tsx           # DASHBOARD (built). Switches New User vs Returning User
                          #   on useProjects().length — see §1.
       projects/page.tsx  # PROJECTS (built). Search/filter/sort/tabs/pagination
@@ -87,18 +107,102 @@ src/
                          #   Target Word Count); on submit, calls project-store's
                          #   createProject() and redirects to the fake-created
                          #   project's own page.
-      projects/[id]/layout.tsx  # PROJECT DETAIL shared chrome (built): back link,
-                         #   title/status/meta, Write Now, the 8-tab nav, and the
-                         #   right rail (cover, details incl. inline-editable
-                         #   Target Words, stats, quick actions).
-      projects/[id]/page.tsx    # Overview tab (built): description, manuscript
-                         #   progress ring, recent chapters, recent activity.
-      projects/[id]/{chapters,characters,world,outlines,notes,analytics,settings}/page.tsx
-                         # the other 7 tabs — stubs → <ComingSoon>, same as main nav
-      writing|characters|worldbuilding|outlines|notes|assistant|goals|
-        analytics|settings|timeline|templates|help/page.tsx   # stubs → <ComingSoon>
-                         #   (goals/analytics exist but aren't in the sidebar nav —
-                         #   see nav.ts)
+      projects/[id]/(tabs)/layout.tsx  # PROJECT DETAIL shared chrome (built):
+                         #   back link, title/status/meta, Write Now, the 8-tab
+                         #   nav (Overview/Chapters/Characters/World/Outlines/
+                         #   Notes/Analytics/Settings — tab hrefs point at the
+                         #   real routes below, most of which now live OUTSIDE
+                         #   this (tabs) group), and the right rail (cover,
+                         #   details incl. inline-editable Target Words, stats,
+                         #   quick actions).
+      projects/[id]/(tabs)/page.tsx  # Overview tab (built): description,
+                         #   manuscript progress ring, recent chapters, activity.
+      projects/[id]/(tabs)/{analytics,settings}/page.tsx  # still stubs → <ComingSoon>
+      projects/[id]/chapters/page.tsx      # WRITING — the manuscript editor
+                         #   (built, full-bleed). Three columns: manuscript
+                         #   outline, a real contentEditable prose body with
+                         #   working formatting commands, and a Comments/
+                         #   Versions/Outline/AI panel. Focus Mode (Normal/
+                         #   Typewriter/Zen/Typewriter×Zen) hides the global
+                         #   Sidebar via ui-store's setFocusModeActive(). The
+                         #   center column is `@container`-queried (Tailwind v4
+                         #   native container queries) so its toolbar/status-bar
+                         #   chrome degrades by ACTUAL available width, not
+                         #   viewport width — see the dropdown-select.tsx note
+                         #   below (components/ui/) for the same-shaped bug in
+                         #   a different component, and why viewport-based
+                         #   breakpoints/positioning broke in both places.
+      projects/[id]/outlines/page.tsx      # OUTLINER (built, full-bleed).
+                         #   Pannable/zoomable endless board (drag to pan,
+                         #   scroll/pinch to zoom), a beat detail panel that
+                         #   overlays the board (not push-layout), multiple
+                         #   outline modes (Three Act/Hero's Journey/Save the
+                         #   Cat shown; others decorative). No reactive store —
+                         #   reads straight from lib/outline-data.ts.
+      projects/[id]/characters/_shared.tsx # CharactersTopBar (breadcrumb +
+                         #   search/bell/theme) + ROLE_META + RoleBadge, shared
+                         #   by all 3 Characters pages below.
+      projects/[id]/characters/page.tsx    # CHARACTERS list+detail (built,
+                         #   full-bleed). Left rail = character list; right =
+                         #   selected character's full profile across 6 tabs
+                         #   (Profile has the mockup's big-portrait+dl-grid
+                         #   header; Background/Personality/Relationships/
+                         #   Notes/Timeline share a leaner header + a portrait+
+                         #   At-a-Glance right rail instead). Relationships tab
+                         #   is a real radial graph (SVG, up to 6 nodes,
+                         #   position presets per node-count, colored by a
+                         #   closed RelationshipBond union) with a legend and a
+                         #   live-computed summary. Accepts ?c=<id> to deep-link
+                         #   (needs a Suspense boundary around useSearchParams).
+      projects/[id]/characters/all/page.tsx    # ALL CHARACTERS grid (built) —
+                         #   stats strip, role tabs, grid/compact view toggle,
+                         #   pagination.
+      projects/[id]/characters/new/page.tsx    # + NEW CHARACTER form (built) —
+                         #   multi-section form incl. a Quick Traits chip
+                         #   editor and a live "At a Glance" preview; submits
+                         #   via character-store's createCharacter().
+      projects/[id]/world/_shared.tsx      # WorldTopBar (breadcrumb + search/
+                         #   bell/theme), shared by both Worldbuilding pages.
+      projects/[id]/world/page.tsx         # WORLDBUILDING hub (built,
+                         #   full-bleed). World Overview, a hand-authored SVG
+                         #   world map (region labels/mountains/forest/river/
+                         #   compass rose — no real map image), a Categories
+                         #   grid (8 categories), a live-sorted Recent Entries
+                         #   table, plus a right rail (Timeline Overview, a
+                         #   real multi-segment SVG donut for World Stats,
+                         #   Quick Actions, Pinned Items). Category tabs/cards
+                         #   filter the entries table.
+      projects/[id]/world/new-category/page.tsx  # CREATE NEW CATEGORY form
+                         #   (built) — name/description/parent, a searchable
+                         #   64-icon library with tag filters, 8 color
+                         #   swatches, cover-image upload, a live preview;
+                         #   submits via worldbuilding-store's
+                         #   createWorldCategory().
+      projects/[id]/notes/page.tsx         # NOTES hub (built, full-bleed).
+                         #   The ONE workspace whose mockup header has no
+                         #   project breadcrumb — just 3 icon buttons — so it
+                         #   does NOT use a _shared.tsx top-bar component like
+                         #   the other three; it builds its own minimal header
+                         #   inline. All Notes/Pinned/My Notes/Shared tabs, a
+                         #   Note Folders rail (functional filters), Pinned/
+                         #   Recent Notes rails (both computed live, not
+                         #   hardcoded), a functional Quick Notes composer, and
+                         #   a lightweight New Note modal (no dedicated
+                         #   creation-form mockup existed for this one, unlike
+                         #   Characters/Categories).
+      writing|outlines|characters|worldbuilding|notes/page.tsx (top level)
+                         # each is a REDIRECT, not a real page: finds the
+                         #   most-recently-active project (lowest
+                         #   updatedRank) via useProjects() and
+                         #   router.replace()s to that project's real
+                         #   workspace above, with a "No projects yet" +
+                         #   New Project fallback. This is what every sidebar
+                         #   nav item / dashboard quick action actually points
+                         #   at — see sidebar.tsx's FULL_BLEED_WORKSPACES below
+                         #   for why the sidebar has to special-case these.
+      assistant|goals|analytics|settings|timeline|templates|help/page.tsx
+                         # top-level stubs → <ComingSoon> (goals/analytics
+                         #   exist but aren't in the sidebar nav — see nav.ts)
     api/ai/route.ts      # POST endpoint that calls the AI provider
   components/
     page-background.tsx  # full-bleed hero image + washes + the stat shadow (dashboard only)
@@ -108,7 +212,15 @@ src/
                          #   (XP bar vs "New Writer" + Upgrade button); ornate
                          #   astrolabe artwork background (public/sidebar-bg.webp),
                          #   pinned to the dark palette via a scoped `.dark` class
-                         #   regardless of app theme
+                         #   regardless of app theme. FULL_BLEED_WORKSPACES is a
+                         #   {pattern, href} table (chapters→/writing,
+                         #   outlines→/outlines, characters→/characters,
+                         #   world→/worldbuilding, notes→/notes) that forces
+                         #   the conceptually-correct top-level nav item active
+                         #   when on a full-bleed workspace page — without it,
+                         #   the plain `pathname.startsWith(item.href)` check
+                         #   would light up "Projects" instead, since every one
+                         #   of those routes starts with /projects/[id]/...
     theme-provider.tsx   # next-themes wrapper
     theme-toggle.tsx     # sun/moon button (.btn-raised chip)
     brand-mark.tsx       # BrandMark (compass-star, used as the small logo mark
@@ -116,6 +228,28 @@ src/
     coming-soon.tsx      # placeholder for unbuilt pages
     ui/
       cover-art.tsx      # deterministic SVG "book cover" placeholders (seeded)
+      character-portrait.tsx  # deterministic SVG backlit-bust silhouette
+                         #   (seeded per character id) — moody portrait
+                         #   placeholder, same "generated art" approach as
+                         #   cover-art.tsx.
+      world-map-art.tsx  # hand-authored (not seeded) SVG fantasy map for the
+                         #   Worldbuilding hub's "World Map" card.
+      note-cover-art.tsx # deterministic SVG cover art for note cards, 6 scene
+                         #   variants (landscape/portrait/map/book/starfield/
+                         #   crystal) keyed to the note's category.
+      dropdown-select.tsx  # DropdownSelect + MultiSelectDropdown. The option
+                         #   panel is rendered via a React portal into
+                         #   document.body with `position: fixed`, computed
+                         #   from the trigger's live bounding rect — NOT a
+                         #   normal absolutely-positioned child. Reason: `.card`/
+                         #   `.card-2` set `z-index: 0` on `position: relative`
+                         #   to layer their own inner glow, which also opens a
+                         #   new CSS stacking context — a panel positioned
+                         #   inside one card could never paint above a LATER
+                         #   sibling card no matter its own z-index, since
+                         #   stacking contexts are compared to each other in
+                         #   DOM order. Don't revert this to a plain absolute
+                         #   child; the portal is the fix, not a workaround.
       progress.tsx       # animated progress bar (shimmer)
       ring.tsx           # animated circular progress (comet highlight); sublabel
                          #   is ReactNode so callers control its typography
@@ -130,28 +264,74 @@ src/
     dashboard-data.ts    # dashboard-only mock data (user, continueWriting,
                          #   todaysProgress, weeklyStats, writingGoal, aiInsights,
                          #   activity); re-exports projects/Project from projects-data.ts
-    projects-data.ts     # SINGLE SOURCE OF TRUTH for project data — the richer
-                         #   Project type (logline, chapters/sessions/daysActive,
-                         #   status active/completed/archived, active-only stage
-                         #   Active/Draft/Outline, plus detail-page fields:
+    projects-data.ts + project-store.ts  # PROJECTS domain. projects-data.ts is
+                         #   the single source of truth for the Project type
+                         #   (logline, chapters/sessions/daysActive, status
+                         #   active/completed/archived, active-only stage
+                         #   Active/Draft/Outline, detail-page fields incl.
                          #   created/pov/tense/language/deadline/tags/
-                         #   povCharacters/worldEntries), the 12-project mock
-                         #   list, achievements, and derive helpers (status
-                         #   counts, active-project word stats, top-genre
-                         #   breakdown, deriveRecentChapters/deriveRecentActivity —
-                         #   explicit data for shadows-of-elarion, generic
-                         #   fallback for every other project)
-    project-store.ts     # Reactive wrapper around projects-data's array
-                         #   (useSyncExternalStore) so /projects/new can
-                         #   fake-create a project (createProject(), which
-                         #   accepts a custom targetWords) and have it actually
-                         #   show up everywhere (Dashboard, /projects, its own
-                         #   /projects/[id] page) — no backend, in-memory only,
-                         #   resets on a hard refresh. updateProjectTarget(id,
-                         #   target) lets the goal be raised later (used by the
-                         #   detail page's inline-editable Target Words row).
-                         #   Every project list reads through useProjects()
-                         #   from here, not a static import.
+                         #   povCharacters/worldEntries) plus the 12-project
+                         #   mock list, achievements, and derive helpers.
+                         #   project-store.ts is the reactive
+                         #   useSyncExternalStore wrapper: useProjects(),
+                         #   createProject(), updateProjectTarget(id, target).
+                         #   Every project list reads through useProjects(),
+                         #   never a static import — same rule for every
+                         #   domain below.
+    character-data.ts + character-store.ts  # CHARACTERS domain. character-
+                         #   data.ts: Character type (physical description,
+                         #   personality traits, motivations, arc, background
+                         #   paragraphs, lifeEvents, culturalBackground,
+                         #   strengths/weaknesses, internalConflict, notes,
+                         #   relationships), a closed RelationshipBond union
+                         #   (Family/Ally/Friend/Mentor/Colleague/Rival/
+                         #   Romantic), and the 16-character mock roster (only
+                         #   Kaelen Duskryn — the default-selected protagonist,
+                         #   swapped in for the mockup's Lyriana Veyra for
+                         #   continuity with the rest of the app — and Lyriana
+                         #   herself carry full depth). character-store.ts:
+                         #   useCharacters(), useCharacter(id),
+                         #   createCharacter().
+    worldbuilding-data.ts + worldbuilding-store.ts  # WORLDBUILDING domain.
+                         #   worldbuilding-data.ts: WorldCategoryMeta (8 fixed
+                         #   categories: Places/Nations/Cultures/History/Magic/
+                         #   Factions/Religion/Items & Artifacts, each with an
+                         #   icon + color), WorldEntry (31 seeded entries,
+                         #   updatedHours is the sort-authoritative field —
+                         #   recentEntries() sorts by it live, "updated X ago"
+                         #   strings are derived via formatAgo(), never
+                         #   stored), WORLD_TIMELINE, WORLD_OVERVIEW,
+                         #   PINNED_WORLD_ITEMS. worldbuilding-store.ts:
+                         #   useWorldCategories(), createWorldCategory() (lets
+                         #   the New Category form fake-create a category that
+                         #   actually shows up in the grid/tabs/stats).
+    notes-data.ts + notes-store.ts  # NOTES domain. notes-data.ts: NoteCategory
+                         #   (6 fixed categories, each with a color),
+                         #   NOTE_CATEGORY_META, Note type (dateRank is the
+                         #   sort-authoritative field, 1 = newest; "date" is a
+                         #   display string, not derived — unlike Worldbuilding's
+                         #   updatedHours/formatAgo, dates here were assigned
+                         #   directly since they needed to read as real
+                         #   calendar dates, e.g. "May 23, 2026"), the 24-note
+                         #   mock list, pinnedNotes()/recentNotes() (both
+                         #   live-computed, capped-and-sorted, not hardcoded
+                         #   lists), folderCount()/notesInFolder() (folders map
+                         #   onto categories: Research/Inspirations/Ideas ↔
+                         #   Research/Inspiration/Plot categories). notes-
+                         #   store.ts: useNotes(), togglePinned(id),
+                         #   createNote().
+    outline-data.ts       # OUTLINER's static mock data — no reactive store;
+                         #   the Outliner board doesn't currently support
+                         #   creating new beats/structures.
+    manuscript-data.ts    # WRITING (chapters editor)'s static mock data —
+                         #   manuscript structure, chapter bodies, comment
+                         #   threads, active collaborators. No reactive store.
+    ui-store.ts           # cross-cutting UI state that isn't any one domain's:
+                         #   sidebar collapsed/expanded (persisted to
+                         #   localStorage, hydrated client-side post-mount) and
+                         #   focus-mode-active (set by the chapters editor,
+                         #   read by (app)/layout.tsx to hide the global
+                         #   Sidebar during Focus Mode).
     ai/
       types.ts           # AiProvider contract (vendor-agnostic)
       index.ts           # provider registry + getAiProvider()
@@ -176,6 +356,18 @@ resources/
                          #   were actually found (quick-actions tile width,
                          #   Continue Writing's two-column layout, icon badge
                          #   styles, etc.)
+  writing-mockup.png                              # WRITING (chapters editor)
+  Outliner Three Act.png, Outliner Save The Cat.png,
+    Outliner Hero's Journey .png                  # OUTLINER (3 of its modes)
+  Characters.png, All Characters.png,
+    + New Character.png                           # CHARACTERS (3 screens)
+  Character tabs.png     # composite of 5 stacked screenshots — Background/
+                         #   Personality/Relationships/Notes/Timeline tabs —
+                         #   used to rebuild those 5 detail-panel tabs after
+                         #   the initial Characters build shipped with generic
+                         #   placeholder content in them.
+  Worldbuilding.png, Create New Category (Worldbuilding).png  # WORLDBUILDING (2 screens)
+  Notes.png               # NOTES (1 screen)
   README.md
 DESIGN_SYSTEM.md         # full visual spec (colours, fonts, materials)
 ```
