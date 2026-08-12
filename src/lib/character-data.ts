@@ -20,9 +20,11 @@
 
 export type CharacterRole = "Main" | "Supporting" | "Minor" | "Extra";
 
+export type RelationshipBond = "Family" | "Ally" | "Friend" | "Mentor" | "Colleague" | "Rival" | "Romantic";
+
 export type Relationship = {
   characterId: string;
-  bond: string;
+  bond: RelationshipBond;
   description: string;
   strength: "Strong" | "Moderate" | "Tense";
 };
@@ -32,6 +34,30 @@ export type CharacterArc = {
   middle: string;
   climax: string;
   end: string;
+};
+
+export type LifeEventType = "milestone" | "personal" | "conflict" | "achievement" | "discovery";
+
+export type LifeEvent = {
+  year: number;
+  title: string;
+  description: string;
+  type: LifeEventType;
+};
+
+export type CulturalBackground = {
+  origin: string;
+  upbringing: string;
+  education: string;
+  beliefs: string;
+  languages: string;
+};
+
+export type CharacterNote = {
+  title: string;
+  body: string;
+  date: string;
+  pinned?: boolean;
 };
 
 export type Character = {
@@ -61,6 +87,13 @@ export type Character = {
   secret?: string;
   arc?: CharacterArc;
   relationships: Relationship[];
+  background?: string[];
+  lifeEvents?: LifeEvent[];
+  culturalBackground?: CulturalBackground;
+  strengths?: string[];
+  weaknesses?: string[];
+  internalConflict?: string;
+  notes?: CharacterNote[];
 };
 
 export const CHARACTERS: Character[] = [
@@ -119,7 +152,7 @@ export const CHARACTERS: Character[] = [
       },
       {
         characterId: "seraphina-vale",
-        bond: "Confidante",
+        bond: "Friend",
         description: "The only person he tells the truth to when the crown gets too heavy.",
         strength: "Strong",
       },
@@ -128,6 +161,72 @@ export const CHARACTERS: Character[] = [
         bond: "Rival",
         description: "Their opposing beliefs about what the bloodline is for clash often, but both seek the same truth.",
         strength: "Tense",
+      },
+    ],
+    background: [
+      "Kaelen was born the second son of House Duskryn, never meant to inherit anything more than a minor holding and a quiet life in his brother's shadow. That changed the night a sudden fever swept the castle and took the crown prince within three days.",
+      "Thrust into a role he never trained for, Kaelen leaned on Eldric Thorne's steady hand and the histories he half-remembered from a childhood he'd rather have kept. It was only when fragments of an old prophecy surfaced — hidden in his father's private study — that he began to suspect his bloodline carried more than a title.",
+      "Now Kaelen walks the line between the king his people need and the truth he's not sure the kingdom can survive learning.",
+    ],
+    lifeEvents: [
+      { year: 2198, title: "Born Second Son of Duskryn", description: "Kaelen entered the world with no expectation of the throne, free to live an ordinary life.", type: "milestone" },
+      { year: 2216, title: "Death of Prince Aldric", description: "His older brother succumbed to a sudden fever, leaving Kaelen the unwilling heir.", type: "conflict" },
+      { year: 2217, title: "Named Heir of Valenor", description: "Crowned heir in mourning clothes before he'd finished grieving.", type: "milestone" },
+      { year: 2219, title: "Discovered the Hidden Study", description: "Found his father's sealed prophecy texts, and began to suspect the truth.", type: "discovery" },
+      { year: 2220, title: "Uncovered the Bloodline's Weight", description: "Learned what the prophecy actually asks of his family line.", type: "discovery" },
+    ],
+    culturalBackground: {
+      origin: "Kingdom of Valenor",
+      upbringing: "Noble, second-born",
+      education: "Tutored in statecraft and swordplay",
+      beliefs: "Duty before comfort",
+      languages: "Common, Valenori, Ancient Tongue",
+    },
+    strengths: [
+      "Steady under pressure",
+      "Earns loyalty easily",
+      "Sees every side of a conflict",
+      "Willing to bear hard truths alone",
+    ],
+    weaknesses: [
+      "Buries his own fear instead of facing it",
+      "Struggles to ask for help",
+      "Second-guesses decisions that affect others",
+      "Hides how much the crown costs him",
+    ],
+    internalConflict:
+      "Kaelen fears that claiming the throne means becoming the kind of ruler his father was — one who let the prophecy justify anything. He wants to lead without losing himself to what his bloodline demands.",
+    notes: [
+      {
+        title: "Father's Study",
+        body: "Sealed records his father kept hidden — the first hint of what the bloodline really is.",
+        date: "May 12, 2220",
+        pinned: true,
+      },
+      {
+        title: "The Fever That Took Aldric",
+        body: "Private notes on the illness that killed his brother. Something about it never sat right.",
+        date: "May 14, 2220",
+      },
+      {
+        title: "Signet Ring",
+        body: "His father's ring, worn on a chain rather than his hand. Not ready to wear it openly yet.",
+        date: "May 15, 2220",
+      },
+      {
+        title: "Eldric's Warning",
+        body: "Notes from a late-night conversation about what the crown will ask of him.",
+        date: "May 18, 2220",
+      },
+      {
+        title: "The Weight of the Crown",
+        body: "He worries the throne will change him the way it changed his father.",
+        date: "May 19, 2220",
+      },
+      {
+        title: "Recurring Dream",
+        body: "Dreams of a hand closing around his, pulling him toward a throne made of thorns.",
+        date: "May 20, 2220",
       },
     ],
   },
@@ -158,9 +257,10 @@ export const CHARACTERS: Character[] = [
     ],
     personalityTraits: ["Determined", "Introspective", "Compassionate", "Observant", "Stubborn", "Loyal"],
     motivations: [
-      "Discover the truth about her past",
-      "Protect those she cares about",
+      "Uncover the truth about her family's fall",
+      "Protect the innocent",
       "Prevent an ancient prophecy from coming true",
+      "Find her place in a world that sees her as a threat",
     ],
     motivation: "A past she can't remember, and a power she never asked to carry.",
     goal: "Find out who she really is before the fragment she carries destroys her.",
@@ -174,7 +274,7 @@ export const CHARACTERS: Character[] = [
     relationships: [
       {
         characterId: "kaelen-duskryn",
-        bond: "Allies",
+        bond: "Ally",
         description: "A fellow traveler bound by fate. He challenges her walls and stands by her side through everything.",
         strength: "Strong",
       },
@@ -191,10 +291,88 @@ export const CHARACTERS: Character[] = [
         strength: "Strong",
       },
       {
+        characterId: "ilyra-moonwhisper",
+        bond: "Family",
+        description: "A distant cousin by an old branch of House Veyra — one of the few blood ties Lyriana has left.",
+        strength: "Strong",
+      },
+      {
         characterId: "theren-blackwood",
         bond: "Rival",
         description: "Their opposing beliefs clash often, but both seek the same truth.",
         strength: "Tense",
+      },
+      {
+        characterId: "ravik-stonefist",
+        bond: "Colleague",
+        description: "Fellow Keeper-trained scout. They've watched each other's backs on more than one job gone wrong.",
+        strength: "Moderate",
+      },
+    ],
+    background: [
+      "Lyriana Veyra was born into the noble house of Veyra, a once revered lineage now fallen from grace. The betrayal and murder of her family left her as the sole survivor, thrust into a world of political intrigue and ancient magic she barely understands.",
+      "Raised in hiding by loyal retainers, she trained in secret, mastering the art of survival, combat, and the manipulation of light—an ancient power tied to her bloodline.",
+      "Now, Lyriana walks the line between vengeance and destiny, a reluctant hero in a world on the brink of war.",
+    ],
+    lifeEvents: [
+      { year: 2202, title: "Born into House Veyra", description: "Lyriana was born the only child of Lord and Lady Veyra.", type: "milestone" },
+      { year: 2212, title: "The Fall of House Veyra", description: "Her family was betrayed and murdered. Lyriana was the sole survivor.", type: "conflict" },
+      { year: 2212, title: "Escaped into Hiding", description: "She was smuggled out of the capital by loyal retainers.", type: "personal" },
+      { year: 2218, title: "Began Training with the Keepers", description: "She joined the Keepers and began her training in secret.", type: "achievement" },
+      { year: 2220, title: "Discovered Her True Heritage", description: "Learned of her ancient bloodline and the power within her.", type: "discovery" },
+    ],
+    culturalBackground: {
+      origin: "Veyran Empire",
+      upbringing: "Noble (hidden)",
+      education: "Trained by the Keepers",
+      beliefs: "Duty, honor, truth",
+      languages: "Common, Veyran, Ancient Tongue",
+    },
+    strengths: [
+      "Strong sense of justice",
+      "Highly skilled in combat and survival",
+      "Deep empathy and loyalty",
+      "Quick thinker in dangerous situations",
+    ],
+    weaknesses: [
+      "Haunted by past trauma",
+      "Struggles to trust others",
+      "Reluctant to embrace her destiny",
+      "Overthinks and isolates herself",
+    ],
+    internalConflict:
+      "Lyriana fears the darkness within her—the power she was born with might consume her. She fights to remain in control, afraid of becoming the very thing she seeks to destroy.",
+    notes: [
+      {
+        title: "Childhood Memories",
+        body: "Faint memories of her mother's lullabies and the gardens of their estate.",
+        date: "May 21, 2220",
+        pinned: true,
+      },
+      {
+        title: "The Night of the Fall",
+        body: "Keeps a journal entry (hidden) about the night her family was betrayed.",
+        date: "May 22, 2220",
+      },
+      {
+        title: "Ancient Pendant",
+        body: "The pendant reacts to her emotions. It was given to her by her mother.",
+        date: "May 23, 2220",
+      },
+      {
+        title: "Training with the Keepers",
+        body: "Notes on light manipulation techniques and ancient combat forms.",
+        date: "May 24, 2220",
+      },
+      {
+        title: "Fear of Losing Control",
+        body: "She worries the light within her could turn into something destructive.",
+        date: "May 24, 2220",
+      },
+      {
+        title: "Dreams & Visions",
+        body: "Recurring dream of a burning castle and a shadowed figure calling her name.",
+        date: "May 25, 2220",
       },
     ],
   },

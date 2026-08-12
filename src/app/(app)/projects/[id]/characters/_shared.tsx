@@ -3,7 +3,7 @@
 import { Bell, ChevronLeft, ChevronRight, Crown, Search, Users } from "lucide-react";
 import Link from "next/link";
 import { ThemeToggle } from "@/components/theme-toggle";
-import type { CharacterRole } from "@/lib/character-data";
+import type { CharacterRole, RelationshipBond } from "@/lib/character-data";
 import type { Project } from "@/lib/projects-data";
 
 /**
@@ -89,3 +89,14 @@ export function RoleBadge({ role }: { role: CharacterRole }) {
     </span>
   );
 }
+
+/** Matches resources/Character tabs.png's "Relationship Key" legend, sampled from the mockup art. */
+export const BOND_META: Record<RelationshipBond, { color: string }> = {
+  Family: { color: "#9db38a" },
+  Ally: { color: "var(--success)" },
+  Friend: { color: "var(--info)" },
+  Mentor: { color: "var(--warn)" },
+  Colleague: { color: "#a06cc7" },
+  Rival: { color: "var(--danger)" },
+  Romantic: { color: "#e0708f" },
+};
