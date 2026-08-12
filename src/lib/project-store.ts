@@ -54,27 +54,32 @@ function getErrorSnapshot() {
 // Backend <-> frontend mapping
 // ---------------------------------------------------------------------
 
-/** Shape of a `books` row as returned by the backend (see its CLAUDE.md). */
+/**
+ * Shape of a `books` row exactly as Supabase/Postgres returns it — raw
+ * snake_case DB columns, NOT camelCase (`select("*")` in books.ts returns
+ * the row as-is; only request *bodies* use camelCase, mapped to snake_case
+ * server-side in `buildBookPayload`). See migration `013_books.sql`.
+ */
 type BookRow = {
   id: string;
-  userId: string;
+  user_id: string;
   title: string;
   tagline?: string | null;
-  description?: string | null;
   genre?: string | null;
   subgenres?: string[] | null;
   pov?: string | null;
   tense?: string | null;
-  targetWords?: number | null;
+  target_words?: number | null;
   status?: string | null;
-  coverUrl?: string | null;
-  createdAt: string;
-  updatedAt: string;
-  // Best-effort manuscript stats, present on GET /books/:id, not the list.
-  highestChapter?: number | null;
-  totalChapters?: number | null;
-  totalChunks?: number | null;
+  cover_url?: string | null;
+  created_at: string;
+  updated_at: string;
 };
+
+/** `GET /books?userId=` response envelope. */
+type BooksListResponse = { books: BookRow[] };
+/** `GET/POST/PATCH /books[/:id]` single-row response envelope. */
+type BookResponse = { book: BookRow };
 
 const VALID_STATUSES: ProjectStatus[] = ["active", "completed", "archived"];
 
@@ -107,11 +112,12 @@ function formatDate(iso: string): string {
 /**
  * Maps a backend `books` row onto the frontend's `Project` shape. Fields
  * with no backend equivalent yet (real word count, session/streak
- * tracking, chapter/activity detail beyond best-effort manuscript stats)
- * read honestly as `0`/absent rather than fabricated — the same principle
- * applied across the Dashboard's mock widgets. `chapters` is real once the
- * Manuscript domain is wired (server-computed `totalChapters`); until
- * then it's `0` for a book with no ingested manuscript content yet.
+ * tracking, chapter detail) read honestly as `0`/absent rather than
+ * fabricated — the same principle applied across the Dashboard's mock
+ * widgets. `chapters` stays `0` here — the list endpoint doesn't include
+ * the best-effort manuscript stats (`GET /books/:id` does, via a separate
+ * `get_book_facts` lookup) — real chapter counts arrive once the
+ * Manuscript domain is wired.
  */
 function mapBookToProject(book: BookRow, updatedRank: number): Project {
   const projStatus = VALID_STATUSES.includes(book.status as ProjectStatus)
@@ -121,16 +127,16 @@ function mapBookToProject(book: BookRow, updatedRank: number): Project {
     id: book.id,
     title: book.title,
     genre: [book.genre, ...(book.subgenres ?? [])].filter(Boolean).join(" · ") || "Fiction",
-    logline: book.tagline?.trim() || book.description?.trim().slice(0, 160) || "A new story, waiting to be written.",
+    logline: book.tagline?.trim() || "A new story, waiting to be written.",
     words: 0,
-    target: book.targetWords && book.targetWords > 0 ? Math.round(book.targetWords) : 50000,
-    chapters: book.totalChapters ?? 0,
+    target: book.target_words && book.target_words > 0 ? Math.round(book.target_words) : 50000,
+    chapters: 0,
     sessions: 0,
     daysActive: 0,
-    updated: formatRelative(book.updatedAt),
+    updated: formatRelative(book.updated_at),
     updatedRank,
     status: projStatus,
-    created: formatDate(book.createdAt),
+    created: formatDate(book.created_at),
     pov: book.pov ?? undefined,
     tense: book.tense ?? undefined,
     language: "English",
@@ -139,7 +145,7 @@ function mapBookToProject(book: BookRow, updatedRank: number): Project {
 
 function sortAndRank(books: BookRow[]): Project[] {
   const sorted = [...books].sort(
-    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
   );
   return sorted.map((book, i) => mapBookToProject(book, i + 1));
 }
@@ -155,8 +161,8 @@ async function loadProjects(): Promise<void> {
   error = null;
   emit();
   try {
-    const books = await apiFetch<BookRow[]>(`/books?userId=${encodeURIComponent(getUserId())}`);
-    projects = sortAndRank(books);
+    const res = await apiFetch<BooksListResponse>(`/books?userId=${encodeURIComponent(getUserId())}`);
+    projects = sortAndRank(res.books);
     status = "loaded";
   } catch (err) {
     status = "error";
@@ -220,7 +226,7 @@ export type NewProjectInput = {
  * should catch it and show the message rather than navigating away.
  */
 export async function createProject(input: NewProjectInput): Promise<string> {
-  const book = await apiFetch<BookRow>("/books", {
+  const res = await apiFetch<BookResponse>("/books", {
     method: "POST",
     body: JSON.stringify({
       userId: getUserId(),
@@ -237,11 +243,11 @@ export async function createProject(input: NewProjectInput): Promise<string> {
   // Optimistically fold the new book into the cache rather than
   // re-fetching the whole list — bump every existing project's rank so
   // the new one sorts first under "Recently Updated", same as before.
-  const newProject = mapBookToProject(book, 0);
+  const newProject = mapBookToProject(res.book, 0);
   projects = [newProject, ...projects.map((p) => ({ ...p, updatedRank: p.updatedRank + 1 }))];
   status = "loaded";
   emit();
-  return book.id;
+  return res.book.id;
 }
 
 /**
@@ -252,7 +258,7 @@ export async function createProject(input: NewProjectInput): Promise<string> {
 export async function updateProjectTarget(id: string, target: number): Promise<void> {
   if (!(target > 0)) return;
   const rounded = Math.round(target);
-  await apiFetch<BookRow>(`/books/${id}`, {
+  await apiFetch<BookResponse>(`/books/${id}`, {
     method: "PATCH",
     body: JSON.stringify({ targetWords: rounded }),
   });

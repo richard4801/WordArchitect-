@@ -276,37 +276,59 @@ network calls) — both call sites (`/projects/new`'s submit handler,
 `await` them and show a submitting/error state; every other page that only
 *reads* `useProjects()`/`useProject()` needed no changes.
 
+**Response shape — read the actual route source, not just the CLAUDE.md
+prose, before wiring the next domain.** The first version of this
+integration got both wrong and shipped a live bug (`Couldn't reach the
+server — (intermediate value) is not iterable` on the deployed site):
+assumed a bare `BookRow[]`/`BookRow` response and camelCase fields,
+because that's what the field *names* in the backend's own
+"Frontend Integration Reference" table implied. The real
+`src/routes/books.ts` wraps every response in an envelope
+(`{ books: BookRow[] }` from the list endpoint, `{ book: BookRow }` from
+get/create/patch) and returns **raw snake_case Postgres columns**
+(`user_id`, `target_words`, `cover_url`, `created_at`, `updated_at` — only
+request *bodies* are camelCase, mapped to snake_case server-side in each
+route's own `build*Payload` helper). Confirmed this same
+envelope-wrapping + snake_case-response pattern by reading `codex.ts`/
+`worldCategories.ts`/`notes.ts` directly before wiring those domains —
+don't repeat the mistake of trusting the summary table's field names as
+the literal response shape without reading the route handler's actual
+`res.json(...)` call.
+
 **Field mapping, `books` row → frontend `Project`** (`mapBookToProject` in
 `project-store.ts`): `id`/`title`/`pov`/`tense` map directly;
 `genre` is `[book.genre, ...book.subgenres].join(" · ")`; `logline` falls
-back `tagline` → truncated `description` → placeholder text, same as the
-old mock's own fallback chain; `target` defaults to `50000` if
-`targetWords` is unset; `updated`/`created` are formatted client-side from
-`updatedAt`/`createdAt`; `updatedRank` doesn't exist on the backend row —
-computed client-side by sorting the fetched list by `updatedAt` descending
-and assigning rank by index, same effect as the old mock field.
+back to `tagline`, then placeholder text (the backend `books` table has no
+`description` column, unlike the old mock's own fallback chain — dropped
+that branch); `target` defaults to `50000` if `target_words` is unset;
+`updated`/`created` are formatted client-side from `updated_at`/
+`created_at`; `updatedRank` doesn't exist on the backend row — computed
+client-side by sorting the fetched list by `updated_at` descending and
+assigning rank by index, same effect as the old mock field.
 
 **Fields that read honestly as zero/absent, not fabricated, because the
-backend has no resource for them yet:** `words`, `sessions`, `daysActive`
-are always `0`; `chapters` reads the backend's best-effort
-`totalChapters` (RAG-ingested chapter count) when available, `0`
-otherwise — not the same thing as "chapters authored in the rich editor,"
-which is what `chapters` meant in the old mock, and will need revisiting
-once Manuscript/Chapters is wired. `tags`, `povCharacters`, `worldEntries`,
-`chapterList`, `activityLog`, `deadline`, `language` (always `"English"`)
-have no backend column at all — `deriveRecentChapters`/
-`deriveRecentActivity` already handle their absence gracefully (same
-generic-fallback behavior as before), and `povCharacters`/`worldEntries`
-could become real live counts once Character/Worldbuilding are wired (a
-`GET /codex?bookId=` count scoped to this book), not attempted yet.
+backend has no resource for them yet:** `words`, `sessions`, `daysActive`,
+and `chapters` are always `0` — the list endpoint (`GET /books?userId=`)
+returns only the raw `books` row, none of the best-effort manuscript
+stats (`highestChapter`/`totalChapters`/`totalChunks`); those only exist
+on `GET /books/:id`, which nothing here calls yet (`useProject(id)` still
+just `.find()`s within the already-loaded list, same as the old mock).
+`tags`, `povCharacters`, `worldEntries`, `chapterList`, `activityLog`,
+`deadline`, `language` (always `"English"`) have no backend column at
+all — `deriveRecentChapters`/`deriveRecentActivity` already handle their
+absence gracefully (same generic-fallback behavior as before), and
+`povCharacters`/`worldEntries` could become real live counts once
+Character/Worldbuilding are wired (a `GET /codex?bookId=` count scoped to
+this book), not attempted yet.
 
 **Verified working** (against a local mock server matching the real
-API shape — this sandbox's network proxy can't reach the real
-`onrender.com` backend directly, so this was the closest available
-verification; confirm against the live backend once deployed): create a
-project through the real form, confirm it's the real backend's UUID
-(not a client-side slug) in the URL, confirm the project and an edited
-Target Words value both survive a hard page reload (real server
+API's exact envelope/snake-case shape, corrected after the bug above —
+this sandbox's network proxy can't reach the real `onrender.com` backend
+directly, so this was the closest available verification; still confirm
+against the live backend once deployed): create a project through the
+real form, confirm it's the real backend's UUID (not a client-side slug)
+in the URL, confirm the project and an edited Target Words value both
+survive a hard page reload (real server
 persistence, unlike the old mock's reset-on-refresh behavior), confirm
 Dashboard/`/projects` correctly show a loading state during the fetch
 and the real data once it resolves.
