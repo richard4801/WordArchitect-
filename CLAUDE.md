@@ -38,6 +38,17 @@ writer's side). Tagline: **"Write. Craft. Conquer."**
   swapping the store's internals for real `fetch` calls against an API
   should not require touching the UI components themselves, only the
   store files plus whatever loading/error states get added.
+- **Decision (backend integration, ongoing):** the Dashboard's MOCK-ONLY
+  widgets — Today's Progress, Weekly Stats' Words Written/Writing Time +
+  trend/sparkline, AI Insights, Recent Activity, Writing Goal, Continue
+  Writing's title/chapter/word-count — stay on `dashboard-data.ts` mock
+  data for now. They don't map onto Projects/Characters/Worldbuilding/
+  Notes; each would need its own new backend resource (writing-session
+  tracking, an activity log, real AI analysis, goal-tracking) that
+  doesn't exist yet. Wire them up in a later pass once the resources
+  they depend on exist, not as part of making Projects/Characters/etc.
+  real. See §4's Dashboard entry for the full LIVE-vs-MOCK-ONLY
+  breakdown, widget by widget.
 - **The oracle-face hero background is dashboard-only.** It does not appear on
   Projects or any other page — confirmed explicitly against the Projects
   mockup. See §4/§5 (`(app)/layout.tsx` gates `<PageBackground />` on
