@@ -124,6 +124,8 @@ export default function NewProjectPage() {
   const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const [titleError, setTitleError] = useState(false);
   const [genreError, setGenreError] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   function applyTemplate(id: TemplateId) {
@@ -139,25 +141,32 @@ export default function NewProjectPage() {
     setCoverPreview(url);
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     const titleOk = title.trim().length > 0;
     const genreOk = primaryGenre.trim().length > 0;
     setTitleError(!titleOk);
     setGenreError(!genreOk);
     if (!titleOk || !genreOk) return;
 
-    const id = createProject({
-      title,
-      tagline,
-      description,
-      genre: primaryGenre,
-      subgenres,
-      pov,
-      tense,
-      language,
-      targetWords: Number(targetWords),
-    });
-    router.push(`/projects/${id}`);
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      const id = await createProject({
+        title,
+        tagline,
+        description,
+        genre: primaryGenre,
+        subgenres,
+        pov,
+        tense,
+        language,
+        targetWords: Number(targetWords),
+      });
+      router.push(`/projects/${id}`);
+    } catch (err) {
+      setSubmitting(false);
+      setSubmitError(err instanceof Error ? err.message : "Couldn't create the project. Try again.");
+    }
   }
 
   return (
@@ -409,21 +418,27 @@ export default function NewProjectPage() {
             />
           </section>
 
-          <div className="flex items-center justify-end gap-3 pb-8">
-            <Link
-              href="/projects"
-              className="rounded-xl border border-line px-5 py-2.5 text-sm text-ink-muted transition-colors hover:text-ink"
-            >
-              Cancel
-            </Link>
-            <button
-              type="button"
-              onClick={handleSubmit}
-              className="inline-flex items-center gap-2 rounded-xl bg-gold px-5 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
-            >
-              Create Project
-              <ArrowRight className="size-4" />
-            </button>
+          <div className="flex flex-col items-end gap-3 pb-8">
+            {submitError && (
+              <p className="text-sm text-danger">{submitError}</p>
+            )}
+            <div className="flex items-center justify-end gap-3">
+              <Link
+                href="/projects"
+                className="rounded-xl border border-line px-5 py-2.5 text-sm text-ink-muted transition-colors hover:text-ink"
+              >
+                Cancel
+              </Link>
+              <button
+                type="button"
+                onClick={handleSubmit}
+                disabled={submitting}
+                className="inline-flex items-center gap-2 rounded-xl bg-gold px-5 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-60"
+              >
+                {submitting ? "Creating…" : "Create Project"}
+                {!submitting && <ArrowRight className="size-4" />}
+              </button>
+            </div>
           </div>
         </div>
 

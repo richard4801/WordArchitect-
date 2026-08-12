@@ -8,10 +8,15 @@ This edition is written specifically for backend handoff: for every
 page/feature it documents the exact data shape in use today (real
 TypeScript types, not paraphrases), where the mock data backing it lives,
 which fields are actually settable through a UI form today vs. only present
-in seed data, and any existing API-client/provider code. **Everything below
-is currently mock data held in module-level in-memory arrays — there is no
-database and no real backend integration yet.** That is precisely the gap
-this document exists to close.
+in seed data, and any existing API-client/provider code.
+
+**Backend integration is underway — see §3.5 for live status.** The real
+backend (`richard4801/WordArchitect-Backend-`) is deployed and Project is
+now wired to it for real; everything else below is still the mock
+in-memory-array pattern §3.5 also explains, pending its own turn in the
+same integration pass. Read §3.5 before touching any store — it has the
+current source of truth for what's real versus still mock, which will
+keep changing as more domains get wired.
 
 **The app has been purged (all 5 domains).** Every seed array described in
 §4 (`projects`, `CHARACTERS`, `WORLD_ENTRIES`/`WORLD_TIMELINE`/
@@ -219,6 +224,95 @@ persistence-gap note.
 
 ---
 
+## 3.5. Backend integration status
+
+The real backend is `richard4801/WordArchitect-Backend-` — see its own
+`CLAUDE.md` for the authoritative schema/endpoint reference (kept in sync
+with its code). Base URL: `https://wordarchitect-backend.onrender.com`,
+every route prefixed `/api/v1`. Render's free tier cold-starts after
+inactivity — the first request after a quiet period can take several
+seconds; every page consuming `useProjects()` (and, as each domain below
+gets wired, its equivalent) shows a "Loading…" state precisely so this
+isn't mistaken for a hang.
+
+**`src/lib/api-client.ts`** is the shared entry point every store's fetches
+should go through: `apiFetch<T>(path, init)` (base URL + JSON + error
+handling) and `getUserId()`. The backend has no real auth yet (its own
+documented, deliberate MVP tradeoff) — every write just needs *a*
+`userId`, so `getUserId()` generates one UUID per browser on first use and
+persists it to `localStorage`. This is a single stable pseudo-identity per
+browser install, not a real account system — matches the "no real auth
+yet, just persist data, single-user for now" decision made before backend
+integration started.
+
+Base URL is configurable via `NEXT_PUBLIC_API_BASE_URL` (see
+`.env.example`) — defaults to the hosted instance if unset, so no Vercel
+env var is required for the common case; only set it to point at a local
+backend during backend-side development.
+
+**Per-domain status:**
+
+| Domain | Status | Store |
+| --- | --- | --- |
+| Project | **Live** — `/books` | `project-store.ts` |
+| Character | Mock (next) | `character-store.ts` |
+| Worldbuilding | Mock (next) | `worldbuilding-store.ts` |
+| Notes | Mock (next) | `notes-store.ts` |
+| Manuscript/Chapters | Mock (last — biggest lift) | none yet |
+| Outliner | Mock, deferred | none yet (backend has no Outliner endpoints — confirmed low priority) |
+| Dashboard-only stats | Mock, deferred | `dashboard-data.ts` (no backend resource exists for these — see §4.7) |
+
+### Project (live)
+
+`project-store.ts` now fetches/writes real `books` rows instead of an
+in-memory array. Same public hook signatures as before
+(`useProjects()`/`useProject(id)` still return `Project[]`/`Project |
+undefined` synchronously from a live cache) plus two new hooks every page
+using `useProjects()` should pair it with: `useProjectsLoadStatus():
+"idle"|"loading"|"loaded"|"error"` and `useProjectsError(): string |
+null`. `createProject()`/`updateProjectTarget()` are now `async` (real
+network calls) — both call sites (`/projects/new`'s submit handler,
+`(tabs)/layout.tsx`'s inline-editable Target Words field) were updated to
+`await` them and show a submitting/error state; every other page that only
+*reads* `useProjects()`/`useProject()` needed no changes.
+
+**Field mapping, `books` row → frontend `Project`** (`mapBookToProject` in
+`project-store.ts`): `id`/`title`/`pov`/`tense` map directly;
+`genre` is `[book.genre, ...book.subgenres].join(" · ")`; `logline` falls
+back `tagline` → truncated `description` → placeholder text, same as the
+old mock's own fallback chain; `target` defaults to `50000` if
+`targetWords` is unset; `updated`/`created` are formatted client-side from
+`updatedAt`/`createdAt`; `updatedRank` doesn't exist on the backend row —
+computed client-side by sorting the fetched list by `updatedAt` descending
+and assigning rank by index, same effect as the old mock field.
+
+**Fields that read honestly as zero/absent, not fabricated, because the
+backend has no resource for them yet:** `words`, `sessions`, `daysActive`
+are always `0`; `chapters` reads the backend's best-effort
+`totalChapters` (RAG-ingested chapter count) when available, `0`
+otherwise — not the same thing as "chapters authored in the rich editor,"
+which is what `chapters` meant in the old mock, and will need revisiting
+once Manuscript/Chapters is wired. `tags`, `povCharacters`, `worldEntries`,
+`chapterList`, `activityLog`, `deadline`, `language` (always `"English"`)
+have no backend column at all — `deriveRecentChapters`/
+`deriveRecentActivity` already handle their absence gracefully (same
+generic-fallback behavior as before), and `povCharacters`/`worldEntries`
+could become real live counts once Character/Worldbuilding are wired (a
+`GET /codex?bookId=` count scoped to this book), not attempted yet.
+
+**Verified working** (against a local mock server matching the real
+API shape — this sandbox's network proxy can't reach the real
+`onrender.com` backend directly, so this was the closest available
+verification; confirm against the live backend once deployed): create a
+project through the real form, confirm it's the real backend's UUID
+(not a client-side slug) in the URL, confirm the project and an edited
+Target Words value both survive a hard page reload (real server
+persistence, unlike the old mock's reset-on-refresh behavior), confirm
+Dashboard/`/projects` correctly show a loading state during the fetch
+and the real data once it resolves.
+
+---
+
 ## 4. Entity reference
 
 For each entity: full type(s) as they exist in source, the seed-data file,
@@ -229,8 +323,15 @@ because they're baked into hand-written seed data with no UI to set them.
 
 ### 4.1 Project
 
-Source: `src/lib/projects-data.ts` (type + 12-item seed array), wrapped by
-`src/lib/project-store.ts`.
+**Live — backed by the real backend's `/books`, see §3.5 for the field
+mapping and integration notes.** Type still defined in
+`src/lib/projects-data.ts`; `src/lib/project-store.ts` now fetches/writes
+real data instead of wrapping seed data. The `NewProjectInput` shape below
+is unchanged (it's what the New Project form submits either way) — the
+EDITABLE-vs-SEED-ONLY framing that follows describes the *old* mock's
+limitation and no longer fully applies now that Project is live; see §3.5
+for which fields are real today versus still absent from the backend
+schema.
 
 ```ts
 export type ProjectStatus = "active" | "completed" | "archived";

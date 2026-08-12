@@ -232,10 +232,23 @@ function DetailsCard({ project }: { project: Project }) {
 function TargetWordsRow({ project }: { project: Project }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(String(project.target));
+  const [saving, setSaving] = useState(false);
 
-  function save() {
+  async function save() {
     const next = Number(draft);
-    if (next > 0) updateProjectTarget(project.id, next);
+    if (!(next > 0)) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateProjectTarget(project.id, next);
+    } catch {
+      // Optimistic cache is untouched on failure — the displayed value
+      // just reverts to project.target on the next render, no separate
+      // rollback needed.
+    }
+    setSaving(false);
     setEditing(false);
   }
 
@@ -260,7 +273,8 @@ function TargetWordsRow({ project }: { project: Project }) {
             type="button"
             aria-label="Save target words"
             onClick={save}
-            className="grid size-6 shrink-0 place-items-center rounded-md text-success transition-colors hover:bg-surface-2"
+            disabled={saving}
+            className="grid size-6 shrink-0 place-items-center rounded-md text-success transition-colors hover:bg-surface-2 disabled:opacity-50"
           >
             <Check className="size-3.5" />
           </button>

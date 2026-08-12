@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { useProjects } from "@/lib/project-store";
+import { useProjects, useProjectsLoadStatus } from "@/lib/project-store";
 
 /**
  * "Writing" as a nav destination has no page of its own — the real writing
@@ -15,6 +15,7 @@ import { useProjects } from "@/lib/project-store";
 export default function WritingPage() {
   const router = useRouter();
   const projects = useProjects();
+  const loadStatus = useProjectsLoadStatus();
   const mostRecent = projects.length
     ? projects.reduce((a, b) => (b.updatedRank < a.updatedRank ? b : a))
     : undefined;
@@ -22,6 +23,14 @@ export default function WritingPage() {
   useEffect(() => {
     if (mostRecent) router.replace(`/projects/${mostRecent.id}/chapters`);
   }, [mostRecent, router]);
+
+  if (loadStatus === "idle" || loadStatus === "loading") {
+    return (
+      <div className="grid h-[70vh] place-items-center text-center">
+        <p className="text-sm text-ink-muted">Loading your projects…</p>
+      </div>
+    );
+  }
 
   if (mostRecent) {
     return (

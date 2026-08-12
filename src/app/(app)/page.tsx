@@ -29,7 +29,7 @@ import { Progress } from "@/components/ui/progress";
 import { Ring } from "@/components/ui/ring";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { Sparkline } from "@/components/ui/sparkline";
-import { useProjects } from "@/lib/project-store";
+import { useProjects, useProjectsError, useProjectsLoadStatus } from "@/lib/project-store";
 import { deriveRecentChapters } from "@/lib/projects-data";
 import {
   activity,
@@ -58,7 +58,32 @@ export default function DashboardPage() {
  */
 function DashboardPageInner() {
   const projects = useProjects();
+  const loadStatus = useProjectsLoadStatus();
+  const loadError = useProjectsError();
   const forceNewUser = useSearchParams().get("newUser") === "1";
+
+  // Avoid flashing the New User onboarding screen while the real project
+  // list is still loading from the backend — wait for a result (or an
+  // error) before deciding which dashboard variant to show.
+  if (loadStatus === "idle" || loadStatus === "loading") {
+    return (
+      <div className="grid min-h-[60vh] place-items-center">
+        <p className="text-sm text-ink-muted">Loading your projects…</p>
+      </div>
+    );
+  }
+
+  if (loadStatus === "error") {
+    return (
+      <div className="grid min-h-[60vh] place-items-center text-center">
+        <div>
+          <p className="font-display text-xl text-ink">Couldn&rsquo;t reach the server</p>
+          <p className="mt-2 text-sm text-ink-muted">{loadError ?? "Something went wrong loading your projects."}</p>
+        </div>
+      </div>
+    );
+  }
+
   return projects.length === 0 || forceNewUser ? (
     <NewUserDashboard />
   ) : (

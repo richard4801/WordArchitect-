@@ -32,7 +32,7 @@ import {
   projectStatusCounts,
   topGenres,
 } from "@/lib/projects-data";
-import { useProjects } from "@/lib/project-store";
+import { useProjects, useProjectsError, useProjectsLoadStatus } from "@/lib/project-store";
 
 const PER_PAGE = 6;
 type StatusFilter = "all" | ProjectStatus;
@@ -47,6 +47,8 @@ const SORT_OPTIONS: { key: SortKey; label: string }[] = [
 
 export default function ProjectsPage() {
   const projects = useProjects();
+  const loadStatus = useProjectsLoadStatus();
+  const loadError = useProjectsError();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [genreFilter, setGenreFilter] = useState("all");
@@ -125,6 +127,15 @@ export default function ProjectsPage() {
           New Project
         </Link>
       </div>
+
+      {loadStatus === "loading" && (
+        <p className="text-sm text-ink-muted">Loading your projects…</p>
+      )}
+      {loadStatus === "error" && (
+        <p className="text-sm text-danger">
+          Couldn&rsquo;t reach the server{loadError ? `: ${loadError}` : "."}
+        </p>
+      )}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="relative flex-1">
