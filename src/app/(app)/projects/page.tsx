@@ -467,6 +467,9 @@ function TopGenresCard({ genres }: { genres: ReturnType<typeof topGenres> }) {
   return (
     <section className="card p-5">
       <h2 className="font-display text-lg text-ink">Your Top Genres</h2>
+      {genres.length === 0 && (
+        <p className="mt-3 text-sm text-ink-muted">Create a project to see your genre breakdown.</p>
+      )}
       <div className="mt-4 space-y-3">
         {genres.map((g) => (
           <div key={g.label}>
@@ -497,6 +500,11 @@ function AchievementsCard() {
   return (
     <section className="card p-5">
       <h2 className="font-display text-lg text-ink">Recent Achievements</h2>
+      {achievements.length === 0 && (
+        <p className="mt-3 text-sm text-ink-muted">
+          No achievements yet — they&rsquo;ll appear here as you write.
+        </p>
+      )}
       <ul className="mt-3 divide-y divide-line">
         {achievements.map((a) => {
           const Icon = ACHIEVEMENT_ICON[a.icon] ?? Trophy;

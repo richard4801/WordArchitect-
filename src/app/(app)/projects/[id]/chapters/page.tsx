@@ -91,11 +91,8 @@ export default function ChaptersPage() {
   const [focusMode, setFocusMode] = useState<FocusModeKind | null>(null);
   const [showFocusPicker, setShowFocusPicker] = useState(false);
   const [panelTab, setPanelTab] = useState<PanelTab>("Comments");
-  // The mockup's own numbers (4,580 words / 26,789 characters) — the demo
-  // chapter's actual prose is much shorter, but this reads as "the whole
-  // manuscript so far," not just what's visible in this one editable div,
-  // so live edits adjust from that baseline rather than replacing it.
-  const [stats, setStats] = useState({ words: 4580, characters: 26789 });
+  const [stats, setStats] = useState({ words: 0, characters: 0 });
+  const [zoomPercent, setZoomPercent] = useState(100);
 
   const editableRef = useRef<HTMLDivElement>(null);
   const savedRangeRef = useRef<Range | null>(null);
@@ -164,6 +161,31 @@ export default function ChaptersPage() {
     return findChapter(manuscript, "ch-18") ?? manuscript[0]?.chapters[0];
   }, [manuscript, selectedChapterId]);
 
+  const body = useMemo(() => {
+    if (!project || !activeChapter) return null;
+    return getChapterBody(project.id, activeChapter);
+  }, [project, activeChapter]);
+
+  const bodyBaseline = useMemo(() => {
+    if (!body) return { words: 0, characters: 0 };
+    const text = body.paragraphs
+      .filter((p) => !p.break)
+      .map((p) => p.text)
+      .join(" ");
+    return countText(text);
+  }, [body]);
+
+  // Reset the displayed `stats` whenever the open chapter changes — React's
+  // sanctioned "adjust state during render" pattern (not an effect: setting
+  // state here is intentional and synchronous with this render, not a
+  // cascading update triggered after the fact) — see
+  // https://react.dev/learn/you-might-not-need-an-effect.
+  const [statsBody, setStatsBody] = useState(body);
+  if (body !== statsBody) {
+    setStatsBody(body);
+    setStats(bodyBaseline);
+  }
+
   if (!project) {
     return (
       <div className="grid h-dvh place-items-center text-center">
@@ -177,15 +199,13 @@ export default function ChaptersPage() {
     );
   }
 
-  if (!activeChapter) {
+  if (!activeChapter || !body) {
     return (
       <div className="grid h-dvh place-items-center text-center">
         <p className="text-sm text-ink-muted">This project doesn&rsquo;t have any chapters yet.</p>
       </div>
     );
   }
-
-  const body = getChapterBody(project.id, activeChapter);
 
   // Normal and Typewriter both hide the side panels but keep the toolbar
   // and status bar; Zen and Typewriter × Zen strip those too, leaving just
@@ -228,10 +248,14 @@ export default function ChaptersPage() {
           editableRef={editableRef}
           onSelect={saveSelection}
           onStatsChange={(deltaWords, deltaCharacters) =>
-            setStats({ words: 4580 + deltaWords, characters: 26789 + deltaCharacters })
+            setStats({
+              words: bodyBaseline.words + deltaWords,
+              characters: bodyBaseline.characters + deltaCharacters,
+            })
           }
           typewriter={typewriter}
           centered={hideChrome}
+          zoomPercent={zoomPercent}
         />
         {!hideChrome && (
           <StatusBar
@@ -240,6 +264,8 @@ export default function ChaptersPage() {
             focusMode={focusMode}
             onOpenPicker={() => setShowFocusPicker(true)}
             onExitFocusMode={exitFocusMode}
+            zoomPercent={zoomPercent}
+            onZoomChange={setZoomPercent}
           />
         )}
 
@@ -432,7 +458,9 @@ function ManuscriptPanel({
         .filter((part) => part.chapters.length > 0)
     : manuscript;
 
-  const dailyGoal = { current: 1125, target: 1500, streak: 12 };
+  // No real writing-session tracking exists yet (see CLAUDE.md §4.5/§4.7),
+  // so this reads honestly as zero rather than a fabricated number.
+  const dailyGoal = { current: 0, target: 1500, streak: 0 };
   const percent = Math.round((dailyGoal.current / dailyGoal.target) * 100);
 
   return (
@@ -1099,6 +1127,7 @@ function EditorBody({
   onStatsChange,
   typewriter = false,
   centered = false,
+  zoomPercent = 100,
 }: {
   body: { heading: string; title: string; paragraphs: ChapterParagraph[] };
   editableRef: React.RefObject<HTMLDivElement | null>;
@@ -1106,6 +1135,7 @@ function EditorBody({
   onStatsChange: (deltaWords: number, deltaCharacters: number) => void;
   typewriter?: boolean;
   centered?: boolean;
+  zoomPercent?: number;
 }) {
   const baseline = useRef({ words: 0, characters: 0 });
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1223,7 +1253,8 @@ function EditorBody({
           onInput={handleInput}
           onMouseUp={handleSelect}
           onKeyUp={handleSelect}
-          className="mt-8 font-display text-[17px] leading-[1.85] text-ink/90 focus:outline-none [&_p]:mb-5"
+          style={{ fontSize: `${(17 * zoomPercent) / 100}px` }}
+          className="mt-8 font-display leading-[1.85] text-ink/90 focus:outline-none [&_p]:mb-5"
         >
           {body.paragraphs.map((p) => (
             <EditorParagraph key={p.id} paragraph={p} />
@@ -1286,10 +1317,14 @@ function StatusBar({
   focusMode,
   onOpenPicker,
   onExitFocusMode,
+  zoomPercent,
+  onZoomChange,
 }: {
   words: number;
   characters: number;
   focusMode: FocusModeKind | null;
+  zoomPercent: number;
+  onZoomChange: (fn: (z: number) => number) => void;
   onOpenPicker: () => void;
   onExitFocusMode: () => void;
 }) {
@@ -1328,11 +1363,21 @@ function StatusBar({
         </label>
 
         <div className="hidden shrink-0 items-center gap-2 @[380px]:flex">
-          <button type="button" aria-label="Zoom out" className="text-ink-muted hover:text-ink">
+          <button
+            type="button"
+            aria-label="Zoom out"
+            onClick={() => onZoomChange((z) => Math.max(50, z - 10))}
+            className="text-ink-muted hover:text-ink"
+          >
             <Minus className="size-3.5" />
           </button>
-          <span className="w-9 text-center">120%</span>
-          <button type="button" aria-label="Zoom in" className="text-ink-muted hover:text-ink">
+          <span className="w-9 text-center">{zoomPercent}%</span>
+          <button
+            type="button"
+            aria-label="Zoom in"
+            onClick={() => onZoomChange((z) => Math.min(200, z + 10))}
+            className="text-ink-muted hover:text-ink"
+          >
             <Plus className="size-3.5" />
           </button>
         </div>

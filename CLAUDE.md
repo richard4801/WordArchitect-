@@ -80,6 +80,58 @@ more problems surfaced after the first fix:
    this data has a real backend resource yet (see §4.7) — it now reads as
    an honest empty state instead of a populated demo.
 
+**Third post-purge pass — full-app audit for crashes and fabricated data
+on a genuinely empty project** (every seed array at `[]`, which the first
+two passes hadn't fully exercised). Found and fixed:
+
+- **Crash: Characters workspace on a project with zero characters.**
+  `src/app/(app)/projects/[id]/characters/page.tsx` initialized
+  `selectedId` from `characters[0].id` — threw immediately once
+  `CHARACTERS` could actually be empty. Fixed to `characters[0]?.id ??
+  null`, and the right-hand detail pane now shows a proper "No characters
+  yet" + New Character CTA instead of rendering nothing next to the list.
+- **Crash: Outliner's "Add Beat" on a project with zero acts.**
+  `src/app/(app)/projects/[id]/outlines/page.tsx` called `addBeat(acts[0].id)`
+  — threw once `THREE_ACT_STRUCTURE` was purged to `[]`. Fixed at the
+  source: `outline-data.ts` keeps the three Act *containers* (Act I/II/III
+  — structural scaffolding every beat needs a home in) even though all
+  purging removed their beats. Acts are structure, not seed content — same
+  distinction already applied to Worldbuilding's fixed 8-category taxonomy,
+  which was correctly left untouched by the original purge.
+- **Fabricated stats, found beyond the Dashboard:** the Outliner's "Outline
+  Progress" ring was hardcoded `76%` / `38 of 50 beats` regardless of
+  actual beat count — now computed live from `allBeats.length` and each
+  beat's real `status`. The manuscript editor's side-panel "Daily Goal"
+  widget was hardcoded `1,125 / 1,500 words, 12-day streak` — zeroed
+  honestly (no session-tracking backend exists yet, same as Dashboard's
+  Today's Progress). The manuscript editor's own word/character count in
+  the status bar was seeded from a fixed fake baseline (4,580 words /
+  26,789 characters) that live edits added deltas onto, regardless of the
+  chapter's actual content — now computed for real from the open chapter's
+  actual body text (`bodyBaseline` in `chapters/page.tsx`), so a brand-new
+  placeholder chapter correctly shows a small real count instead of a
+  fictional "whole manuscript so far" number.
+- **Missing empty states:** `AchievementsCard` and `TopGenresCard` on
+  `/projects` iterated `achievements`/`topGenres()` with no fallback —
+  harmless once those arrays could be empty (just rendered nothing) but
+  inconsistent with every other list on the purged app; both now show a
+  proper empty-state message.
+- **Non-functional zoom control, now real:** the manuscript editor's
+  toolbar zoom control was a static "120%" label with no-op Minus/Plus
+  buttons. Wired to an actual `zoomPercent` state that scales the editor's
+  font size (50–200%, ±10 per click) — this was a "doesn't actually work"
+  UX gap independent of the purge, caught in the same sweep.
+- **Known gap, deliberately not patched locally:** the manuscript editor's
+  "Add chapter" button (`ManuscriptPanel`, the `+` icon next to the search
+  icon) has no handler — a brand-new project (`chapters: 0`) has no way to
+  ever get a first chapter today, so its Writing workspace is permanently
+  stuck on "This project doesn't have any chapters yet." This is real and
+  worth knowing, but it wasn't given a throwaway local mock-store fix here:
+  chapter creation is about to be wired directly to the real backend's
+  `POST /manuscript/chapters` (see the backend integration section once
+  added), and building disposable local state for it first would just be
+  redone immediately after.
+
 ---
 
 ## 1. What this is

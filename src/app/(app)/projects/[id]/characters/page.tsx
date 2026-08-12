@@ -56,7 +56,7 @@ function CharactersPageInner() {
   const preselect = useSearchParams().get("c");
   const [tab, setTab] = useState<FilterTab>("All Characters");
   const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState(preselect ?? characters[0].id);
+  const [selectedId, setSelectedId] = useState<string | null>(preselect ?? characters[0]?.id ?? null);
   const [profileTab, setProfileTab] = useState<ProfileTab>("Profile");
 
   if (!project) {
@@ -171,13 +171,26 @@ function CharactersPageInner() {
             </Link>
           </div>
 
-          {selected && (
+          {selected ? (
             <CharacterDetail
               character={selected}
               tab={profileTab}
               setTab={setProfileTab}
               onSelectRelated={selectCharacter}
             />
+          ) : (
+            <div className="grid place-items-center rounded-xl border border-dashed border-line-strong text-center">
+              <div className="p-8">
+                <p className="text-sm text-ink-muted">No characters yet.</p>
+                <Link
+                  href={`/projects/${project.id}/characters/new`}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-gold px-4 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
+                >
+                  <Plus className="size-4" />
+                  New Character
+                </Link>
+              </div>
+            </div>
           )}
         </div>
       </div>

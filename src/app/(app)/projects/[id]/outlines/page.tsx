@@ -264,6 +264,7 @@ export default function OutlinerPage() {
           acts={acts}
           columns={columns}
           allBeatsCount={allBeats.length}
+          completedBeatsCount={allBeats.filter((b) => b.status === "completed").length}
           view={view}
           setView={setView}
           groupBy={groupBy}
@@ -485,6 +486,7 @@ function OutlineNavSidebar({
 function BoardArea({
   columns,
   allBeatsCount,
+  completedBeatsCount,
   view,
   setView,
   groupBy,
@@ -510,6 +512,7 @@ function BoardArea({
   acts: Act[];
   columns: Column[];
   allBeatsCount: number;
+  completedBeatsCount: number;
   view: ViewMode;
   setView: (v: ViewMode) => void;
   groupBy: "Acts" | "Status";
@@ -575,13 +578,13 @@ function BoardArea({
             </p>
           </div>
           <Ring
-            value={76}
-            label="76%"
+            value={allBeatsCount > 0 ? Math.round((completedBeatsCount / allBeatsCount) * 100) : 0}
+            label={`${allBeatsCount > 0 ? Math.round((completedBeatsCount / allBeatsCount) * 100) : 0}%`}
             sublabel={
               <span className="text-xs leading-snug text-ink-faint">
                 Outline Progress
                 <br />
-                38 of 50 beats
+                {completedBeatsCount} of {allBeatsCount} beats
               </span>
             }
             size={124}

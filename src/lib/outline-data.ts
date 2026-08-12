@@ -40,7 +40,16 @@ export type Act = {
   beats: Beat[];
 };
 
-export const THREE_ACT_STRUCTURE: Act[] = [];
+// The three act containers are structural scaffolding for the board (every
+// beat has to live under an act), not seed content — so unlike every beat
+// that used to fill them, they stay in place with zero beats rather than
+// being purged to an empty array, which would leave the Outliner with
+// nowhere to add a first beat to.
+export const THREE_ACT_STRUCTURE: Act[] = [
+  { id: "act-1", label: "Act I – Setup", shortLabel: "Act I", color: "green", beats: [] },
+  { id: "act-2", label: "Act II – Confrontation", shortLabel: "Act II", color: "purple", beats: [] },
+  { id: "act-3", label: "Act III – Resolution", shortLabel: "Act III", color: "blue", beats: [] },
+];
 
 export function allBeats(): Beat[] {
   return THREE_ACT_STRUCTURE.flatMap((act) => act.beats);
