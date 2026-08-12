@@ -20,10 +20,10 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { CharacterPortrait } from "@/components/ui/character-portrait";
-import { characterCounts, type Character, type LifeEventType, findCharacter } from "@/lib/character-data";
-import { useCharacters } from "@/lib/character-store";
+import { characterCounts, type Character, type LifeEventType } from "@/lib/character-data";
+import { useCharacterRelationships, useCharacters } from "@/lib/character-store";
 import { useProject } from "@/lib/project-store";
-import { BOND_META, CharactersTopBar, ROLE_META } from "./_shared";
+import { BOND_META, CharactersTopBar, DEFAULT_BOND_COLOR, ROLE_META } from "./_shared";
 
 /**
  * The Characters workspace's default landing page — a list+detail split
@@ -52,12 +52,21 @@ export default function CharactersPage() {
 function CharactersPageInner() {
   const { id } = useParams<{ id: string }>();
   const project = useProject(id);
-  const characters = useCharacters();
+  const characters = useCharacters(id);
   const preselect = useSearchParams().get("c");
   const [tab, setTab] = useState<FilterTab>("All Characters");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(preselect ?? characters[0]?.id ?? null);
   const [profileTab, setProfileTab] = useState<ProfileTab>("Profile");
+
+  const filtered = characters.filter((c) => {
+    if (tab !== "All Characters" && c.role !== tab) return false;
+    if (query && !c.name.toLowerCase().includes(query.toLowerCase())) return false;
+    return true;
+  });
+  const selectedBase = characters.find((c) => c.id === selectedId) ?? filtered[0];
+  // Must run before any early return — Rules of Hooks.
+  const selectedRelationships = useCharacterRelationships(selectedBase?.id);
 
   if (!project) {
     return (
@@ -81,12 +90,7 @@ function CharactersPageInner() {
     Minor: counts.minor,
   };
 
-  const filtered = characters.filter((c) => {
-    if (tab !== "All Characters" && c.role !== tab) return false;
-    if (query && !c.name.toLowerCase().includes(query.toLowerCase())) return false;
-    return true;
-  });
-  const selected = characters.find((c) => c.id === selectedId) ?? filtered[0];
+  const selected = selectedBase ? { ...selectedBase, relationships: selectedRelationships } : undefined;
 
   function selectCharacter(charId: string) {
     setSelectedId(charId);
@@ -174,6 +178,7 @@ function CharactersPageInner() {
           {selected ? (
             <CharacterDetail
               character={selected}
+              allCharacters={characters}
               tab={profileTab}
               setTab={setProfileTab}
               onSelectRelated={selectCharacter}
@@ -230,11 +235,13 @@ function CharacterRow({
 
 function CharacterDetail({
   character,
+  allCharacters,
   tab,
   setTab,
   onSelectRelated,
 }: {
   character: Character;
+  allCharacters: Character[];
   tab: ProfileTab;
   setTab: (t: ProfileTab) => void;
   onSelectRelated: (id: string) => void;
@@ -320,14 +327,22 @@ function CharacterDetail({
         </div>
 
         {isProfile ? (
-          <ProfileTabContent character={character} onViewAllRelationships={() => setTab("Relationships")} />
+          <ProfileTabContent
+            character={character}
+            allCharacters={allCharacters}
+            onViewAllRelationships={() => setTab("Relationships")}
+          />
         ) : (
           <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_260px]">
             <div className="min-w-0">
               {tab === "Background" && <BackgroundTabContent character={character} />}
               {tab === "Personality" && <PersonalityTabContent character={character} />}
               {tab === "Relationships" && (
-                <RelationshipsGraph character={character} onSelectRelated={onSelectRelated} />
+                <RelationshipsGraph
+                  character={character}
+                  allCharacters={allCharacters}
+                  onSelectRelated={onSelectRelated}
+                />
               )}
               {tab === "Notes" && <NotesTabContent character={character} />}
               {tab === "Timeline" && <TimelineTabContent character={character} />}
@@ -372,9 +387,11 @@ function DetailField({ label, value }: { label: string; value: string }) {
 
 function ProfileTabContent({
   character,
+  allCharacters,
   onViewAllRelationships,
 }: {
   character: Character;
+  allCharacters: Character[];
   onViewAllRelationships: () => void;
 }) {
   return (
@@ -452,19 +469,25 @@ function ProfileTabContent({
               <ChevronLeft className="size-3.5 rotate-180" />
             </button>
           </div>
-          <RelationshipPreviewList character={character} />
+          <RelationshipPreviewList character={character} allCharacters={allCharacters} />
         </section>
       )}
     </div>
   );
 }
 
-function RelationshipPreviewList({ character }: { character: Character }) {
+function RelationshipPreviewList({
+  character,
+  allCharacters,
+}: {
+  character: Character;
+  allCharacters: Character[];
+}) {
   return (
     <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
       {character.relationships.slice(0, 4).map((r) => {
-        const other = findCharacter(r.characterId);
-        const bond = BOND_META[r.bond];
+        const other = allCharacters.find((c) => c.id === r.characterId);
+        const bond = BOND_META[r.bond] ?? { color: DEFAULT_BOND_COLOR };
         return (
           <div key={r.characterId} className="flex items-center gap-2.5 rounded-lg border border-line px-3 py-2">
             <span className="size-8 shrink-0 overflow-hidden rounded-full border border-line-strong">
@@ -681,9 +704,11 @@ const LIFE_EVENT_META: Record<LifeEventType, { Icon: typeof Crown; label: string
 
 function RelationshipsGraph({
   character,
+  allCharacters,
   onSelectRelated,
 }: {
   character: Character;
+  allCharacters: Character[];
   onSelectRelated: (id: string) => void;
 }) {
   if (character.relationships.length === 0) return <EmptyTab label="relationships" />;
@@ -702,7 +727,7 @@ function RelationshipsGraph({
           <svg viewBox="0 0 100 100" className="absolute inset-0 size-full overflow-visible">
             {rels.map((r, i) => {
               const p = positions[i];
-              const bond = BOND_META[r.bond];
+              const bond = BOND_META[r.bond] ?? { color: DEFAULT_BOND_COLOR };
               const dotX = 50 + (p.x - 50) * 0.72;
               const dotY = 50 + (p.y - 50) * 0.72;
               return (
@@ -727,8 +752,8 @@ function RelationshipsGraph({
 
           {rels.map((r, i) => {
             const p = positions[i];
-            const other = findCharacter(r.characterId);
-            const bond = BOND_META[r.bond];
+            const other = allCharacters.find((c) => c.id === r.characterId);
+            const bond = BOND_META[r.bond] ?? { color: DEFAULT_BOND_COLOR };
             return (
               <button
                 key={r.characterId}

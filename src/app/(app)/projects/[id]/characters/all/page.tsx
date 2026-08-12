@@ -40,7 +40,7 @@ const PAGE_SIZE = 24;
 export default function AllCharactersPage() {
   const { id } = useParams<{ id: string }>();
   const project = useProject(id);
-  const characters = useCharacters();
+  const characters = useCharacters(id);
   const [tab, setTab] = useState<Tab>("All");
   const [query, setQuery] = useState("");
   const [view, setView] = useState<"grid" | "compact">("grid");

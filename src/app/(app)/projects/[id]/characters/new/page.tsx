@@ -103,6 +103,8 @@ export default function NewCharacterPage() {
   const [createAnother, setCreateAnother] = useState(false);
   const [nameError, setNameError] = useState(false);
   const [roleError, setRoleError] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   function addTrait() {
     const t = traitDraft.trim();
@@ -147,37 +149,45 @@ export default function NewCharacterPage() {
     setTab("Overview");
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     const nameOk = fullName.trim().length > 0;
     const roleOk = role !== "";
     setNameError(!nameOk);
     setRoleError(!roleOk);
     if (!nameOk || !roleOk || !project) return;
 
-    const newId = createCharacter({
-      name: fullName,
-      nickname: nickname || undefined,
-      role: role as CharacterRole,
-      age: age ? Number(age) : undefined,
-      gender: gender || undefined,
-      occupation: occupation || undefined,
-      status: status || undefined,
-      alignment: alignment || undefined,
-      archetype: archetype || undefined,
-      povCharacter,
-      motivation: motivation || undefined,
-      goal: goal || undefined,
-      fear: fear || undefined,
-      secret: secret || undefined,
-      quickTraits: traits,
-      summary: summary || undefined,
-    });
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      const newId = await createCharacter(project.id, {
+        name: fullName,
+        nickname: nickname || undefined,
+        role: role as CharacterRole,
+        age: age ? Number(age) : undefined,
+        gender: gender || undefined,
+        occupation: occupation || undefined,
+        status: status || undefined,
+        alignment: alignment || undefined,
+        archetype: archetype || undefined,
+        povCharacter,
+        motivation: motivation || undefined,
+        goal: goal || undefined,
+        fear: fear || undefined,
+        secret: secret || undefined,
+        quickTraits: traits,
+        summary: summary || undefined,
+      });
 
-    if (createAnother) {
-      resetForm();
-      return;
+      if (createAnother) {
+        setSubmitting(false);
+        resetForm();
+        return;
+      }
+      router.push(`/projects/${project.id}/characters?c=${newId}`);
+    } catch (err) {
+      setSubmitting(false);
+      setSubmitError(err instanceof Error ? err.message : "Couldn't create the character. Try again.");
     }
-    router.push(`/projects/${project.id}/characters?c=${newId}`);
   }
 
   if (!project) {
@@ -568,6 +578,7 @@ export default function NewCharacterPage() {
             Cancel
           </button>
           <div className="flex flex-wrap items-center gap-3">
+            {submitError && <p className="text-sm text-danger">{submitError}</p>}
             <label className="flex items-center gap-2 text-sm text-ink-muted">
               <input
                 type="checkbox"
@@ -587,10 +598,11 @@ export default function NewCharacterPage() {
             <button
               type="button"
               onClick={handleSubmit}
-              className="flex items-center gap-1.5 rounded-xl bg-gold px-5 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
+              disabled={submitting}
+              className="flex items-center gap-1.5 rounded-xl bg-gold px-5 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-60"
             >
               <Sparkles className="size-3.5" />
-              Create Character
+              {submitting ? "Creating…" : "Create Character"}
             </button>
           </div>
         </div>

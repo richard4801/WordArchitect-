@@ -3,7 +3,7 @@
 import { Bell, ChevronLeft, ChevronRight, Crown, Search, Users } from "lucide-react";
 import Link from "next/link";
 import { ThemeToggle } from "@/components/theme-toggle";
-import type { CharacterRole, RelationshipBond } from "@/lib/character-data";
+import type { CharacterRole } from "@/lib/character-data";
 import type { Project } from "@/lib/projects-data";
 
 /**
@@ -90,8 +90,14 @@ export function RoleBadge({ role }: { role: CharacterRole }) {
   );
 }
 
-/** Matches resources/Character tabs.png's "Relationship Key" legend, sampled from the mockup art. */
-export const BOND_META: Record<RelationshipBond, { color: string }> = {
+/**
+ * Matches resources/Character tabs.png's "Relationship Key" legend, sampled
+ * from the mockup art. `bond_type` on the real backend is freeform text, so
+ * this only covers the mockup's 7 named bonds — any other bond string falls
+ * back to `DEFAULT_BOND_COLOR` at each call site rather than crashing on an
+ * unmapped key.
+ */
+export const BOND_META: Record<string, { color: string }> = {
   Family: { color: "#9db38a" },
   Ally: { color: "var(--success)" },
   Friend: { color: "var(--info)" },
@@ -100,3 +106,5 @@ export const BOND_META: Record<RelationshipBond, { color: string }> = {
   Rival: { color: "var(--danger)" },
   Romantic: { color: "#e0708f" },
 };
+
+export const DEFAULT_BOND_COLOR = "var(--ink-faint)";

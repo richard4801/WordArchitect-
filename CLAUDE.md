@@ -255,7 +255,7 @@ backend during backend-side development.
 | Domain | Status | Store |
 | --- | --- | --- |
 | Project | **Live** — `/books` | `project-store.ts` |
-| Character | Mock (next) | `character-store.ts` |
+| Character | **Live** — `/codex` (`entryType: "character"`) | `character-store.ts` |
 | Worldbuilding | Mock (next) | `worldbuilding-store.ts` |
 | Notes | Mock (next) | `notes-store.ts` |
 | Manuscript/Chapters | Mock (last — biggest lift) | none yet |
@@ -332,6 +332,87 @@ survive a hard page reload (real server
 persistence, unlike the old mock's reset-on-refresh behavior), confirm
 Dashboard/`/projects` correctly show a loading state during the fetch
 and the real data once it resolves.
+
+### Character (live)
+
+`character-store.ts` now fetches/writes real `codex_entries` rows
+(`entry_type: "character"`) instead of an in-memory array — second
+domain wired, per the suggested order. **Signature change, not
+optional:** `useCharacters()` used to take no arguments at all, which was
+a real limitation of the old mock (every project showed the exact same
+flat roster) rather than a deliberate design choice — real Codex data is
+scoped by `bookId`, so it's now `useCharacters(bookId)`. Both call sites
+(`characters/page.tsx`, `characters/all/page.tsx`) updated to pass the
+route's project id. Two new hooks, `useCharactersLoadStatus()` /
+`useCharactersError()`, follow the same pattern as Projects'.
+`createCharacter()` is now `async` and takes `bookId` as its first
+argument; `characters/new/page.tsx`'s submit handler awaits it with a
+submitting/error state, same as `/projects/new`.
+
+**Field mapping** (`mapEntryToCharacter` in `character-store.ts`) — nearly
+every `Character` field now has a real column, thanks to the backend's
+`014_character_expansion.sql` migration closing exactly the gap this
+repo's own CLAUDE.md flagged as the biggest one. Two real shape
+mismatches worth knowing about:
+- **`role` ↔ `tier`**: frontend's `CharacterRole` is capitalized
+  (`"Main"`), the backend's `tier` is lowercase (`"main"`) — mapped both
+  ways via `TIER_TO_ROLE`/`ROLE_TO_TIER` lookup tables.
+- **`arc` ↔ `character_arc`**: the frontend's `CharacterArc` is a single
+  object with four fixed keys (`beginning`/`middle`/`climax`/`end` — see
+  `ArcTimeline` in `characters/page.tsx`); the backend stores a flexible
+  array of `{ stage, description }` (any stage names, any count — see
+  `CharacterArcStage` in the backend's `types/domain.ts`). `mapArc()`
+  matches by stage name case-insensitively and falls back to `undefined`
+  (same as "no arc set," so the tab shows its empty state) if nothing
+  matches, rather than showing a timeline with blank entries. No creation
+  UI writes `arc` today either way, so this only matters for reading
+  arcs added via some other path (the MCP/Claude tool surface, most
+  likely) — not exercised by anything in this repo yet.
+
+**`age` is a real type mismatch, handled by conversion, not by matching
+types:** frontend `Character.age` is `number`; backend `codex_entries.age`
+is `VARCHAR(20)` (a string) — this was a deliberate backend choice, not
+an oversight (an age doesn't have to be a clean integer forever — "Ageless,"
+"~200," etc. are legitimate values a VARCHAR can hold that a NUMERIC
+column can't). Mapped with `Number(row.age)` (falling back to `0` if
+non-numeric) on read, `String(input.age)` on write.
+
+**Relationships are a separate table/endpoint, not bundled into the list
+fetch:** `codex_relationships` has its own CRUD (`GET/POST /codex/:id/
+relationships`), so pulling every character's relationships into the bulk
+`GET /codex?bookId=` list would mean N+1 requests for a list view that
+doesn't even show them. Instead, `useCharacterRelationships(entryId)` is a
+separate lazy hook that fetches only when a specific character is actually
+open, and `characters/page.tsx` merges its result into the selected
+character's `relationships` field right before passing it to
+`CharacterDetail` — every other character in the list/grid keeps
+`relationships: []` from the bulk mapping. `bond_type` on the backend is
+freeform text (no CHECK constraint, unlike `strength`), so
+`RelationshipBond` was relaxed from a fixed 7-value union to `string` —
+`BOND_META` (the mockup's 7-bond color legend in `characters/_shared.tsx`)
+now falls back to `DEFAULT_BOND_COLOR` for any bond text outside that set,
+at every call site, rather than assuming every real bond will be one of
+the mockup's original seven.
+
+**Also found and fixed in the same pass — two real crash risks, unrelated
+to this integration but caught while working in this file:** `findCharacter()`
+(a lookup against the old static, now-empty `CHARACTERS` seed export) was
+still being used to resolve "the other character in a relationship" —
+always returning `undefined` against real backend data. Replaced with
+lookups against the live, already-fetched character list, threaded down
+as an `allCharacters` prop through `CharacterDetail` → `ProfileTabContent`
+/ `RelationshipsGraph` → `RelationshipPreviewList`. Separately,
+`useCharacterRelationships` has to be called before any early return in
+`CharactersPageInner` (Rules of Hooks) — its dependency (`selectedBase`)
+was reshuffled above the `if (!project)` guard to make that legal.
+
+**Verified working** (same local-mock-server approach as Projects, for
+the same reason — this sandbox can't reach the real backend directly):
+create a project, create a character through the real form, confirm the
+character list shows a correct empty state before creation and the real
+character after, confirm the Relationships tab doesn't crash on a
+character with zero relationships, and confirm the character survives a
+hard reload (real persistence).
 
 ---
 
@@ -442,18 +523,29 @@ they're computed from.
 
 ### 4.2 Character
 
-Source: `src/lib/character-data.ts` (types + 16-item seed roster), wrapped
-by `src/lib/character-store.ts`.
+**Live — backed by the real backend's `/codex` (`entryType: "character"`),
+see §3.5 for the field mapping and integration notes.** Type still
+defined in `src/lib/character-data.ts`; `src/lib/character-store.ts` now
+fetches/writes real data instead of wrapping seed data.
+`NewCharacterInput` below is unchanged (still what the New Character form
+submits) — the EDITABLE-vs-SEED-ONLY framing that follows describes the
+*old* mock's limitation and no longer fully applies now that nearly every
+field has a real backend column; see §3.5 for exactly which two fields
+(`role`/`arc`) need shape conversion and which one (`age`) is a real
+type mismatch (`number` on the frontend, `VARCHAR` on the backend).
 
 ```ts
 export type CharacterRole = "Main" | "Supporting" | "Minor" | "Extra";
-export type RelationshipBond = "Family" | "Ally" | "Friend" | "Mentor" | "Colleague" | "Rival" | "Romantic";
+// Backend's bond_type is freeform text (no CHECK constraint) — this is
+// now `string`, not the fixed 7-value union the mockup's color legend
+// happens to have art for (see BOND_META in characters/_shared.tsx).
+export type RelationshipBond = string;
 
 export type Relationship = {
   characterId: string;
   bond: RelationshipBond;
   description: string;
-  strength: "Strong" | "Moderate" | "Tense";
+  strength: "Strong" | "Moderate" | "Tense" | "Weak";
 };
 
 export type CharacterArc = {

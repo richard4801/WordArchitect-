@@ -20,13 +20,21 @@
 
 export type CharacterRole = "Main" | "Supporting" | "Minor" | "Extra";
 
-export type RelationshipBond = "Family" | "Ally" | "Friend" | "Mentor" | "Colleague" | "Rival" | "Romantic";
+/**
+ * The backend's `codex_relationships.bond_type` is a freeform
+ * VARCHAR(100) with no CHECK constraint (unlike `strength` below) — no
+ * creation UI exists for relationships yet, so this stays a plain
+ * `string` rather than the fixed set `BOND_META` happens to have art for
+ * today. `BOND_META` lookups fall back to a default color for any bond
+ * text outside that set.
+ */
+export type RelationshipBond = string;
 
 export type Relationship = {
   characterId: string;
   bond: RelationshipBond;
   description: string;
-  strength: "Strong" | "Moderate" | "Tense";
+  strength: "Strong" | "Moderate" | "Tense" | "Weak";
 };
 
 export type CharacterArc = {
