@@ -16,7 +16,7 @@ import { useSyncExternalStore } from "react";
 const STORAGE_KEY = "wordarchitect_activity_log";
 const MAX_ENTRIES = 30;
 
-export type ActivityKind = "wrote" | "character" | "world" | "note" | "project";
+export type ActivityKind = "wrote" | "character" | "world" | "note" | "project" | "banned";
 
 export type ActivityEntry = {
   id: string;

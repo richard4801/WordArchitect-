@@ -3,6 +3,7 @@
 import {
   AlertTriangle,
   ArrowUp,
+  Ban,
   Compass,
   FilePlus2,
   FileText,
@@ -425,6 +426,7 @@ const ACTIVITY_ICON: Record<ActivityKind, typeof PenLine> = {
   world: Globe2,
   project: FilePlus2,
   note: FileText,
+  banned: Ban,
 };
 const ACTIVITY_TONE: Record<ActivityKind, string> = {
   wrote: "bg-gold/20 text-gold",
@@ -432,6 +434,7 @@ const ACTIVITY_TONE: Record<ActivityKind, string> = {
   world: "bg-info/20 text-info",
   project: "bg-success/20 text-success",
   note: "bg-warn/20 text-warn",
+  banned: "bg-danger/20 text-danger",
 };
 
 function ActivityCard() {

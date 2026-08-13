@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Ban,
   Bold,
   Check,
   ChevronDown,
@@ -60,7 +61,9 @@ import {
   useManuscript,
 } from "@/lib/manuscript-store";
 import { Progress } from "@/components/ui/progress";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EditWritingGoalModal } from "@/components/edit-writing-goal-modal";
+import { banTerm, unbanTerm, useBannedTerms, useBannedTermsLoadStatus } from "@/lib/banned-terms-store";
 import { logActivity } from "@/lib/activity-log-store";
 import {
   recordChapterWordCount,
@@ -107,9 +110,11 @@ export default function ChaptersPage() {
   const [stats, setStats] = useState({ words: 0, characters: 0 });
   const [zoomPercent, setZoomPercent] = useState(100);
   const [creatingChapter, setCreatingChapter] = useState(false);
+  const [showBannedWordsPanel, setShowBannedWordsPanel] = useState(false);
 
   const editableRef = useRef<HTMLDivElement>(null);
   const savedRangeRef = useRef<Range | null>(null);
+  const bannedTerms = useBannedTerms(project?.id);
 
   function saveSelection() {
     const sel = window.getSelection();
@@ -127,6 +132,122 @@ export default function ChaptersPage() {
       sel.addRange(savedRangeRef.current);
     }
     fn();
+  }
+
+  // ---------------------------------------------------------------------
+  // Ban-this-selection — highlight any word/phrase/sentence in the prose
+  // and ban it for this book right from the editor, no separate settings
+  // panel required. Every future AI generation for this book enforces
+  // every banned term server-side automatically once it exists — nothing
+  // else to wire up here beyond the POST itself.
+  // ---------------------------------------------------------------------
+
+  const [selectionMenu, setSelectionMenu] = useState<{ text: string; top: number; left: number } | null>(null);
+  const [banStatus, setBanStatus] = useState<"idle" | "banning" | "banned" | "error">("idle");
+  const [banErrorMessage, setBanErrorMessage] = useState<string | null>(null);
+  const [pendingLongBan, setPendingLongBan] = useState<string | null>(null);
+  const selectionMenuRef = useRef<HTMLDivElement>(null);
+
+  function updateSelectionMenu() {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed || !editableRef.current?.contains(sel.anchorNode)) {
+      setSelectionMenu(null);
+      return;
+    }
+    const text = sel.toString();
+    if (!text.trim()) {
+      setSelectionMenu(null);
+      return;
+    }
+    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) {
+      setSelectionMenu(null);
+      return;
+    }
+    setBanStatus("idle");
+    setBanErrorMessage(null);
+    setSelectionMenu({ text, top: rect.top, left: rect.left + rect.width / 2 });
+  }
+
+  // Tracks the live selection via the browser's own `selectionchange`
+  // event, not onMouseUp/onKeyUp — those fire *before* the browser has
+  // necessarily finished collapsing/updating the selection for a given
+  // click (confirmed: a plain click landing where a large selection was
+  // already active could still read that old, non-collapsed selection at
+  // mouseup time, reopening the bubble a beat after it should have
+  // closed). `selectionchange` only ever fires once the selection has
+  // actually settled, which is what onSelect (savedRangeRef bookkeeping
+  // for the formatting toolbar) still uses onMouseUp/onKeyUp for — that's
+  // a different, lower-stakes concern than what's shown in the UI here.
+  useEffect(() => {
+    function onSelectionChange() {
+      updateSelectionMenu();
+    }
+    document.addEventListener("selectionchange", onSelectionChange);
+    return () => document.removeEventListener("selectionchange", onSelectionChange);
+  }, []);
+
+  // Closes the bubble on a click outside both it and the editor — clicks
+  // *inside* the editor already recompute it via selectionchange above,
+  // and the bubble's own buttons need to survive their own click without
+  // this closing it out from under them first. Suspended entirely while the
+  // long-selection confirm dialog is open: that dialog is a separate
+  // portaled component this effect's own click target check can't see,
+  // so without this guard, clicking its "Ban It"/"Cancel" button (a click
+  // outside both the bubble and the editor) would close the bubble the
+  // instant it's clicked — banning still succeeds either way, but the
+  // "Banned" feedback would never get a bubble left to show up in.
+  useEffect(() => {
+    if (!selectionMenu || pendingLongBan) return;
+    function onDocMouseDown(e: MouseEvent) {
+      const target = e.target as Node;
+      if (selectionMenuRef.current?.contains(target)) return;
+      if (editableRef.current?.contains(target)) return;
+      setSelectionMenu(null);
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setSelectionMenu(null);
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [selectionMenu, pendingLongBan]);
+
+  async function performBan(term: string) {
+    if (!project) return;
+    setBanStatus("banning");
+    setBanErrorMessage(null);
+    try {
+      await banTerm(project.id, term);
+      setBanStatus("banned");
+      const preview = term.trim().length > 40 ? `${term.trim().slice(0, 40)}…` : term.trim();
+      logActivity("banned", `Banned "${preview}"`);
+      window.setTimeout(() => {
+        setSelectionMenu(null);
+        setBanStatus("idle");
+      }, 1100);
+    } catch (err) {
+      setBanStatus("error");
+      setBanErrorMessage(err instanceof Error ? err.message : "Couldn't ban this term. Try again.");
+    }
+  }
+
+  // A full sentence (or more) is an unusual, likely-accidental thing to
+  // ban outright — everything technically still works (the backend bans
+  // the exact string either way), but a quick confirmation catches a
+  // misclick before it silently changes how every future generation reads.
+  function handleBanClick() {
+    if (!selectionMenu) return;
+    const term = selectionMenu.text;
+    const wordCount = term.trim().split(/\s+/).filter(Boolean).length;
+    if (wordCount > 8) {
+      setPendingLongBan(term);
+    } else {
+      void performBan(term);
+    }
   }
 
   // Normal and Typewriter modes are meant to be fully immersive (the picker
@@ -350,6 +471,8 @@ export default function ChaptersPage() {
                 }}
                 makeRoomForExitButton={hidePanels}
                 saveStatus={saveStatus}
+                bannedCount={bannedTerms.length}
+                onOpenBannedWords={() => setShowBannedWordsPanel(true)}
               />
             )}
             <div className="grid flex-1 place-items-center">
@@ -370,6 +493,8 @@ export default function ChaptersPage() {
                 }}
                 makeRoomForExitButton={hidePanels}
                 saveStatus={saveStatus}
+                bannedCount={bannedTerms.length}
+                onOpenBannedWords={() => setShowBannedWordsPanel(true)}
               />
             )}
             {!hideChrome && <FormattingToolbar withSelection={withSelection} />}
@@ -418,6 +543,35 @@ export default function ChaptersPage() {
       {hidePanels && <FocusExitButton onClick={exitFocusMode} />}
       {showFocusPicker && (
         <FocusModePickerModal onSelect={activateFocusMode} onClose={() => setShowFocusPicker(false)} />
+      )}
+
+      {selectionMenu && (
+        <SelectionBubbleMenu
+          menuRef={selectionMenuRef}
+          top={selectionMenu.top}
+          left={selectionMenu.left}
+          status={banStatus}
+          errorMessage={banErrorMessage}
+          onBan={handleBanClick}
+        />
+      )}
+      {pendingLongBan && (
+        <ConfirmDialog
+          title="Ban this whole selection?"
+          description={`"${
+            pendingLongBan.trim().length > 200 ? `${pendingLongBan.trim().slice(0, 200)}…` : pendingLongBan.trim()
+          }" will be banned exactly as selected. This is unusual for a selection this long — double-check it wasn't a misclick.`}
+          confirmLabel="Ban It"
+          onConfirm={() => {
+            const term = pendingLongBan;
+            setPendingLongBan(null);
+            void performBan(term);
+          }}
+          onCancel={() => setPendingLongBan(null)}
+        />
+      )}
+      {showBannedWordsPanel && (
+        <BannedWordsPanel bookId={project.id} onClose={() => setShowBannedWordsPanel(false)} />
       )}
     </div>
   );
@@ -813,12 +967,16 @@ function TopBar({
   onOpenPanel,
   makeRoomForExitButton = false,
   saveStatus,
+  bannedCount = 0,
+  onOpenBannedWords,
 }: {
   project: { id: string; title: string };
   chapterTitle: string;
   onOpenPanel: (tab: PanelTab) => void;
   makeRoomForExitButton?: boolean;
   saveStatus?: SaveStatus;
+  bannedCount?: number;
+  onOpenBannedWords?: () => void;
 }) {
   return (
     <header
@@ -911,6 +1069,20 @@ function TopBar({
         >
           <History className="size-4" />
         </button>
+        <button
+          type="button"
+          aria-label="Banned words"
+          title="Banned words"
+          onClick={onOpenBannedWords}
+          className="relative grid size-8 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+        >
+          <Ban className="size-4" />
+          {bannedCount > 0 && (
+            <span className="absolute -right-0.5 -top-0.5 grid size-3.5 place-items-center rounded-full bg-danger text-[0.55rem] font-medium text-white">
+              {bannedCount > 9 ? "9+" : bannedCount}
+            </span>
+          )}
+        </button>
         <MoreMenu projectId={project.id} />
       </div>
     </header>
@@ -998,6 +1170,178 @@ function MoreMenu({ projectId }: { projectId: string }) {
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Floating "Ban this" action that appears above any real (non-collapsed,
+ * non-whitespace) text selection inside the chapter body — the whole
+ * point of the feature: ban a word/phrase/sentence right where you
+ * highlighted it, no separate settings panel required. Positioned with
+ * `position: fixed` off a measured selection rect, portaled to `<body>`
+ * the same way SlashCommandMenu/ColorPickerButton already are in this
+ * file, both to escape the toolbar's own `overflow-x-auto` clipping and
+ * so its own clicks don't bubble into whatever's underneath.
+ */
+function SelectionBubbleMenu({
+  menuRef,
+  top,
+  left,
+  status,
+  errorMessage,
+  onBan,
+}: {
+  menuRef: React.RefObject<HTMLDivElement | null>;
+  top: number;
+  left: number;
+  status: "idle" | "banning" | "banned" | "error";
+  errorMessage: string | null;
+  onBan: () => void;
+}) {
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className="fixed z-50 -translate-x-1/2 -translate-y-full"
+      style={{ top: top - 8, left }}
+    >
+      <div className="card-2 flex items-center px-1.5 py-1.5">
+        {status === "banned" ? (
+          <span className="flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium text-success">
+            <Check className="size-3.5" />
+            Banned
+          </span>
+        ) : status === "error" ? (
+          <div className="flex items-center gap-2 px-1">
+            <span className="max-w-[180px] truncate text-xs text-danger">
+              {errorMessage ?? "Couldn't ban this term."}
+            </span>
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={onBan}
+              className="shrink-0 text-xs font-medium text-gold hover:opacity-80"
+            >
+              Retry
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={onBan}
+            disabled={status === "banning"}
+            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium text-ink transition-colors hover:bg-surface-2 disabled:opacity-60"
+          >
+            <Ban className="size-3.5 text-danger" />
+            {status === "banning" ? "Banning…" : "Ban this"}
+          </button>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/**
+ * Lists every term banned for this book, with a way to unban each one —
+ * the "full experience" side of banning, not just an add-only trigger.
+ * Opened from the TopBar's Ban icon (badge shows the live count). Banning
+ * has no other configuration surface: once a term exists here, every
+ * future `POST /generate-prose` for this book enforces it automatically,
+ * server-side — nothing else to wire up, which is also why the one UX
+ * consequence worth surfacing (no live token streaming once a book has
+ * any banned term — the backend needs to check/regenerate before it can
+ * show you anything) is explained right here rather than in a separate
+ * settings screen.
+ */
+function BannedWordsPanel({ bookId, onClose }: { bookId: string; onClose: () => void }) {
+  const terms = useBannedTerms(bookId);
+  const status = useBannedTermsLoadStatus();
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+
+  async function handleRemove(id: string) {
+    setRemovingId(id);
+    setRemoveError(null);
+    try {
+      await unbanTerm(id);
+    } catch (err) {
+      setRemoveError(err instanceof Error ? err.message : "Couldn't unban this term.");
+    } finally {
+      setRemovingId(null);
+    }
+  }
+
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <>
+      <button
+        type="button"
+        aria-label="Close"
+        className="fixed inset-0 z-40 cursor-default"
+        onClick={onClose}
+      />
+      <div className="fixed right-5 top-16 z-50 w-80 max-w-[calc(100vw-2.5rem)]">
+        <div className="card-2 max-h-[70vh] overflow-y-auto p-4">
+          <div className="flex items-start justify-between gap-2">
+            <h2 className="font-display text-lg text-ink">Banned Words</h2>
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={onClose}
+              className="grid size-6 shrink-0 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+          <p className="mt-1.5 text-xs text-ink-muted">
+            Banned for this project — every future AI generation avoids these automatically, nothing
+            else to set up. One tradeoff worth knowing: once a project has at least one banned term,
+            generation loses live streaming — the prose appears once it&rsquo;s done and checked, not
+            typed out in real time.
+          </p>
+
+          {status === "loading" && terms.length === 0 && (
+            <p className="mt-4 text-xs text-ink-faint">Loading…</p>
+          )}
+          {status === "error" && (
+            <p className="mt-4 text-xs text-danger">Couldn&rsquo;t load banned words. Try reopening this panel.</p>
+          )}
+          {status !== "loading" && status !== "error" && terms.length === 0 && (
+            <p className="mt-4 text-xs text-ink-faint">
+              No banned words yet. Highlight text in the chapter and choose &ldquo;Ban this&rdquo; to add one.
+            </p>
+          )}
+          {removeError && <p className="mt-3 text-xs text-danger">{removeError}</p>}
+
+          {terms.length > 0 && (
+            <ul className="mt-3 flex flex-col gap-1.5">
+              {terms.map((t) => (
+                <li
+                  key={t.id}
+                  className="flex items-center justify-between gap-2 rounded-lg bg-surface-2/60 px-3 py-2"
+                >
+                  <span className="min-w-0 truncate text-sm text-ink">{t.term}</span>
+                  <button
+                    type="button"
+                    aria-label={`Unban "${t.term}"`}
+                    onClick={() => handleRemove(t.id)}
+                    disabled={removingId === t.id}
+                    className="shrink-0 text-ink-faint transition-colors hover:text-danger disabled:opacity-50"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </>,
+    document.body,
   );
 }
 

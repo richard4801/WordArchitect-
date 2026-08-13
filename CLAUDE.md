@@ -82,7 +82,7 @@ more problems surfaced after the first fix:
    Characters/World Entries stat tiles' fake "3 this week"/"7 this week"
    captions were removed (those tiles' totals were already live; only the
    trend caption was fabricated, so it's gone rather than faked). None of
-   this data has a real backend resource yet (see §4.7) — it now reads as
+   this data has a real backend resource yet (see §4.8) — it now reads as
    an honest empty state instead of a populated demo.
 
 **Third post-purge pass — full-app audit for crashes and fabricated data
@@ -199,7 +199,7 @@ placeholder.
 - **Daily Goal (editor) and Today's Progress (Dashboard) now share one
   real source:** new `src/lib/daily-progress-store.ts`, same
   localStorage-backed-per-browser tradeoff as `writing-goal-store.ts` (no
-  writing-session backend resource exists — see §4.7). Every autosave
+  writing-session backend resource exists — see §4.8). Every autosave
   reports its chapter's post-save word count via
   `recordChapterWordCount(chapterId, words)`; only the *positive* delta
   versus that chapter's last-known count credits "today" (deleting text
@@ -226,7 +226,7 @@ placeholder.
   Daily Goal sidebar widget.
 - **Real Dashboard activity feed:** new `src/lib/activity-log-store.ts`,
   same per-browser localStorage tradeoff — there's no activity-log backend
-  resource (§4.7). `logActivity(kind, text)` is called at the moment a
+  resource (§4.8). `logActivity(kind, text)` is called at the moment a
   real action actually succeeds: `createProject` (project-store.ts),
   `createCharacter` (character-store.ts), `createNote` (notes-store.ts),
   `createWorldCategory` (worldbuilding-store.ts), and a chapter autosave
@@ -406,8 +406,9 @@ backend during backend-side development.
 | Worldbuilding | **Live** — `/world-categories` + `/codex` | `worldbuilding-store.ts` |
 | Notes | **Live** — `/notes` | `notes-store.ts` |
 | Manuscript/Chapters | **Live** — `/manuscript/chapters` | `manuscript-store.ts` |
+| Banned Terms | **Live** — `/banned-terms` | `banned-terms-store.ts` |
 | Outliner | Mock, deferred | none yet (backend has no Outliner endpoints — confirmed low priority) |
-| Dashboard-only stats | Mock, deferred | `dashboard-data.ts` (no backend resource exists for these — see §4.7) |
+| Dashboard-only stats | Mock, deferred | `dashboard-data.ts` (no backend resource exists for these — see §4.8) |
 
 ### Project (live)
 
@@ -813,7 +814,7 @@ module-level array to default to.
 **Still mock, no backend resource for these at all**: `WORLD_TIMELINE`,
 `WORLD_OVERVIEW`, and `PINNED_WORLD_ITEMS` remain static, empty exports —
 same "decision on record, wire up in a later pass once the resource
-exists" treatment as the Dashboard-only stats in §4.7. Nothing in this
+exists" treatment as the Dashboard-only stats in §4.8. Nothing in this
 pass invented a backend shape for a world timeline, an editable world
 overview, or pinned-item notes, since none of those exist as tables today.
 
@@ -1294,7 +1295,109 @@ unbuilt, precisely:
 6. Collaborators/presence and Share are fully decorative/static — not a
    near-term backend priority per the current build.
 
-### 4.6 Outliner (beats)
+### 4.6 Banned Terms
+
+**Live — backed by the real backend's `/banned-terms` (see the backend
+repo's `src/routes/bannedTerms.ts` + `012_banned_terms.sql`).** The
+"Ghost Editor" feature: a writer highlights any word/phrase/sentence
+directly in the manuscript editor's prose and bans it for the current
+book, no separate settings screen involved. Once a term is banned,
+`POST /generate-prose` enforces every banned term for that book
+automatically on the backend — nothing else in the frontend needs to call
+or configure anything for enforcement itself. Confirmed by reading the
+backend's own migration comment: there's no cheap generation-time
+suppression mechanism (`logit_bias` doesn't work against the model this
+app uses, and word-level token suppression isn't safe since most words
+share subword tokens with unrelated vocabulary) — every ban is enforced by
+detecting it in already-generated text and regenerating the offending
+paragraph, which is also why banning at least one term costs a book its
+live token-by-token streaming during generation (the prose only appears
+once generation and any needed regeneration passes are done) — a
+deliberate tradeoff surfaced to the writer directly in the Banned Words
+panel's own copy, not hidden.
+
+```ts
+// `banned_terms` row exactly as the backend returns it.
+export type BannedTermRow = {
+  id: string;
+  user_id: string;
+  book_id: string;
+  term: string;
+  created_at: string;
+};
+```
+
+`src/lib/banned-terms-store.ts` follows the same `bookId`-scoped
+single-current-book pattern as `notes-store.ts`/`character-store.ts` (not
+manuscript-store.ts's Map-keyed pattern) — the list is only ever shown for
+whichever project's editor is currently open. `banTerm(bookId, term)`
+sends the selection exactly as-is (no client-side trim/lowercase — the
+backend trims, and matching is already case-insensitive there); the
+backend can respond 200 (already banned, case-insensitively) or 201
+(freshly banned), and both are treated identically in the UI — `apiFetch`
+doesn't even surface the status code to the caller, so there was nothing
+to branch on. **Response shape is flat, not envelope-wrapped**, confirmed
+by reading `bannedTerms.ts` directly: `POST`/nothing-else returns the row
+itself (`{id, user_id, book_id, term, created_at}`), unlike every other
+domain's `{thing: {...}}` wrapping — the one exception found so far in
+this codebase's backend integration, worth remembering before assuming
+the wrapping convention holds universally. `GET /banned-terms?bookId=`
+does use the usual envelope (`{terms: [...]}`). `DELETE /banned-terms/:id`
+returns `204`.
+
+**Editor UI** (`chapters/page.tsx`):
+- **`SelectionBubbleMenu`** — a small floating "Ban this" button that
+  appears above any real (non-collapsed, non-whitespace) selection inside
+  the chapter body, positioned off a measured selection rect and portaled
+  to `<body>`. Tracked via `document`'s `selectionchange` event, not
+  `onMouseUp`/`onKeyUp` — a real bug was caught and fixed here: those
+  fire *before* the browser has necessarily finished collapsing the
+  selection for a given click (reproduced directly: a plain click landing
+  where a large selection was already active could still read that old,
+  non-collapsed selection at `mouseup` time, reopening the bubble a beat
+  after it should have closed). `selectionchange` only ever fires once
+  the selection has actually settled, which is what this specifically
+  needs; the formatting toolbar's own unrelated `savedRangeRef`
+  bookkeeping still uses `onMouseUp`/`onKeyUp`, since staleness by a
+  frame or two doesn't matter for that lower-stakes purpose.
+- **Long-selection confirmation**: a selection over 8 words routes through
+  the shared `ConfirmDialog` ("Ban this whole selection?") before actually
+  banning — everything technically still works for a selection that long
+  (the backend bans the exact string either way), but it's unusual enough
+  to be a likely misclick, so a quick confirm catches it. A second real
+  bug was caught and fixed here too: the bubble's own "click outside
+  closes it" listener didn't know about the separately-portaled
+  `ConfirmDialog`, so clicking its "Ban It" button (a click outside both
+  the bubble and the editor, from that listener's point of view) closed
+  the bubble the instant it was clicked — banning still succeeded, but the
+  "Banned" feedback never had a bubble left to show up in. Fixed by
+  suspending that listener entirely while the confirm dialog is open.
+- **`BannedWordsPanel`** — opened from a new Ban-icon button in the
+  editor's `TopBar` (badge shows the live count), lists every banned term
+  for the book with a per-term unban (×) button, and is where the
+  streaming-tradeoff note actually lives, per the feature's own "no
+  separate settings panel required to ban" framing — the ban-from-selection
+  flow doesn't need its own explanation of the tradeoff since it's a
+  one-line action, but the panel a writer would open to review what's
+  banned is the right place to explain the consequence.
+- Bans and unbans both call `logActivity("banned", ...)`/read into the
+  Dashboard's real activity feed (`activity-log-store.ts`) the same way
+  every other real action does — `ActivityKind` gained a `"banned"` member
+  for this.
+
+**Verified working** (same local-mock-server approach as every other
+domain in this file, extended with `/banned-terms` GET/POST/DELETE
+handlers matching the real envelope/flat-body shapes and the
+case-insensitive dedup behavior): select a word, confirm the bubble
+appears and banning shows "Banned" then auto-dismisses; the TopBar badge
+and panel both reflect the real count; a selection over 8 words routes
+through the confirm dialog and still shows "Banned" feedback after
+confirming; a plain click with no drag shows no bubble; banning the same
+word in different casing three times still lists only one panel entry;
+unbanning removes it from the panel and drops the badge count. Zero
+console errors across the full pass.
+
+### 4.7 Outliner (beats)
 
 Source: `src/lib/outline-data.ts`. **No store, no creation UI, seed-only,**
 one hardcoded structure (Three Act) for `shadows-of-elarion`; other
@@ -1338,7 +1441,7 @@ string array of names, not `Character.id` references, and
 reference. If the backend introduces real relational IDs here, the
 frontend will need updating to resolve them, not just to fetch them.
 
-### 4.7 Dashboard-only data — mostly real now, via localStorage, not a backend resource
+### 4.8 Dashboard-only data — mostly real now, via localStorage, not a backend resource
 
 Source: `src/lib/dashboard-data.ts` re-exports `projects`/`Project` from
 `projects-data.ts` (so "Your Projects" is real Project data) and still
@@ -1398,6 +1501,7 @@ summary the backend team asked for.)
 | Active Collaborators | Fully static, not real presence |
 | Share | Decorative, its own copy says there's no backend |
 | Focus Mode (Normal/Typewriter/Zen) | Real, fully working client-only UI state — nothing to persist |
+| Ban this selection (Ghost Editor) | **Live** — highlight text, ban it for the book via `/banned-terms`; enforced automatically server-side on every future generation (see §4.6) |
 
 ---
 
@@ -1596,7 +1700,7 @@ be removed is not a child of this node.` The CSS-only `min-h` fix touches
 no DOM children at all, so it carries none of that reconciliation risk.
 
 **Writing goals are deliberately NOT backed by the real backend** — there
-is no writing-session/goal-tracking table (see §4.7), so a new
+is no writing-session/goal-tracking table (see §4.8), so a new
 `src/lib/writing-goal-store.ts` persists `dailyTarget`/`monthlyTarget` to
 `localStorage` instead: a real, user-settable value (the actual
 complaint — the old `todaysProgress.target: 2000` / `writingGoal.target:
@@ -1680,15 +1784,15 @@ export interface AiProvider {
 ## 7. Route map (what page needs what data)
 
 ```
-/                                            Dashboard — Project[] (live) + dashboard-data.ts mock (§4.7)
+/                                            Dashboard — Project[] (live) + dashboard-data.ts mock (§4.8)
 /projects                                    Project[] (live)
 /projects/new                                submits NewProjectInput
 /projects/[id]                               Project detail chrome (8-tab nav), Edit Project modal (updateProject)
 /projects/[id]                (Overview tab) Project + real ManuscriptPart[]/word counts (§5.6) + deriveRecentActivity
 /projects/[id]/analytics                     stub — <ComingSoon>, no data model
 /projects/[id]/settings                      stub — <ComingSoon>, no data model
-/projects/[id]/chapters                      ManuscriptPart[] (live) + ChapterBody (live) + CommentThread[] (mock) (§4.5/§5)
-/projects/[id]/outlines                      Act[] / Beat[] (§4.6 — seed-only, no store)
+/projects/[id]/chapters                      ManuscriptPart[] (live) + ChapterBody (live) + CommentThread[] (mock) (§4.5/§5) + BannedTermRow[] (live, §4.6)
+/projects/[id]/outlines                      Act[] / Beat[] (§4.7 — seed-only, no store)
 /projects/[id]/characters                    Character[] (live) + selected Character detail, Edit/Delete via options menu
 /projects/[id]/characters/all                Character[] (live), grid+pagination, Edit/Delete via options menu
 /projects/[id]/characters/new                submits NewCharacterInput (shared CharacterForm, see §5.5)
