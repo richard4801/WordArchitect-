@@ -29,6 +29,7 @@ import { Progress } from "@/components/ui/progress";
 import { Ring } from "@/components/ui/ring";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { Sparkline } from "@/components/ui/sparkline";
+import { useManuscript } from "@/lib/manuscript-store";
 import { useProjects, useProjectsError, useProjectsLoadStatus } from "@/lib/project-store";
 import { deriveRecentChapters } from "@/lib/projects-data";
 import {
@@ -62,17 +63,17 @@ function DashboardPageInner() {
   const loadError = useProjectsError();
   const forceNewUser = useSearchParams().get("newUser") === "1";
 
-  // Avoid flashing the New User onboarding screen while the real project
-  // list is still loading from the backend — wait for a result (or an
-  // error) before deciding which dashboard variant to show.
-  if (loadStatus === "idle" || loadStatus === "loading") {
-    return (
-      <div className="grid min-h-[60vh] place-items-center">
-        <p className="text-sm text-ink-muted">Loading your projects…</p>
-      </div>
-    );
-  }
-
+  // Deliberately no dedicated loading screen here: this page should
+  // already look "open" the instant it renders, not blank out behind a
+  // centered "Loading…" message that then pops to the real layout. The New
+  // User shell (an honest, generic "start here" state, not a fabricated
+  // claim about your data) is what a not-yet-loaded `projects: []` renders
+  // as anyway via the fallthrough below — on a fast load this is invisible;
+  // on a slow one (Render cold start) it briefly shows the calm default
+  // instead of a jarring blank/loading swap, then updates in place once
+  // the real list arrives. A genuine load failure still gets its own
+  // dedicated message, since silently pretending nothing's wrong would be
+  // worse than a brief wrong-variant flash.
   if (loadStatus === "error") {
     return (
       <div className="grid min-h-[60vh] place-items-center text-center">
@@ -171,13 +172,20 @@ function QuickActionsRow() {
 }
 
 function ContinueWritingCard({ project }: { project: Project }) {
+  // The real signal for "has this project actually been written in" —
+  // project.words/chapters have no backend rollup yet (see CLAUDE.md
+  // §3.5) and are always 0, but the real manuscript chapter list is wired
+  // now, so use that instead of a stat that can't tell the difference
+  // between "never started" and "not tracked."
+  const manuscript = useManuscript(project.id);
+  const hasChapters = manuscript.some((part) => part.chapters.length > 0);
   const percent = project.target > 0 ? Math.round((project.words / project.target) * 100) : 0;
   const latestChapter = deriveRecentChapters(project, 1)[0];
   const chapterLabel = latestChapter ? `Chapter ${latestChapter.number}: ${latestChapter.title}` : "No chapters yet";
 
   return (
     <section className="card card-hover p-6">
-      <SectionHeading title="Continue Writing" />
+      <SectionHeading title={hasChapters ? "Continue Writing" : "Start Writing"} />
 
       <div className="flex flex-col gap-5 sm:flex-row">
         <div className="w-full shrink-0 sm:w-48">
@@ -191,23 +199,27 @@ function ContinueWritingCard({ project }: { project: Project }) {
             href={`/projects/${project.id}/chapters`}
             className="mt-3 block w-full rounded-xl bg-gold px-4 py-2.5 text-center text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
           >
-            Resume Writing
+            {hasChapters ? "Resume Writing" : "Start Writing"}
           </Link>
         </div>
 
         <div className="flex min-w-0 flex-1 flex-col">
           <h3 className="font-display text-2xl text-ink">{project.title}</h3>
-          <p className="text-sm text-ink-muted">{chapterLabel}</p>
+          <p className="text-sm text-ink-muted">
+            {hasChapters ? chapterLabel : "Nothing written yet — create your first chapter."}
+          </p>
 
-          <div className="mt-4">
-            <Progress value={percent} />
-            <div className="mt-2 flex items-center justify-between text-sm">
-              <span className="text-ink-muted">
-                {project.words.toLocaleString()} / {project.target.toLocaleString()} words
-              </span>
-              <span className="text-gold">{percent}%</span>
+          {hasChapters && (
+            <div className="mt-4">
+              <Progress value={percent} />
+              <div className="mt-2 flex items-center justify-between text-sm">
+                <span className="text-ink-muted">
+                  {project.words.toLocaleString()} / {project.target.toLocaleString()} words
+                </span>
+                <span className="text-gold">{percent}%</span>
+              </div>
             </div>
-          </div>
+          )}
 
           <Link
             href={`/projects/${project.id}`}

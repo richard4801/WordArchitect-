@@ -53,41 +53,6 @@ export type ChapterBody = {
   paragraphs: ChapterParagraph[];
 };
 
-function genericManuscript(chapterCount: number): ManuscriptPart[] {
-  const perPart = Math.max(1, Math.ceil(chapterCount / 3));
-  const parts: ManuscriptPart[] = [];
-  let n = 1;
-  for (let p = 0; p < 3 && n <= chapterCount; p++) {
-    const chapters: ManuscriptChapter[] = [];
-    for (let i = 0; i < perPart && n <= chapterCount; i++, n++) {
-      chapters.push({ id: `ch-${n}`, number: n, title: `Chapter ${n}`, complete: p < 2 });
-    }
-    parts.push({ id: `part-${p + 1}`, title: `Part ${["I", "II", "III"][p]}`, chapters });
-  }
-  return parts;
-}
-
-function genericChapterBody(chapter: ManuscriptChapter): ChapterBody {
-  return {
-    heading: `CHAPTER ${chapter.number}`,
-    title: chapter.title,
-    paragraphs: [
-      {
-        id: "placeholder",
-        text: "This chapter hasn't been written yet. Click here and start typing, or use the AI Assistant to help draft your opening scene.",
-      },
-    ],
-  };
-}
-
-export function getManuscript(projectId: string, chapterCount: number): ManuscriptPart[] {
-  return genericManuscript(chapterCount);
-}
-
-export function getChapterBody(projectId: string, chapter: ManuscriptChapter): ChapterBody {
-  return genericChapterBody(chapter);
-}
-
 export function findChapter(
   parts: ManuscriptPart[],
   chapterId: string,

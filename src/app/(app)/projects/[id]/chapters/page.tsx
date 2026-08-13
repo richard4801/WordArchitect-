@@ -47,11 +47,17 @@ import {
   type CommentThread,
   type Commenter,
   findChapter,
-  getChapterBody,
-  getManuscript,
   type ManuscriptChapter,
   type ManuscriptPart,
 } from "@/lib/manuscript-data";
+import {
+  createChapter,
+  saveChapterBody,
+  type SaveStatus,
+  useChapterBody,
+  useChapterSaveStatus,
+  useManuscript,
+} from "@/lib/manuscript-store";
 import { Progress } from "@/components/ui/progress";
 import { useProject } from "@/lib/project-store";
 import { setFocusModeActive } from "@/lib/ui-store";
@@ -80,11 +86,8 @@ type FocusModeKind = "normal" | "typewriter" | "zen" | "typewriterZen";
 export default function ChaptersPage() {
   const { id } = useParams<{ id: string }>();
   const project = useProject(id);
-
-  const manuscript = useMemo(
-    () => (project ? getManuscript(project.id, project.chapters) : []),
-    [project],
-  );
+  const manuscript = useManuscript(project?.id);
+  const saveStatus = useChapterSaveStatus();
 
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
@@ -93,6 +96,7 @@ export default function ChaptersPage() {
   const [panelTab, setPanelTab] = useState<PanelTab>("Comments");
   const [stats, setStats] = useState({ words: 0, characters: 0 });
   const [zoomPercent, setZoomPercent] = useState(100);
+  const [creatingChapter, setCreatingChapter] = useState(false);
 
   const editableRef = useRef<HTMLDivElement>(null);
   const savedRangeRef = useRef<Range | null>(null);
@@ -157,14 +161,19 @@ export default function ChaptersPage() {
   const activeChapter = useMemo(() => {
     if (!manuscript.length) return undefined;
     if (selectedChapterId) return findChapter(manuscript, selectedChapterId);
-    // Default to the chapter the mockup opens on if present, else the first.
-    return findChapter(manuscript, "ch-18") ?? manuscript[0]?.chapters[0];
+    return manuscript[0]?.chapters[0];
   }, [manuscript, selectedChapterId]);
 
+  const { row: bodyRow, status: bodyLoadStatus } = useChapterBody(activeChapter?.id);
+
   const body = useMemo(() => {
-    if (!project || !activeChapter) return null;
-    return getChapterBody(project.id, activeChapter);
-  }, [project, activeChapter]);
+    if (!activeChapter || !bodyRow) return null;
+    return {
+      heading: bodyRow.heading?.trim() || `CHAPTER ${bodyRow.number}`,
+      title: bodyRow.title?.trim() || activeChapter.title,
+      paragraphs: bodyRow.paragraphs,
+    };
+  }, [activeChapter, bodyRow]);
 
   const bodyBaseline = useMemo(() => {
     if (!body) return { words: 0, characters: 0 };
@@ -186,6 +195,79 @@ export default function ChaptersPage() {
     setStats(bodyBaseline);
   }
 
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Reads the editor's actual DOM paragraphs back into the structured shape
+  // the backend stores — a best-effort round-trip (see manuscript-store.ts's
+  // doc comment): a paragraph's plain text and its emphasis/break/commenter
+  // markers (carried as data-* attributes at render time) survive an edit,
+  // but rich inline formatting (bold/italic/links/etc. applied via
+  // execCommand) does not, since the backend's ChapterParagraph has no HTML
+  // field to hold it.
+  function serializeParagraphs(): ChapterParagraph[] {
+    const root = editableRef.current;
+    if (!root) return [];
+    return Array.from(root.children).map((child) => {
+      const el = child as HTMLElement;
+      const clone = el.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll('[data-commenter-tag="true"]').forEach((tag) => tag.remove());
+      const id = el.dataset.paragraphId || crypto.randomUUID();
+      const paragraph: ChapterParagraph = { id, text: clone.textContent ?? "" };
+      if (el.dataset.break === "true") paragraph.break = true;
+      if (el.dataset.emphasis === "true") paragraph.emphasis = true;
+      if (el.dataset.commenter) paragraph.commenter = el.dataset.commenter as Commenter;
+      return paragraph;
+    });
+  }
+
+  function scheduleSave() {
+    if (!activeChapter) return;
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    const chapterId = activeChapter.id;
+    saveTimeoutRef.current = setTimeout(() => {
+      saveTimeoutRef.current = null;
+      void saveChapterBody(chapterId, serializeParagraphs());
+    }, 1200);
+  }
+
+  // Flush any pending debounced save immediately, reading the DOM that's
+  // live *right now* — this must run synchronously before anything that
+  // changes `activeChapter` (switching chapters remounts EditorBody via its
+  // `key`, which repoints `editableRef` at the *new* chapter's empty DOM
+  // before any effect cleanup could fire, so an effect-cleanup-based flush
+  // would silently save the wrong chapter's content under the old id).
+  function flushPendingSave() {
+    if (!saveTimeoutRef.current || !activeChapter) return;
+    clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = null;
+    void saveChapterBody(activeChapter.id, serializeParagraphs());
+  }
+
+  // Belt-and-suspenders: flush on genuine unmount too (navigating away from
+  // the editor entirely) — safe here since, unlike a chapter switch, the
+  // DOM hasn't been torn down yet when this cleanup runs.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => () => flushPendingSave(), []);
+
+  function selectChapter(chapterId: string) {
+    flushPendingSave();
+    setSelectedChapterId(chapterId);
+    setSelectedSceneId(null);
+  }
+
+  async function handleCreateChapter() {
+    if (!project) return;
+    flushPendingSave();
+    setCreatingChapter(true);
+    try {
+      const newChapter = await createChapter(project.id);
+      setSelectedChapterId(newChapter.id);
+      setSelectedSceneId(null);
+    } finally {
+      setCreatingChapter(false);
+    }
+  }
+
   if (!project) {
     return (
       <div className="grid h-dvh place-items-center text-center">
@@ -199,77 +281,97 @@ export default function ChaptersPage() {
     );
   }
 
-  if (!activeChapter || !body) {
-    return (
-      <div className="grid h-dvh place-items-center text-center">
-        <p className="text-sm text-ink-muted">This project doesn&rsquo;t have any chapters yet.</p>
-      </div>
-    );
-  }
-
   // Normal and Typewriter both hide the side panels but keep the toolbar
   // and status bar; Zen and Typewriter × Zen strip those too, leaving just
   // the page. Typewriter and Typewriter × Zen both get caret-centering.
   const hidePanels = focusMode !== null;
   const hideChrome = focusMode === "zen" || focusMode === "typewriterZen";
   const typewriter = focusMode === "typewriter" || focusMode === "typewriterZen";
+  const hasChapters = manuscript.length > 0;
 
   return (
     <div className="flex h-dvh min-w-0">
       {!hidePanels && (
         <ManuscriptPanel
           manuscript={manuscript}
-          activeChapterId={activeChapter.id}
+          activeChapterId={activeChapter?.id ?? null}
           activeSceneId={selectedSceneId}
-          onSelectChapter={(chapterId) => {
-            setSelectedChapterId(chapterId);
-            setSelectedSceneId(null);
-          }}
+          onSelectChapter={selectChapter}
           onSelectScene={setSelectedSceneId}
+          onAddChapter={handleCreateChapter}
+          addingChapter={creatingChapter}
         />
       )}
 
       <div className="@container relative flex min-w-0 flex-1 flex-col border-r border-line">
-        {!hideChrome && (
-          <TopBar
-            project={project}
-            chapterTitle={`Chapter ${activeChapter.number} – ${body.title}`}
-            onOpenPanel={(tab) => {
-              setFocusMode(null);
-              setPanelTab(tab);
-            }}
-            makeRoomForExitButton={hidePanels}
-          />
-        )}
-        {!hideChrome && <FormattingToolbar withSelection={withSelection} />}
-        <EditorBody
-          key={activeChapter.id}
-          body={body}
-          editableRef={editableRef}
-          onSelect={saveSelection}
-          onStatsChange={(deltaWords, deltaCharacters) =>
-            setStats({
-              words: bodyBaseline.words + deltaWords,
-              characters: bodyBaseline.characters + deltaCharacters,
-            })
-          }
-          typewriter={typewriter}
-          centered={hideChrome}
-          zoomPercent={zoomPercent}
-        />
-        {!hideChrome && (
-          <StatusBar
-            words={stats.words}
-            characters={stats.characters}
-            focusMode={focusMode}
-            onOpenPicker={() => setShowFocusPicker(true)}
-            onExitFocusMode={exitFocusMode}
-            zoomPercent={zoomPercent}
-            onZoomChange={setZoomPercent}
-          />
+        {!hasChapters ? (
+          <EmptyManuscriptState onCreate={handleCreateChapter} creating={creatingChapter} />
+        ) : !activeChapter || !body ? (
+          <>
+            {!hideChrome && (
+              <TopBar
+                project={project}
+                chapterTitle={activeChapter ? `Chapter ${activeChapter.number} – ${activeChapter.title}` : "Loading…"}
+                onOpenPanel={(tab) => {
+                  setFocusMode(null);
+                  setPanelTab(tab);
+                }}
+                makeRoomForExitButton={hidePanels}
+                saveStatus={saveStatus}
+              />
+            )}
+            <div className="grid flex-1 place-items-center">
+              <p className="text-sm text-ink-muted">
+                {bodyLoadStatus === "error" ? "Couldn't load this chapter." : "Loading chapter…"}
+              </p>
+            </div>
+          </>
+        ) : (
+          <>
+            {!hideChrome && (
+              <TopBar
+                project={project}
+                chapterTitle={`Chapter ${activeChapter.number} – ${body.title}`}
+                onOpenPanel={(tab) => {
+                  setFocusMode(null);
+                  setPanelTab(tab);
+                }}
+                makeRoomForExitButton={hidePanels}
+                saveStatus={saveStatus}
+              />
+            )}
+            {!hideChrome && <FormattingToolbar withSelection={withSelection} />}
+            <EditorBody
+              key={activeChapter.id}
+              body={body}
+              editableRef={editableRef}
+              onSelect={saveSelection}
+              onStatsChange={(deltaWords, deltaCharacters) =>
+                setStats({
+                  words: bodyBaseline.words + deltaWords,
+                  characters: bodyBaseline.characters + deltaCharacters,
+                })
+              }
+              onContentChange={scheduleSave}
+              typewriter={typewriter}
+              centered={hideChrome}
+              zoomPercent={zoomPercent}
+            />
+            {!hideChrome && (
+              <StatusBar
+                words={stats.words}
+                characters={stats.characters}
+                focusMode={focusMode}
+                onOpenPicker={() => setShowFocusPicker(true)}
+                onExitFocusMode={exitFocusMode}
+                zoomPercent={zoomPercent}
+                onZoomChange={setZoomPercent}
+              />
+            )}
+          </>
         )}
 
-        {hidePanels && !hideChrome && (
+        {hidePanels && !hideChrome && hasChapters && (
           <FocusModeTabStrip
             onSelect={(tab) => {
               setPanelTab(tab);
@@ -279,12 +381,33 @@ export default function ChaptersPage() {
         )}
       </div>
 
-      {!hidePanels && <CommentsPanel tab={panelTab} onTabChange={setPanelTab} />}
+      {!hidePanels && hasChapters && <CommentsPanel tab={panelTab} onTabChange={setPanelTab} />}
 
       {hidePanels && <FocusExitButton onClick={exitFocusMode} />}
       {showFocusPicker && (
         <FocusModePickerModal onSelect={activateFocusMode} onClose={() => setShowFocusPicker(false)} />
       )}
+    </div>
+  );
+}
+
+/** Shown in the editor pane when a project genuinely has zero chapters yet — a real, working action, not a dead end. */
+function EmptyManuscriptState({ onCreate, creating }: { onCreate: () => void; creating: boolean }) {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+      <p className="font-display text-2xl text-ink">Start your manuscript</p>
+      <p className="max-w-sm text-sm text-ink-muted">
+        This project doesn&rsquo;t have any chapters yet. Create your first one to start writing.
+      </p>
+      <button
+        type="button"
+        onClick={onCreate}
+        disabled={creating}
+        className="mt-2 inline-flex items-center gap-2 rounded-xl bg-gold px-5 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-60"
+      >
+        <Plus className="size-4" />
+        {creating ? "Creating…" : "Create First Chapter"}
+      </button>
     </div>
   );
 }
@@ -426,15 +549,19 @@ function ManuscriptPanel({
   activeSceneId,
   onSelectChapter,
   onSelectScene,
+  onAddChapter,
+  addingChapter,
 }: {
   manuscript: ManuscriptPart[];
-  activeChapterId: string;
+  activeChapterId: string | null;
   activeSceneId: string | null;
   onSelectChapter: (id: string) => void;
   onSelectScene: (id: string) => void;
+  onAddChapter: () => void;
+  addingChapter: boolean;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(
-    () => new Set(manuscript.map((p) => p.id).concat(activeChapterId)),
+    () => new Set(manuscript.map((p) => p.id).concat(activeChapterId ?? [])),
   );
   const [query, setQuery] = useState("");
 
@@ -478,7 +605,9 @@ function ManuscriptPanel({
           <button
             type="button"
             aria-label="Add chapter"
-            className="grid size-7 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+            onClick={onAddChapter}
+            disabled={addingChapter}
+            className="grid size-7 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-50"
           >
             <Plus className="size-4" />
           </button>
@@ -495,6 +624,9 @@ function ManuscriptPanel({
       </div>
 
       <nav className="scroll-slim flex-1 overflow-y-auto px-3 pb-3">
+        {manuscript.length === 0 && (
+          <p className="px-2 py-3 text-xs text-ink-faint">No chapters yet.</p>
+        )}
         <ul className="flex flex-col gap-0.5">
           {filtered.map((part) => (
             <li key={part.id}>
@@ -633,11 +765,13 @@ function TopBar({
   chapterTitle,
   onOpenPanel,
   makeRoomForExitButton = false,
+  saveStatus,
 }: {
   project: { id: string; title: string };
   chapterTitle: string;
   onOpenPanel: (tab: PanelTab) => void;
   makeRoomForExitButton?: boolean;
+  saveStatus?: SaveStatus;
 }) {
   return (
     <header
@@ -670,9 +804,17 @@ function TopBar({
         <span className="min-w-0 flex-1 truncate font-medium text-ink">{chapterTitle}</span>
       </div>
 
-      <span className="hidden shrink-0 items-center gap-1.5 text-xs text-success @[600px]:flex">
+      <span
+        className={`hidden shrink-0 items-center gap-1.5 text-xs @[600px]:flex ${
+          saveStatus === "error" ? "text-danger" : "text-success"
+        }`}
+      >
         <CircleCheck className="size-3.5" />
-        All changes saved
+        {saveStatus === "saving"
+          ? "Saving…"
+          : saveStatus === "error"
+            ? "Couldn't save"
+            : "All changes saved"}
       </span>
 
       <div className="hidden shrink-0 items-center gap-1 @[420px]:flex">
@@ -1125,6 +1267,7 @@ function EditorBody({
   editableRef,
   onSelect,
   onStatsChange,
+  onContentChange,
   typewriter = false,
   centered = false,
   zoomPercent = 100,
@@ -1133,6 +1276,7 @@ function EditorBody({
   editableRef: React.RefObject<HTMLDivElement | null>;
   onSelect: () => void;
   onStatsChange: (deltaWords: number, deltaCharacters: number) => void;
+  onContentChange: () => void;
   typewriter?: boolean;
   centered?: boolean;
   zoomPercent?: number;
@@ -1226,6 +1370,7 @@ function EditorBody({
     const text = editableRef.current?.innerText ?? "";
     const current = countText(text);
     onStatsChange(current.words - baseline.current.words, current.characters - baseline.current.characters);
+    onContentChange();
     centerCaret();
     // A second, deferred pass: on a line-wrap the browser's own
     // scroll-into-view can land after this handler runs, nudging the caret
@@ -1276,20 +1421,38 @@ function countText(text: string): { words: number; characters: number } {
   };
 }
 
+// data-* attributes here aren't styling hooks — they're how
+// `serializeParagraphs` (ChaptersPage) reconstructs each paragraph's
+// emphasis/break/commenter metadata from the live contentEditable DOM when
+// autosaving, since plain `textContent` alone can't distinguish them.
 function EditorParagraph({ paragraph }: { paragraph: ChapterParagraph }) {
   if (paragraph.break) {
-    return <p className="my-6 text-center tracking-[0.5em] text-ink-faint">{paragraph.text}</p>;
+    return (
+      <p data-paragraph-id={paragraph.id} data-break="true" className="my-6 text-center tracking-[0.5em] text-ink-faint">
+        {paragraph.text}
+      </p>
+    );
   }
 
   const tone = paragraph.commenter ? COMMENTER_TONE[paragraph.commenter] : null;
   const textClass = paragraph.emphasis ? "text-gold" : "";
 
   if (!paragraph.commenter) {
-    return <p className={textClass}>{paragraph.text}</p>;
+    return (
+      <p data-paragraph-id={paragraph.id} data-emphasis={paragraph.emphasis ? "true" : undefined} className={textClass}>
+        {paragraph.text}
+      </p>
+    );
   }
 
   return (
-    <p className={`border-l-2 pl-4 ${textClass}`} style={{ borderColor: `var(--${tone})` }}>
+    <p
+      data-paragraph-id={paragraph.id}
+      data-emphasis={paragraph.emphasis ? "true" : undefined}
+      data-commenter={paragraph.commenter}
+      className={`border-l-2 pl-4 ${textClass}`}
+      style={{ borderColor: `var(--${tone})` }}
+    >
       {paragraph.text}
       <CommenterTag name={paragraph.commenter!} className="ml-2 align-middle" />
     </p>
@@ -1300,6 +1463,8 @@ function CommenterTag({ name, className = "" }: { name: Commenter; className?: s
   const tone = COMMENTER_TONE[name];
   return (
     <span
+      data-commenter-tag="true"
+      contentEditable={false}
       className={`inline-flex shrink-0 items-center rounded-md px-2 py-0.5 text-xs font-medium not-italic ${className}`}
       style={{
         color: `var(--${tone})`,

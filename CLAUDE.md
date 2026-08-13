@@ -154,9 +154,11 @@ writer's side). Tagline: **"Write. Craft. Conquer."**
 - Still stubbed (`<ComingSoon>`, no data model at all yet): Project
   Analytics tab, Project Settings tab, and the top-level Timeline/AI
   Assistant/Templates/Goals/Help nav destinations.
-- **The single most important gap:** the manuscript editor's prose is a
-  `contentEditable` DOM region wired to zero persistence. There is no
-  chapter-body save/load anywhere in the app today — see §5.
+- **Formerly the single most important gap, now closed:** the manuscript
+  editor's prose is a `contentEditable` DOM region — it now has real
+  chapter-body save/load (debounced autosave, lazy load-on-open) backed by
+  the real backend's `manuscript_chapters` resource. See §3.5's
+  Manuscript/Chapters section and §5.
 
 ## 2. Tech stack
 
@@ -258,7 +260,7 @@ backend during backend-side development.
 | Character | **Live** — `/codex` (`entryType: "character"`) | `character-store.ts` |
 | Worldbuilding | Mock (next) | `worldbuilding-store.ts` |
 | Notes | Mock (next) | `notes-store.ts` |
-| Manuscript/Chapters | Mock (last — biggest lift) | none yet |
+| Manuscript/Chapters | **Live** — `/manuscript/chapters` | `manuscript-store.ts` |
 | Outliner | Mock, deferred | none yet (backend has no Outliner endpoints — confirmed low priority) |
 | Dashboard-only stats | Mock, deferred | `dashboard-data.ts` (no backend resource exists for these — see §4.7) |
 
@@ -413,6 +415,132 @@ character list shows a correct empty state before creation and the real
 character after, confirm the Relationships tab doesn't crash on a
 character with zero relationships, and confirm the character survives a
 hard reload (real persistence).
+
+### Manuscript/Chapters (live)
+
+`manuscript-store.ts` (new file — this domain previously had no store at
+all, see §4.5/§5's original "biggest gap" writeup) now fetches/writes real
+`manuscript_chapters` rows via `/manuscript/chapters`. Wired ahead of
+Notes/Worldbuilding, out of the originally suggested order, because it was
+the direct fix for two of three concrete production complaints (see below)
+rather than a scheduled next-in-line integration.
+
+**Deliberately NOT wired to `manuscript_parts` yet.** `part_id` is a
+nullable FK on `manuscript_chapters`, so nothing requires Parts to exist.
+Every real chapter for a book is grouped client-side under one synthetic
+`ManuscriptPart` (`id: "manuscript", title: "Manuscript"`) so the existing
+`ManuscriptPart[]`-shaped UI (`ManuscriptPanel` et al.) kept working
+unchanged. Real Parts CRUD (`/manuscript/parts`) can be wired in a later
+pass if/when the UI grows a way to create more than one part.
+
+**Two independent pieces of state, on purpose:** the chapter *list*
+(metadata only — id/number/title/complete, from `GET
+/manuscript/chapters?bookId=`) loads once per book for the left-rail nav;
+the chapter *body* (paragraphs, from `GET /manuscript/chapters/:id`) loads
+lazily, one chapter at a time, only for whichever chapter is actually open
+in the editor — fetching every chapter's full paragraph content just to
+render a nav list would be wasteful for a long manuscript. Same lazy-fetch
+shape as `useCharacterRelationships` from the Character integration.
+
+**Response shape confirmed by reading `manuscriptChapters.ts` directly**
+before writing any mapping code (continuing the discipline the Projects
+bug forced): list responses are column-limited server-side
+(`{chapters: [...]}`, no `paragraphs` field — the backend's own `.select()`
+deliberately excludes it) vs. detail responses which include it
+(`{chapter: {...}, scenes: [...]}`, full row via `.select("*")`). `POST`
+requires `userId`/`bookId`/`number` (a positive integer, unique per book —
+409 on collision); `PATCH /manuscript/chapters/:id` (the autosave
+endpoint) accepts any subset of `partId`/`number`/`title`/`heading`/
+`complete`/`paragraphs` and is cheap on the backend — it only ever writes
+this one row, never touches embeddings/`manuscript_chunks`. A separate,
+explicit `POST .../sync-to-memory` action exists for pushing a chapter into
+AI-searchable memory but is **not wired to any UI yet** — deliberately out
+of scope here, since "accept into manuscript memory" reads as a distinct
+writer action from autosave-while-typing, not something to fire on every
+debounced save.
+
+**Chapter creation** (`createChapter(bookId)`, called from the editor's
+"Create First Chapter" / "Add chapter" `+` button — previously *both* had
+no handler at all, the single biggest documented gap in this repo):
+auto-numbers to one past the current highest chapter number, and seeds a
+single empty paragraph (`[{id, text: ""}]`) so the editor always has
+somewhere to place the caret instead of an empty contentEditable with no
+child nodes.
+
+**Autosave — debounced, with a real correctness bug caught before
+shipping.** The editor's `contentEditable` prose is serialized back into
+`ChapterParagraph[]` via `serializeParagraphs()`, which reads
+`data-paragraph-id`/`data-break`/`data-emphasis`/`data-commenter`
+attributes now stamped onto each rendered `<p>` by `EditorParagraph`, plus
+its `textContent` (with the inline `CommenterTag` label excluded via
+`contentEditable={false}` + `data-commenter-tag="true"`). This is an
+explicit **best-effort round-trip, not lossless**: plain text and
+emphasis/break/commenter metadata survive a save/reload; rich inline
+formatting applied via `execCommand` (bold/italic/links/color/etc.) does
+NOT, since the backend's `ChapterParagraph` shape has no HTML field to
+carry it. `scheduleSave()` debounces at 1200ms.
+
+The bug: flushing a pending save on chapter switch via a `useEffect`
+cleanup keyed on the chapter id is broken, because changing `EditorBody`'s
+`key` prop remounts it — React repoints `editableRef.current` at the *new*
+chapter's fresh DOM *before* the old effect's cleanup runs, so a
+cleanup-based flush would silently read the wrong chapter's content and
+save it under the old chapter's id. Fixed by making `flushPendingSave()` a
+plain synchronous function called explicitly inside `selectChapter()` and
+`handleCreateChapter()` *before* the state change that triggers the
+switch, plus a separate `useEffect(() => () => flushPendingSave(), [])`
+(empty deps) for true page-unmount, where the DOM hasn't been torn down
+yet when cleanup fires.
+
+**Fixed the three production complaints this integration was scoped
+for:**
+1. *Editor now has somewhere to go on a zero-chapter project.* The old
+   dead-end (`chapters: page.tsx` threw/short-circuited to a message with
+   no CTA when `manuscript.length === 0`) is replaced by
+   `EmptyManuscriptState`, a real "Create First Chapter" button that calls
+   `createChapter()` and lands the user directly in the editor on the new
+   chapter — no more "Add chapter has no handler" dead end.
+2. *Dashboard no longer blocks behind a loading screen that then blinks
+   open.* (See the Dashboard note below — same fix, listed here since the
+   two are related but not identical: this one is about chapters
+   specifically making "has this project been written in" answerable for
+   real.)
+3. *"Resume Writing" no longer shown for projects with zero real writing.*
+   `project.words`/`project.chapters` have no backend rollup yet (always
+   `0`, per §3.5's Project section) so they can't answer "has this project
+   been written in." `ContinueWritingCard` (`src/app/(app)/page.tsx`) now
+   calls `useManuscript(project.id)` directly and checks
+   `manuscript.some(part => part.chapters.length > 0)` as the authoritative
+   signal — branches card heading/CTA label ("Continue Writing"/"Resume
+   Writing" vs. "Start Writing") and hides the (previously always-fabricated
+   0%) progress bar entirely until a chapter actually exists.
+
+**Separately, the Dashboard's loading-flash complaint fixed on its own
+terms:** the dedicated "Loading your projects…" screen (itself a fix from
+an earlier pass) was the *new* problem reported — it blocked the whole
+page then blinked open once data arrived. Removed that branch entirely;
+the New User dashboard shell (an honest generic "start here" state, not a
+fabricated claim about the user's data) is what a not-yet-loaded
+`projects: []` renders as anyway via the existing fallthrough, so on a
+fast load nothing changes and on a slow one (Render cold start) the page
+shows a calm, already-open default that updates in place once real data
+arrives, instead of a jarring blank/loading swap. The dedicated
+`loadStatus === "error"` branch was kept as-is — silently pretending
+nothing's wrong on a genuine failure would be worse than a brief
+wrong-variant flash.
+
+**Verified working** (same local-mock-server approach as Projects/
+Character — this sandbox can't reach the real backend directly, and this
+was the first integration in this pass where the mock also had to grow
+`/manuscript/parts` and `/manuscript/chapters` handlers matching the real
+envelope/snake-case shape): a project with zero chapters shows the
+"Create First Chapter" CTA and it works, landing directly in the editor;
+typing triggers a debounced autosave that reaches "All changes saved";
+the typed content survives a hard reload (real persistence, not just
+in-session state); the Dashboard shows no blocking loading screen on
+initial nav; and the Continue Writing card correctly reads "Start
+Writing" (no fabricated progress bar) before any chapter exists and
+"Resume Writing" (with a real progress bar) once one is created.
 
 ---
 
@@ -771,12 +899,17 @@ export type NewNoteInput = {
 not-authored-by-the-current-user, simulating shared notes) — no UI sets
 either after creation.
 
-### 4.5 Manuscript / Chapters (the biggest gap — read this closely)
+### 4.5 Manuscript / Chapters
 
-Source: `src/lib/manuscript-data.ts`. **No reactive store exists.** Static
-exports only, and — critically — the actual prose the user types in the
-editor is **never read from or written back to this file after initial
-mount**; it lives only in the browser DOM for the current page session.
+**Live — backed by the real backend's `/manuscript/chapters`, see §3.5's
+Manuscript/Chapters section for the field mapping, the autosave/flush
+design, and known limitations (no Parts CRUD yet, best-effort rich-text
+round-trip).** Types are still defined in `src/lib/manuscript-data.ts`
+(now just types + `findChapter()` + the `Commenter`/`COMMENTER_TONE`
+constants — the old `genericManuscript()`/`genericChapterBody()`/
+`getManuscript()`/`getChapterBody()` seed-data functions were deleted,
+confirmed unused elsewhere); `src/lib/manuscript-store.ts` (new file)
+fetches/writes real data.
 
 ```ts
 export type Scene = {
@@ -826,42 +959,33 @@ export type CollaboratorStatus = "Editing" | "Viewing" | "Commenting";
 // ACTIVE_COLLABORATORS: { name: string; you?: boolean; status: CollaboratorStatus; tone: Commenter }[]
 ```
 
-Only one project (`shadows-of-elarion`) has hand-authored manuscript
-structure + one full chapter body (`ch-18`) + a comment thread; every other
-project gets a `genericManuscript(chapterCount)` (3 parts, evenly split
-generic chapter titles) and every chapter without explicit content gets a
-single placeholder paragraph via `genericChapterBody()`.
+Chapter list + body (paragraphs) are both real per-project data now — see
+§3.5 for the exact fetch/save flow. What's still genuinely mock or
+unbuilt, precisely:
 
-**What actually needs backend support, precisely:**
-1. **Chapter body persistence** — the prose editor is a real
-   `contentEditable` region with real formatting commands
-   (bold/italic/underline/lists/links/color/highlight/font/size/image/
-   table/checklist all genuinely apply via `document.execCommand`), but
-   there is **no save call anywhere**. Switching chapters, refreshing, or
-   navigating away and back always resets to `getChapterBody()`'s static
-   text. The "All changes saved" indicator in the toolbar is decorative
-   static text — it is never actually false because nothing is ever saved.
-   The backend needs a chapter-body resource (likely rich HTML or a
-   structured-paragraph format matching `ChapterParagraph[]` above) with
-   real load-on-mount / save-on-edit (debounced autosave, most likely).
-2. **Word/character counts** — computed client-side as deltas off a
-   hardcoded baseline (`4,580` words / `26,789` characters); not derived
-   from anything real, resets on remount. Once chapter bodies persist, word
-   count should be computed server-side or client-side-from-persisted-text,
-   not carried as a separate mutable baseline.
-3. **Comments** — real local interactive state (add/resolve/unresolve/
-   filter), seeded from `CHAPTER_18_COMMENTS`, resets on remount,
-   authorship hardcoded to `"Jessica"` (not a real session/user). Needs a
+1. **Word/character counts** — computed client-side from the open
+   chapter's actual persisted body text (`bodyBaseline` in
+   `chapters/page.tsx`), not a hardcoded baseline anymore, but still not
+   server-computed — fine for now, would only matter at real scale.
+2. **Comments** — still real local interactive state (add/resolve/
+   unresolve/filter), seeded from `CHAPTER_18_COMMENTS` (now empty),
+   resets on remount, authorship still hardcoded to `"Jessica"`. Needs a
    comments-on-chapter (or comments-on-paragraph, given the
    `commenter`-per-paragraph anchor) resource plus real auth to attribute
-   authorship.
-4. **Manuscript structure (Parts → Chapters → Scenes)** — no UI to
-   create/reorder/delete a chapter or scene today; entirely seed-only. If
-   the AI-writing pipeline needs to read/write structure, this needs CRUD
-   endpoints and a corresponding UI, neither of which exist yet.
-5. **Version history** — explicitly an honest placeholder in the UI
+   authorship — not part of this integration pass.
+3. **Manuscript structure beyond flat chapters (Parts, Scenes)** — no UI
+   to create/reorder/delete a Part or a Scene today; the backend has real
+   endpoints for both (`/manuscript/parts`, `/manuscript/chapters/:id/
+   scenes`) but nothing in the frontend calls them yet. If the AI-writing
+   pipeline needs real structure beyond a flat chapter list, this is the
+   next lift.
+4. **Version history** — explicitly an honest placeholder in the UI
    ("Version history isn't wired up yet.") — no data shape exists to design
    against yet; would need requirements gathering before schema design.
+5. **`sync-to-memory`** — the backend has a real, separate
+   `POST /manuscript/chapters/:id/sync-to-memory` endpoint for pushing a
+   chapter into AI-searchable memory; not wired to any UI action yet
+   (deliberately kept distinct from autosave — see §3.5).
 6. Collaborators/presence and Share are fully decorative/static — not a
    near-term backend priority per the current build.
 
@@ -919,10 +1043,6 @@ UI that ever writes to it**:
 ```ts
 export const user = { name: string, quote: { text: string, attribution: string } };
 
-export const continueWriting = {
-  projectId: string, title: string, chapter: string, words: number, target: number,
-};
-
 export const todaysProgress = {
   words: number, target: number, streakDays: number, today: number,
   activeDays: number[],   // day-of-month values with ≥1 session, for the mini-calendar's active dots
@@ -965,12 +1085,13 @@ summary the backend team asked for.)
 
 | Feature | State today |
 | --- | --- |
-| Prose editing (`contentEditable`, formatting commands) | Real, but **zero persistence** — resets on remount |
-| Word/character counts | Computed client-side off a hardcoded baseline, resets on remount |
-| "All changes saved" indicator | Decorative static text, never actually false |
-| Comments (add/resolve/filter) | Real local state, seeded, resets on remount, author hardcoded to "Jessica" |
+| Prose editing (`contentEditable`, formatting commands) | Real, and now **real persistence** — debounced autosave to the backend, best-effort round-trip (plain text/emphasis/break/commenter survive; rich inline formatting like bold/links does not) |
+| Chapter creation | Real — "Create First Chapter" / "Add chapter" both create a real chapter and land you in the editor |
+| Word/character counts | Computed client-side from the open chapter's real persisted body text |
+| "All changes saved" indicator | Real — reflects live `SaveStatus` ("Saving…" / "All changes saved" / "Couldn't save") |
+| Comments (add/resolve/filter) | Real local state, seeded (now empty), resets on remount, author hardcoded to "Jessica" — not part of this integration pass |
 | Versions / Outline / AI side-panel tabs | Explicit honest placeholders — no fake data |
-| Manuscript structure (Parts/Chapters/Scenes) | Static seed data, no create/reorder/delete UI |
+| Manuscript structure (Chapters) | **Live** — flat chapter list/body persisted; Parts/Scenes have real backend endpoints but no UI yet (see §4.5) |
 | Active Collaborators | Fully static, not real presence |
 | Share | Decorative, its own copy says there's no backend |
 | Focus Mode (Normal/Typewriter/Zen) | Real, fully working client-only UI state — nothing to persist |
@@ -1038,7 +1159,7 @@ export interface AiProvider {
 /projects/[id]                (Overview tab) Project + deriveRecentChapters/deriveRecentActivity
 /projects/[id]/analytics                     stub — <ComingSoon>, no data model
 /projects/[id]/settings                      stub — <ComingSoon>, no data model
-/projects/[id]/chapters                      ManuscriptPart[] + ChapterBody + CommentThread[] (§4.5/§5 — the big gap)
+/projects/[id]/chapters                      ManuscriptPart[] (live) + ChapterBody (live) + CommentThread[] (mock) (§4.5/§5)
 /projects/[id]/outlines                      Act[] / Beat[] (§4.6 — seed-only, no store)
 /projects/[id]/characters                    Character[] (live) + selected Character detail
 /projects/[id]/characters/all                Character[] (live), grid+pagination
