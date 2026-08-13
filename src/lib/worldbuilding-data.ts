@@ -1,13 +1,37 @@
 import {
+  Anchor,
+  BookOpen,
+  Building2,
+  Coins,
+  Compass,
+  Crown,
   Drama,
+  Eye,
+  Feather,
   Flag,
+  Flame,
+  FlaskConical,
   Gem,
   Hourglass,
+  Key,
+  Landmark,
+  Layers,
+  Map as MapIcon,
   Mountain,
+  Package,
+  Scale,
+  Scroll,
   Shield,
+  Skull,
   Sparkles,
   Sun,
+  Swords,
+  TreePine,
+  Users,
+  Wand2,
+  Waves,
   type LucideIcon,
+  Castle,
 } from "lucide-react";
 
 /**
@@ -55,6 +79,53 @@ export function findCategory(key: WorldCategoryKey): WorldCategoryMeta {
   return WORLD_CATEGORIES.find((c) => c.key === key)!;
 }
 
+/**
+ * Name -> component lookup for the icons the "New Category" form's icon
+ * picker offers (`ICON_LIBRARY` in `world/new-category/page.tsx`) — the
+ * backend stores the picked icon as a plain string (`world_categories.icon`,
+ * nullable), matching this repo's own long-standing note that "backend
+ * should store an icon identifier string instead" of a component reference.
+ * These names must match `ICON_LIBRARY`'s `name` field exactly.
+ */
+export const WORLD_ICON_REGISTRY: Record<string, LucideIcon> = {
+  Castle,
+  Mountain,
+  Building: Building2,
+  Tree: TreePine,
+  Landmark,
+  Map: MapIcon,
+  Users,
+  Crown,
+  Drama,
+  Skull,
+  Feather,
+  Eye,
+  Sparkles,
+  Wand: Wand2,
+  Flame,
+  Waves,
+  Compass,
+  Key,
+  Shield,
+  Flag,
+  Book: BookOpen,
+  Scroll,
+  Gem,
+  Potion: FlaskConical,
+  Anchor,
+  Swords,
+  Chest: Package,
+  Hourglass,
+  Coins,
+  Scale,
+};
+
+export const DEFAULT_WORLD_ICON: LucideIcon = Layers;
+
+export function iconForKey(name: string | null | undefined): LucideIcon {
+  return (name && WORLD_ICON_REGISTRY[name]) || DEFAULT_WORLD_ICON;
+}
+
 export type WorldEntry = {
   id: string;
   name: string;
@@ -68,13 +139,7 @@ export function formatAgo(hours: number): string {
   return hours < 24 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`;
 }
 
-// Ordered so the top 5 by updatedHours match the mockup's "Recent Entries"
-// exactly: Blackspire Forest (Places), Kingdom of Valenor (Nations), The
-// Eclipse War (History), The Veilborn (Cultures), The Celestial Order
-// (Factions) — everything else is deliberately further out.
-export const WORLD_ENTRIES: WorldEntry[] = [];
-
-export function worldCounts(entries: WorldEntry[] = WORLD_ENTRIES) {
+export function worldCounts(entries: WorldEntry[]) {
   const byCategory = Object.fromEntries(
     WORLD_CATEGORIES.map((c) => [c.key, entries.filter((e) => e.category === c.key).length]),
   ) as Record<WorldCategoryKey, number>;
@@ -82,7 +147,7 @@ export function worldCounts(entries: WorldEntry[] = WORLD_ENTRIES) {
 }
 
 /** Entries sorted most-recently-updated first — what "Recent Entries" shows. */
-export function recentEntries(entries: WorldEntry[] = WORLD_ENTRIES): WorldEntry[] {
+export function recentEntries(entries: WorldEntry[]): WorldEntry[] {
   return [...entries].sort((a, b) => a.updatedHours - b.updatedHours);
 }
 
@@ -114,6 +179,6 @@ export type PinnedWorldItem = {
 
 export const PINNED_WORLD_ITEMS: PinnedWorldItem[] = [];
 
-export function findEntry(id: string): WorldEntry | undefined {
-  return WORLD_ENTRIES.find((e) => e.id === id);
+export function findEntry(entries: WorldEntry[], id: string): WorldEntry | undefined {
+  return entries.find((e) => e.id === id);
 }

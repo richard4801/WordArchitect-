@@ -27,12 +27,11 @@ import {
   PINNED_WORLD_ITEMS,
   recentEntries,
   type WorldCategoryKey,
-  WORLD_ENTRIES,
   worldCounts,
   WORLD_OVERVIEW,
   WORLD_TIMELINE,
 } from "@/lib/worldbuilding-data";
-import { useWorldCategories } from "@/lib/worldbuilding-store";
+import { useWorldCategories, useWorldEntries, useWorldError, useWorldLoadStatus } from "@/lib/worldbuilding-store";
 import { useProject } from "@/lib/project-store";
 import { WorldTopBar } from "./_shared";
 
@@ -50,12 +49,15 @@ const QUICK_ACTIONS = [
 export default function WorldbuildingPage() {
   const { id } = useParams<{ id: string }>();
   const project = useProject(id);
-  const categories = useWorldCategories();
+  const categories = useWorldCategories(project?.id);
+  const entries = useWorldEntries(project?.id);
+  const worldLoadStatus = useWorldLoadStatus();
+  const worldError = useWorldError();
   const [filter, setFilter] = useState<"all" | WorldCategoryKey>("all");
   const [query, setQuery] = useState("");
 
-  const counts = useMemo(() => worldCounts(WORLD_ENTRIES), []);
-  const sorted = useMemo(() => recentEntries(WORLD_ENTRIES), []);
+  const counts = useMemo(() => worldCounts(entries), [entries]);
+  const sorted = useMemo(() => recentEntries(entries), [entries]);
 
   const filtered = useMemo(() => {
     return sorted.filter((e) => {
@@ -74,6 +76,17 @@ export default function WorldbuildingPage() {
             <ChevronLeft className="size-4" />
             Back to Projects
           </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (worldLoadStatus === "error") {
+    return (
+      <div className="grid h-dvh place-items-center text-center">
+        <div>
+          <p className="font-display text-xl text-ink">Couldn&rsquo;t reach the server</p>
+          <p className="mt-2 text-sm text-ink-muted">{worldError ?? "Something went wrong loading your world."}</p>
         </div>
       </div>
     );
@@ -348,7 +361,7 @@ export default function WorldbuildingPage() {
               </div>
               <ul className="mt-3 space-y-3.5">
                 {PINNED_WORLD_ITEMS.map((p) => {
-                  const entry = findEntry(p.entryId);
+                  const entry = findEntry(entries, p.entryId);
                   const cat = entry && categories.find((c) => c.key === entry.category);
                   if (!entry || !cat) return null;
                   return (

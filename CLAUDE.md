@@ -258,7 +258,7 @@ backend during backend-side development.
 | --- | --- | --- |
 | Project | **Live** — `/books` | `project-store.ts` |
 | Character | **Live** — `/codex` (`entryType: "character"`) | `character-store.ts` |
-| Worldbuilding | Mock (next) | `worldbuilding-store.ts` |
+| Worldbuilding | **Live** — `/world-categories` + `/codex` | `worldbuilding-store.ts` |
 | Notes | **Live** — `/notes` | `notes-store.ts` |
 | Manuscript/Chapters | **Live** — `/manuscript/chapters` | `manuscript-store.ts` |
 | Outliner | Mock, deferred | none yet (backend has no Outliner endpoints — confirmed low priority) |
@@ -595,6 +595,94 @@ note moves it into the Pinned Notes rail; the note and its pinned state
 both survive a hard reload (real persistence); and the Quick Notes
 composer creates a second real note the same way.
 
+### Worldbuilding (live)
+
+`worldbuilding-store.ts` now fetches/writes real data via two backend
+resources, not one — the backend has no dedicated `world_entries` table.
+
+**Categories** are backed by `/world-categories`, a real table
+(`world_categories`) keyed by `book_id` + `key`. **Entries are just
+`codex_entries` rows whose `entry_type` isn't `"character"`** — the exact
+same table Character uses (see `codex.ts`), scoped by whatever string the
+category's `key` is. This is a real architectural discovery made by
+reading `worldCategories.ts`/`codex.ts` directly (continuing the
+established "read the route source, not the summary table" discipline):
+a `WorldEntry` has no dedicated identity of its own on the backend at all.
+
+**The fixed 8-category taxonomy is kept as a permanent client-side base
+layer**, not replaced by the fetch. A brand-new project has zero rows in
+`world_categories` and zero non-character `codex_entries`, so a naive
+"just fetch categories" would show a completely empty taxonomy on every
+new project — worse than the old mock. Instead `useWorldCategories(bookId)`
+merges `WORLD_CATEGORIES` (Places/Nations/Cultures/History/Magic/
+Factions/Religion/Items & Artifacts) with whatever the backend actually
+returns, keyed by `key`, real data winning on collision. This is the same
+"structure, not seed content" treatment CLAUDE.md already applies to the
+Outliner's Act I/II/III containers — the 8 categories are the fixed
+organizing taxonomy, not sample data to purge.
+
+**The backend also merges in "derived" categories server-side**: if a
+book has `codex_entries` using an `entry_type` with no matching
+`world_categories` row yet (e.g. entries created directly through the
+MCP tool surface before a matching category was ever explicitly created),
+`GET /world-categories` synthesizes a display-only category for it
+(`id: ""`, `is_derived: true`, a titleized name, no explicit color/icon —
+`mapRowToCategoryMeta` falls back to a neutral gray + the generic
+`DEFAULT_WORLD_ICON` for these). This means a category always exists to
+group entries under, even before anyone explicitly creates one for it.
+
+**Icon serialization**: `WorldCategoryMeta.Icon` is a React component
+reference (can't cross the network); the backend's `world_categories.icon`
+column is a plain nullable string, exactly the gap this repo's own
+CLAUDE.md flagged before this pass ("backend should store an icon
+identifier string instead"). `createWorldCategory()`'s `NewCategoryInput`
+now takes `iconKey?: string` (the icon library's `name` field, e.g.
+`"Castle"`) instead of an `Icon` component; a new `WORLD_ICON_REGISTRY`
+(`worldbuilding-data.ts`) maps those same name strings back to components
+on read, with `DEFAULT_WORLD_ICON` (`Layers`) as the fallback for a
+missing/unrecognized icon string — same fallback the old mock used.
+
+**Entries are still read-only from the app's own UI** — there is still no
+"New Entry" form anywhere (unchanged, documented gap, see §4.3), so
+nothing in the app itself writes a `codex_entries` row with a
+non-character `entryType`. What changed is that the World hub now reads
+real data instead of a permanently-empty seed array: `useWorldEntries(bookId)`
+fetches `GET /codex?bookId=` (no `entryType` filter — the codex route only
+supports equality, not "not equal," so all entries are fetched and
+`entry_type !== "character"` is filtered client-side, mirroring exactly
+what the backend's own `listWorldCategories` does server-side) and maps
+each row to `WorldEntry`. This means entries created some other way — the
+MCP tool surface's `create_codex_entry`, most plausibly — now actually
+show up in Recent Entries, category counts, and category filtering,
+instead of the hub being structurally incapable of ever showing a
+non-zero entry count. Same class of fix as Character's `findCharacter`
+bug from the Character integration pass: not new functionality, just
+correctness once real data exists to read.
+
+**`worldbuilding-data.ts` cleanup**: the old `WORLD_ENTRIES` seed export
+was removed along with its use as a default parameter on `worldCounts()`/
+`recentEntries()`/`findEntry()` — all three now take an explicit
+`entries: WorldEntry[]` argument instead, since there's no longer a
+module-level array to default to.
+
+**Still mock, no backend resource for these at all**: `WORLD_TIMELINE`,
+`WORLD_OVERVIEW`, and `PINNED_WORLD_ITEMS` remain static, empty exports —
+same "decision on record, wire up in a later pass once the resource
+exists" treatment as the Dashboard-only stats in §4.7. Nothing in this
+pass invented a backend shape for a world timeline, an editable world
+overview, or pinned-item notes, since none of those exist as tables today.
+
+**Verified working** (same local-mock-server approach as every other
+domain — extended with `/world-categories` handlers matching the real
+envelope/snake-case shape and the server-side derived-category merge
+logic): a project with zero custom categories still shows the full 8-item
+base taxonomy; creating a category through the "New Category" form shows
+it in the Categories grid and filter tabs and survives a hard reload;
+and — the key correctness check — a `codex_entries` row created directly
+against the mock backend (simulating an MCP-created entry, bypassing the
+app's own UI entirely) correctly appears in the World hub's Recent
+Entries table on the very next load, with no app changes needed to see it.
+
 ---
 
 ## 4. Entity reference
@@ -835,10 +923,14 @@ either new forms or a generic rich-edit surface, not just CRUD endpoints.
 
 ### 4.3 Worldbuilding — categories and entries
 
-Source: `src/lib/worldbuilding-data.ts` (types + 8 fixed categories + 31
-seed entries), category store `src/lib/worldbuilding-store.ts`. **Entries
-have no store — `WORLD_ENTRIES` is static, seed-only, no creation form
-exists for an individual entry today, only for a category.**
+**Live — backed by the real backend's `/world-categories` (categories) and
+`/codex` (entries — there's no dedicated entries table, see §3.5's
+Worldbuilding section for why). Types are still defined in
+`src/lib/worldbuilding-data.ts`; `src/lib/worldbuilding-store.ts` fetches/
+writes real data.** The fixed 8 categories below stay a permanent
+client-side base layer (merged with real backend categories), same
+"structure, not content" treatment as before — see §3.5 for the merge
+details and the entries-are-just-codex-rows discovery.
 
 ```ts
 export type WorldCategoryKey = "places" | "nations" | "cultures" | "history" | "magic" | "factions" | "religion" | "items";
@@ -847,7 +939,7 @@ export type WorldCategoryMeta = {
   key: WorldCategoryKey;
   label: string;
   description: string;
-  Icon: LucideIcon;   // a React component reference, not serializable as-is — backend should store an icon identifier string instead (see NewCategoryInput note below)
+  Icon: LucideIcon;   // a React component reference, not serializable as-is — resolved client-side via WORLD_ICON_REGISTRY/iconForKey() from the backend's plain string icon column (see NewCategoryInput note below and §3.5)
   color: string;      // CSS color value or CSS var() reference
 };
 
@@ -887,25 +979,31 @@ export type NewCategoryInput = {
   name: string;
   description?: string;
   color: string;
-  Icon: WorldCategoryMeta["Icon"];   // picked from a fixed 30-icon library in the form (ICON_LIBRARY) — backend should model this as an enum/string key, not a component
+  iconKey?: string;   // icon library name (e.g. "Castle"), picked from a fixed 30-icon library in the form (ICON_LIBRARY) — real backend column now (world_categories.icon), see §3.5
 };
 ```
 
-`createWorldCategory()` slugifies `name` into `key` (dedupes with a `-2`,
-`-3`... suffix on collision); `description` defaults to `"A new
-worldbuilding category."` if blank. The 8 seed categories
-(Places/Nations/Cultures/History/Magic/Factions/Religion/Items & Artifacts)
-are otherwise fixed in the current build.
+`createWorldCategory(bookId, input)` is now `async` and calls the real
+`POST /world-categories` — the backend derives `key` from `name` (or an
+explicit `key`) server-side, the same slugify logic the old mock used
+client-side; 409 on a colliding key for the same book. `description`
+still defaults to `"A new worldbuilding category."` if blank. The 8 base
+categories (Places/Nations/Cultures/History/Magic/Factions/Religion/Items
+& Artifacts) remain fixed, now as a client-side merge layer rather than
+the entire taxonomy (see §3.5).
 
-**EDITABLE-vs-SEED-ONLY:** categories are createable (see above);
-**individual `WorldEntry` records are 100% seed-only** — there is no "New
-Entry" form anywhere in the app today, despite the hub page's Recent
-Entries table and category filtering all reading from `WORLD_ENTRIES`.
-`WORLD_TIMELINE` (4 fixed events) and `WORLD_OVERVIEW` and
-`PINNED_WORLD_ITEMS` are likewise static exports with no UI to edit them.
-This is the second-biggest EDITABLE gap for AI-context purposes: a
-worldbuilding "codex" the AI would pull from currently has zero write path
-for the entries themselves, only for the category taxonomy around them.
+**EDITABLE-vs-READ-ONLY:** categories are createable for real now (see
+above); **individual `WorldEntry` records are still 100% read-only from
+the app's own UI** — there is still no "New Entry" form anywhere, despite
+the hub page's Recent Entries table and category filtering now reading
+real `codex_entries` data (see §3.5) instead of a permanently-empty seed
+array. `WORLD_TIMELINE` (still 0 events), `WORLD_OVERVIEW`, and
+`PINNED_WORLD_ITEMS` remain static exports with no UI to edit them and no
+backend resource at all. The entries gap is still the single biggest
+EDITABLE gap for AI-context purposes: a worldbuilding "codex" the AI would
+pull from has a real read path now, but the only write path into it is
+outside this app (the MCP tool surface's `create_codex_entry`, most
+likely) — there's still no in-app form for a writer to add one directly.
 
 ### 4.4 Notes
 

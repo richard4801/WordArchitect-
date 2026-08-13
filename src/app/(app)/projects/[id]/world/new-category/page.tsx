@@ -102,7 +102,7 @@ const SUGGESTED_CATEGORIES = ["Kingdoms", "Magic Systems", "Religions", "Ancient
 export default function NewWorldCategoryPage() {
   const { id } = useParams<{ id: string }>();
   const project = useProject(id);
-  const categories = useWorldCategories();
+  const categories = useWorldCategories(project?.id);
   const router = useRouter();
 
   const [name, setName] = useState("");
@@ -116,6 +116,8 @@ export default function NewWorldCategoryPage() {
   const [allowSubcategories, setAllowSubcategories] = useState(true);
   const [createAnother, setCreateAnother] = useState(false);
   const [nameError, setNameError] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const [iconQuery, setIconQuery] = useState("");
   const [iconTab, setIconTab] = useState<IconTab>("All");
@@ -146,23 +148,31 @@ export default function NewWorldCategoryPage() {
     setAllowSubcategories(true);
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     const nameOk = name.trim().length > 0;
     setNameError(!nameOk);
     if (!nameOk || !project) return;
 
-    createWorldCategory({
-      name,
-      description,
-      color: selectedColor,
-      Icon: selectedIcon.Icon,
-    });
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      await createWorldCategory(project.id, {
+        name,
+        description,
+        color: selectedColor,
+        iconKey: selectedIcon.name,
+      });
 
-    if (createAnother) {
-      resetForm();
-      return;
+      if (createAnother) {
+        resetForm();
+        return;
+      }
+      router.push(`/projects/${project.id}/world`);
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : "Failed to create category.");
+    } finally {
+      setSubmitting(false);
     }
-    router.push(`/projects/${project.id}/world`);
   }
 
   if (!project) {
@@ -363,6 +373,7 @@ export default function NewWorldCategoryPage() {
                 Cancel
               </button>
               <div className="flex flex-wrap items-center gap-3">
+                {submitError && <p className="text-xs text-danger">{submitError}</p>}
                 <label className="flex items-center gap-2 text-sm text-ink-muted">
                   <input
                     type="checkbox"
@@ -381,10 +392,11 @@ export default function NewWorldCategoryPage() {
                 <button
                   type="button"
                   onClick={handleSubmit}
-                  className="flex items-center gap-1.5 rounded-xl bg-gold px-5 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
+                  disabled={submitting}
+                  className="flex items-center gap-1.5 rounded-xl bg-gold px-5 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-60"
                 >
                   <Plus className="size-3.5" />
-                  Create Category
+                  {submitting ? "Creating…" : "Create Category"}
                 </button>
               </div>
             </div>
