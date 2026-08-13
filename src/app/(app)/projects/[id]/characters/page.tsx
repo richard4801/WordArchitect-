@@ -8,20 +8,22 @@ import {
   Crown,
   Eye,
   Filter,
-  MoreHorizontal,
   Pin,
   Plus,
   Search,
   Sparkles,
   Swords,
+  Trash2,
   User as UserIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { CharacterPortrait } from "@/components/ui/character-portrait";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { OptionsMenu } from "@/components/ui/options-menu";
 import { characterCounts, type Character, type LifeEventType } from "@/lib/character-data";
-import { useCharacterRelationships, useCharacters } from "@/lib/character-store";
+import { deleteCharacter, useCharacterRelationships, useCharacters } from "@/lib/character-store";
 import { useProject } from "@/lib/project-store";
 import { BOND_META, CharactersTopBar, DEFAULT_BOND_COLOR, ROLE_META } from "./_shared";
 
@@ -95,6 +97,11 @@ function CharactersPageInner() {
   function selectCharacter(charId: string) {
     setSelectedId(charId);
     setProfileTab("Profile");
+  }
+
+  async function handleDeleteCharacter(charId: string) {
+    await deleteCharacter(charId);
+    setSelectedId(null);
   }
 
   return (
@@ -182,6 +189,7 @@ function CharactersPageInner() {
               tab={profileTab}
               setTab={setProfileTab}
               onSelectRelated={selectCharacter}
+              onDelete={handleDeleteCharacter}
             />
           ) : (
             <div className="grid place-items-center rounded-xl border border-dashed border-line-strong text-center">
@@ -239,15 +247,21 @@ function CharacterDetail({
   tab,
   setTab,
   onSelectRelated,
+  onDelete,
 }: {
   character: Character;
   allCharacters: Character[];
   tab: ProfileTab;
   setTab: (t: ProfileTab) => void;
   onSelectRelated: (id: string) => void;
+  onDelete: (id: string) => Promise<void>;
 }) {
   const meta = ROLE_META[character.role];
   const isProfile = tab === "Profile";
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const optionsItems = [
+    { label: "Delete Character", Icon: Trash2, danger: true, onClick: () => setConfirmingDelete(true) },
+  ];
   return (
     <div className="scroll-slim overflow-y-auto pb-2 pl-1 pr-1">
       <div className="card p-5">
@@ -262,13 +276,7 @@ function CharacterDetail({
                   {character.name}
                   {character.role === "Main" && <meta.Icon className="size-5 text-gold" />}
                 </h2>
-                <button
-                  type="button"
-                  aria-label="More options"
-                  className="grid size-8 shrink-0 place-items-center rounded-lg text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink"
-                >
-                  <MoreHorizontal className="size-4" />
-                </button>
+                <OptionsMenu ariaLabel="More options" items={optionsItems} />
               </div>
               <p className="mt-1 text-sm font-medium" style={{ color: meta.colorVar }}>
                 {character.role === "Main" ? "Main Character" : character.role}
@@ -300,13 +308,7 @@ function CharacterDetail({
                 {character.role === "Main" ? "Main Character" : character.role}
               </p>
             </div>
-            <button
-              type="button"
-              aria-label="More options"
-              className="grid size-8 shrink-0 place-items-center rounded-lg text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink"
-            >
-              <MoreHorizontal className="size-4" />
-            </button>
+            <OptionsMenu ariaLabel="More options" items={optionsItems} />
           </div>
         )}
 
@@ -372,6 +374,18 @@ function CharacterDetail({
           </div>
         )}
       </div>
+
+      {confirmingDelete && (
+        <ConfirmDialog
+          title="Delete this character?"
+          description={`"${character.name}" and everything on their profile — background, relationships, notes — will be permanently deleted. This can't be undone.`}
+          onCancel={() => setConfirmingDelete(false)}
+          onConfirm={async () => {
+            await onDelete(character.id);
+            setConfirmingDelete(false);
+          }}
+        />
+      )}
     </div>
   );
 }

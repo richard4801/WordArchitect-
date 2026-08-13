@@ -11,18 +11,20 @@ import {
   FileText,
   Globe2,
   ListTree,
-  MoreHorizontal,
   PenLine,
   Plus,
   Settings as SettingsIcon,
+  Trash2,
   Users,
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useParams } from "next/navigation";
+import { usePathname, useParams, useRouter } from "next/navigation";
 import { useState } from "react";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CoverArt } from "@/components/ui/cover-art";
-import { updateProjectTarget, useProject } from "@/lib/project-store";
+import { OptionsMenu } from "@/components/ui/options-menu";
+import { deleteProject, updateProjectTarget, useProject } from "@/lib/project-store";
 import type { Project } from "@/lib/projects-data";
 
 const TABS = [
@@ -52,7 +54,9 @@ const STATUS_BADGE: Record<string, { label: string; varName: string }> = {
 export default function ProjectLayout({ children }: { children: React.ReactNode }) {
   const { id } = useParams<{ id: string }>();
   const pathname = usePathname();
+  const router = useRouter();
   const project = useProject(id);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   if (!project) {
     return (
@@ -117,13 +121,13 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            aria-label="Options"
-            className="grid size-9 place-items-center rounded-xl border border-line text-ink-muted transition-colors hover:text-ink"
-          >
-            <MoreHorizontal className="size-4" />
-          </button>
+          <OptionsMenu
+            ariaLabel="Options"
+            buttonClassName="grid size-9 place-items-center rounded-xl border border-line text-ink-muted transition-colors hover:text-ink"
+            items={[
+              { label: "Delete Project", Icon: Trash2, danger: true, onClick: () => setConfirmingDelete(true) },
+            ]}
+          />
           <Link
             href={`${base}/chapters`}
             className="inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
@@ -168,6 +172,18 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
           <QuickActionsCard base={base} />
         </aside>
       </div>
+
+      {confirmingDelete && (
+        <ConfirmDialog
+          title="Delete this project?"
+          description={`"${project.title}" and everything in it — chapters, characters, world entries, notes — will be permanently deleted. This can't be undone.`}
+          onCancel={() => setConfirmingDelete(false)}
+          onConfirm={async () => {
+            await deleteProject(project.id);
+            router.push("/projects");
+          }}
+        />
+      )}
     </div>
   );
 }

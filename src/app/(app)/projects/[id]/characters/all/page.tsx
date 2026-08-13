@@ -10,18 +10,20 @@ import {
   Grid2x2,
   Heart,
   LayoutGrid,
-  MoreHorizontal,
   Plus,
   Search,
   Sparkles,
+  Trash2,
   Users,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { CharacterPortrait } from "@/components/ui/character-portrait";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { OptionsMenu } from "@/components/ui/options-menu";
 import { characterCounts, type Character, type CharacterRole } from "@/lib/character-data";
-import { useCharacters } from "@/lib/character-store";
+import { deleteCharacter, useCharacters } from "@/lib/character-store";
 import { useProject } from "@/lib/project-store";
 import { CharactersTopBar, ROLE_META } from "../_shared";
 
@@ -261,11 +263,17 @@ function CharacterCard({
 }) {
   const meta = ROLE_META[character.role];
   const router = useRouter();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={() => router.push(`/projects/${projectId}/characters?c=${character.id}`)}
-      className="card-2 group block overflow-hidden text-left transition-transform hover:-translate-y-0.5"
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") router.push(`/projects/${projectId}/characters?c=${character.id}`);
+      }}
+      className="card-2 group block cursor-pointer overflow-hidden text-left transition-transform hover:-translate-y-0.5"
     >
       <div className={`relative ${compact ? "aspect-square" : "aspect-[3/4]"}`}>
         <CharacterPortrait seed={character.id} className="size-full" />
@@ -276,9 +284,14 @@ function CharacterCard({
           {character.role === "Main" && <Crown className="size-3" />}
           {meta.label}
         </span>
-        <span className="absolute right-2 top-2 grid size-6 place-items-center rounded-md bg-canvas/50 text-ink-muted backdrop-blur">
-          <MoreHorizontal className="size-3.5" />
-        </span>
+        <OptionsMenu
+          ariaLabel="More options"
+          buttonClassName="absolute right-2 top-2 grid size-6 place-items-center rounded-md bg-canvas/50 text-ink-muted backdrop-blur transition-colors hover:text-ink"
+          iconClassName="size-3.5"
+          items={[
+            { label: "Delete Character", Icon: Trash2, danger: true, onClick: () => setConfirmingDelete(true) },
+          ]}
+        />
       </div>
       <div className="p-3.5">
         <h3 className="truncate text-sm font-medium text-ink">{character.name}</h3>
@@ -296,6 +309,18 @@ function CharacterCard({
           </div>
         )}
       </div>
-    </button>
+
+      {confirmingDelete && (
+        <ConfirmDialog
+          title="Delete this character?"
+          description={`"${character.name}" and everything on their profile will be permanently deleted. This can't be undone.`}
+          onCancel={() => setConfirmingDelete(false)}
+          onConfirm={async () => {
+            await deleteCharacter(character.id);
+            setConfirmingDelete(false);
+          }}
+        />
+      )}
+    </div>
   );
 }

@@ -265,3 +265,10 @@ export async function updateProjectTarget(id: string, target: number): Promise<v
   projects = projects.map((p) => (p.id === id ? { ...p, target: rounded } : p));
   emit();
 }
+
+/** Delete a project for real. Optimistically removes it from the local cache on success. */
+export async function deleteProject(id: string): Promise<void> {
+  await apiFetch<void>(`/books/${id}`, { method: "DELETE" });
+  projects = projects.filter((p) => p.id !== id);
+  emit();
+}

@@ -363,3 +363,10 @@ export async function createCharacter(bookId: string, input: NewCharacterInput):
   emit();
   return res.entry.id;
 }
+
+/** Delete a character for real. Optimistically removes it from the local cache on success. */
+export async function deleteCharacter(id: string): Promise<void> {
+  await apiFetch<void>(`/codex/${id}`, { method: "DELETE" });
+  characters = characters.filter((c) => c.id !== id);
+  emit();
+}

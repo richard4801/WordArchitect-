@@ -12,7 +12,6 @@ import {
   ListTree,
   Lightbulb,
   MessageSquare,
-  MoreHorizontal,
   Pencil,
   Plus,
   Search,
@@ -23,8 +22,10 @@ import {
 } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useMemo, useState } from "react";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DropdownSelect } from "@/components/ui/dropdown-select";
 import { NoteCoverArt } from "@/components/ui/note-cover-art";
+import { OptionsMenu } from "@/components/ui/options-menu";
 import {
   folderCount,
   type Note,
@@ -36,7 +37,7 @@ import {
   recentNotes,
   sceneFor,
 } from "@/lib/notes-data";
-import { createNote, togglePinned, useNotes, useNotesError, useNotesLoadStatus } from "@/lib/notes-store";
+import { createNote, deleteNote, togglePinned, useNotes, useNotesError, useNotesLoadStatus } from "@/lib/notes-store";
 import { useProject } from "@/lib/project-store";
 import { ThemeToggle } from "@/components/theme-toggle";
 
@@ -387,6 +388,7 @@ export default function NotesPage() {
 
 function NoteCard({ note, compact, onTogglePin }: { note: Note; compact: boolean; onTogglePin: () => void }) {
   const meta = NOTE_CATEGORY_META[note.category];
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   return (
     <div className={`card-2 overflow-hidden ${compact ? "flex items-center gap-4 p-3" : ""}`}>
       <div className={`relative shrink-0 overflow-hidden ${compact ? "size-20 rounded-lg" : "aspect-[4/3]"}`}>
@@ -397,15 +399,27 @@ function NoteCard({ note, compact, onTogglePin }: { note: Note; compact: boolean
           </span>
         )}
         {!compact && (
-          <button
-            type="button"
-            aria-label="More options"
-            className="absolute right-2 top-11 grid size-7 place-items-center rounded-full bg-canvas/60 text-ink-muted backdrop-blur transition-colors hover:text-ink"
-          >
-            <MoreHorizontal className="size-4" />
-          </button>
+          <OptionsMenu
+            ariaLabel="More options"
+            buttonClassName="absolute right-2 top-11 grid size-7 place-items-center rounded-full bg-canvas/60 text-ink-muted backdrop-blur transition-colors hover:text-ink"
+            items={[
+              { label: "Delete Note", Icon: Trash2, danger: true, onClick: () => setConfirmingDelete(true) },
+            ]}
+          />
         )}
       </div>
+
+      {confirmingDelete && (
+        <ConfirmDialog
+          title="Delete this note?"
+          description={`"${note.title}" will be permanently deleted. This can't be undone.`}
+          onCancel={() => setConfirmingDelete(false)}
+          onConfirm={async () => {
+            await deleteNote(note.id);
+            setConfirmingDelete(false);
+          }}
+        />
+      )}
       <div className={compact ? "min-w-0 flex-1" : "p-4"}>
         <div className="flex items-center justify-between gap-2">
           <span

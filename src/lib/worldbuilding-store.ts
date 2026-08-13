@@ -194,3 +194,16 @@ export async function createWorldCategory(bookId: string, input: NewCategoryInpu
   emit();
   return res.category.key as WorldCategoryKey;
 }
+
+/**
+ * Delete a world entry for real. A world entry is just a `codex_entries`
+ * row (see the module comment above), so this goes through the same
+ * `/codex/:id` endpoint Character uses — deleting here only ever touches
+ * a non-character entry, since nothing in this store ever loads character
+ * rows in the first place.
+ */
+export async function deleteWorldEntry(id: string): Promise<void> {
+  await apiFetch<void>(`/codex/${id}`, { method: "DELETE" });
+  entryRows = entryRows.filter((e) => e.id !== id);
+  emit();
+}

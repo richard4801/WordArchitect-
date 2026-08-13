@@ -9,16 +9,18 @@ import {
   Feather,
   Filter,
   Flame,
-  MoreHorizontal,
   Plus,
   Search,
   Sparkles,
+  Trash2,
   Trophy,
   Zap,
 } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DropdownSelect } from "@/components/ui/dropdown-select";
+import { OptionsMenu } from "@/components/ui/options-menu";
 import { Progress } from "@/components/ui/progress";
 import { Ring } from "@/components/ui/ring";
 import { CoverArt } from "@/components/ui/cover-art";
@@ -32,7 +34,7 @@ import {
   projectStatusCounts,
   topGenres,
 } from "@/lib/projects-data";
-import { useProjects, useProjectsError, useProjectsLoadStatus } from "@/lib/project-store";
+import { deleteProject, useProjects, useProjectsError, useProjectsLoadStatus } from "@/lib/project-store";
 
 const PER_PAGE = 6;
 type StatusFilter = "all" | ProjectStatus;
@@ -256,6 +258,7 @@ function ProjectRow({ project }: { project: Project }) {
   const percent = Math.round((project.words / project.target) * 100);
   const badgeKey = project.status === "active" ? (project.stage ?? "Active") : project.status;
   const badge = STATUS_BADGE[badgeKey]!;
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   return (
     <article className="card card-hover p-4 sm:p-5">
@@ -286,13 +289,13 @@ function ProjectRow({ project }: { project: Project }) {
                 {badge.label}
               </span>
             </div>
-            <button
-              type="button"
-              aria-label="Options"
-              className="shrink-0 text-ink-faint transition-colors hover:text-ink"
-            >
-              <MoreHorizontal className="size-4" />
-            </button>
+            <OptionsMenu
+              ariaLabel="Options"
+              buttonClassName="shrink-0 text-ink-faint transition-colors hover:text-ink"
+              items={[
+                { label: "Delete Project", Icon: Trash2, danger: true, onClick: () => setConfirmingDelete(true) },
+              ]}
+            />
           </div>
 
           <p className="mt-0.5 text-xs text-ink-muted">{project.genre}</p>
@@ -325,6 +328,18 @@ function ProjectRow({ project }: { project: Project }) {
           </div>
         </div>
       </div>
+
+      {confirmingDelete && (
+        <ConfirmDialog
+          title="Delete this project?"
+          description={`"${project.title}" and everything in it — chapters, characters, world entries, notes — will be permanently deleted. This can't be undone.`}
+          onCancel={() => setConfirmingDelete(false)}
+          onConfirm={async () => {
+            await deleteProject(project.id);
+            setConfirmingDelete(false);
+          }}
+        />
+      )}
     </article>
   );
 }

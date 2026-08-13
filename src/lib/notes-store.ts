@@ -152,3 +152,10 @@ export async function createNote(bookId: string, input: NewNoteInput): Promise<s
   emit();
   return res.note.id;
 }
+
+/** Delete a note for real. Optimistically removes it from the local cache on success. */
+export async function deleteNote(id: string): Promise<void> {
+  await apiFetch<void>(`/notes/${id}`, { method: "DELETE" });
+  noteRows = noteRows.filter((n) => n.id !== id);
+  emit();
+}

@@ -9,16 +9,18 @@ import {
   Globe,
   Landmark,
   MapPinned,
-  MoreHorizontal,
   Pencil,
   Pin,
   Plus,
   Search,
+  Trash2,
   Upload,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMemo, useState } from "react";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { OptionsMenu } from "@/components/ui/options-menu";
 import { WorldMapArt } from "@/components/ui/world-map-art";
 import {
   findEntry,
@@ -27,11 +29,13 @@ import {
   PINNED_WORLD_ITEMS,
   recentEntries,
   type WorldCategoryKey,
+  type WorldCategoryMeta,
+  type WorldEntry,
   worldCounts,
   WORLD_OVERVIEW,
   WORLD_TIMELINE,
 } from "@/lib/worldbuilding-data";
-import { useWorldCategories, useWorldEntries, useWorldError, useWorldLoadStatus } from "@/lib/worldbuilding-store";
+import { deleteWorldEntry, useWorldCategories, useWorldEntries, useWorldError, useWorldLoadStatus } from "@/lib/worldbuilding-store";
 import { useProject } from "@/lib/project-store";
 import { WorldTopBar } from "./_shared";
 
@@ -270,35 +274,7 @@ export default function WorldbuildingPage() {
                     {(filter === "all" ? filtered.slice(0, 5) : filtered).map((entry) => {
                       const cat = categories.find((c) => c.key === entry.category);
                       if (!cat) return null;
-                      return (
-                        <tr key={entry.id} className="border-b border-line last:border-0">
-                          <td className="py-3 pr-3">
-                            <div className="flex items-center gap-2.5">
-                              <span
-                                className="grid size-7 shrink-0 place-items-center rounded-lg"
-                                style={{ color: cat.color, background: `color-mix(in srgb, ${cat.color} 16%, transparent)` }}
-                              >
-                                <cat.Icon className="size-3.5" />
-                              </span>
-                              <span className="text-ink">{entry.name}</span>
-                            </div>
-                          </td>
-                          <td className="py-3 pr-3">
-                            <button
-                              type="button"
-                              onClick={() => setFilter(cat.key)}
-                              className="label-caps rounded-md px-2 py-1 text-[0.65rem]"
-                              style={{ color: cat.color, background: `color-mix(in srgb, ${cat.color} 14%, transparent)` }}
-                            >
-                              {cat.label}
-                            </button>
-                          </td>
-                          <td className="py-3 pr-3 text-ink-faint">{formatAgo(entry.updatedHours)}</td>
-                          <td className="py-3 text-right">
-                            <MoreHorizontal className="ml-auto size-4 text-ink-faint" />
-                          </td>
-                        </tr>
-                      );
+                      return <EntryRow key={entry.id} entry={entry} cat={cat} onFilter={() => setFilter(cat.key)} />;
                     })}
                     {filtered.length === 0 && (
                       <tr>
@@ -386,6 +362,64 @@ export default function WorldbuildingPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+function EntryRow({
+  entry,
+  cat,
+  onFilter,
+}: {
+  entry: WorldEntry;
+  cat: WorldCategoryMeta;
+  onFilter: () => void;
+}) {
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  return (
+    <tr className="border-b border-line last:border-0">
+      <td className="py-3 pr-3">
+        <div className="flex items-center gap-2.5">
+          <span
+            className="grid size-7 shrink-0 place-items-center rounded-lg"
+            style={{ color: cat.color, background: `color-mix(in srgb, ${cat.color} 16%, transparent)` }}
+          >
+            <cat.Icon className="size-3.5" />
+          </span>
+          <span className="text-ink">{entry.name}</span>
+        </div>
+      </td>
+      <td className="py-3 pr-3">
+        <button
+          type="button"
+          onClick={onFilter}
+          className="label-caps rounded-md px-2 py-1 text-[0.65rem]"
+          style={{ color: cat.color, background: `color-mix(in srgb, ${cat.color} 14%, transparent)` }}
+        >
+          {cat.label}
+        </button>
+      </td>
+      <td className="py-3 pr-3 text-ink-faint">{formatAgo(entry.updatedHours)}</td>
+      <td className="py-3 text-right">
+        <OptionsMenu
+          ariaLabel="More options"
+          buttonClassName="ml-auto grid size-7 place-items-center rounded-lg text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink"
+          iconClassName="size-3.5"
+          items={[{ label: "Delete Entry", Icon: Trash2, danger: true, onClick: () => setConfirmingDelete(true) }]}
+        />
+      </td>
+
+      {confirmingDelete && (
+        <ConfirmDialog
+          title="Delete this entry?"
+          description={`"${entry.name}" will be permanently deleted. This can't be undone.`}
+          onCancel={() => setConfirmingDelete(false)}
+          onConfirm={async () => {
+            await deleteWorldEntry(entry.id);
+            setConfirmingDelete(false);
+          }}
+        />
+      )}
+    </tr>
   );
 }
 

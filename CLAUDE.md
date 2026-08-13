@@ -1253,6 +1253,61 @@ summary the backend team asked for.)
 
 ---
 
+## 5.5. "..." (options) menus — real actions, not decoration
+
+Every `MoreHorizontal` ("...") button across the app used to render with no
+`onClick` at all — a card's options menu that did nothing when clicked.
+All of them now open a real `OptionsMenu` (`src/components/ui/
+options-menu.tsx`, a themed dropdown of `{label, Icon, onClick, danger}`
+items, portaled to `document.body` the same way `DropdownSelect` is — see
+that file's own comment for why: a `.card`/`.card-2` ancestor's own
+stacking context can otherwise trap a panel behind a later sibling card).
+Destructive actions confirm first through `ConfirmDialog`
+(`src/components/ui/confirm-dialog.tsx`), also portaled, so a click inside
+it can never bubble to an ancestor's own click handler (relevant for cards
+like `CharacterCard` in `characters/all/page.tsx`, whose entire body
+navigates on click).
+
+**Delete is wired everywhere a "..." menu exists**, each going through a
+new `delete*` function added to that domain's store (`deleteProject`,
+`deleteCharacter`, `deleteNote`, `deleteWorldEntry`) — a real `DELETE`
+call, filtering the deleted row out of the local cache on success:
+- `/projects` (project card) and the project detail header — delete the
+  whole project; the header's version redirects to `/projects` after.
+- Characters workspace detail panel and the "All Characters" grid card —
+  delete the character.
+- Notes hub note cards — delete the note.
+- Worldbuilding hub's Recent Entries table rows — delete the entry (via
+  the same `/codex/:id` endpoint Character uses, see §3.5's Worldbuilding
+  section for why a world entry has no endpoint of its own).
+
+**One real layout bug found and fixed while wiring this up**:
+`OptionsMenu`'s first draft wrapped its trigger button in its own
+`position: relative` div for measurement purposes. Several call sites
+position the trigger itself with `absolute` classes (e.g. a note card's
+"..." at `absolute right-2 top-11`, meant to be positioned relative to the
+card's own cover-image container) — but `position: absolute` resolves
+against the *nearest* positioned ancestor, and that div became a closer,
+unintended one. The button rendered detached from its intended anchor and
+was clipped out of its intended container's `overflow: hidden` bounds
+entirely, making it unclickable (confirmed via Playwright: `elementFromPoint`
+at the button's real screen position resolved to the page's own scroll
+container, not the button). Fixed by putting the measurement ref directly
+on the `<button>` itself with no wrapping div, so a caller's own
+positioning classes resolve against whatever ancestor was actually
+intended.
+
+**Verified working** (same local-mock-server approach as every backend
+integration in this file, extended with `DELETE /books/:id` and
+`DELETE /codex/:id` handlers): create-then-delete round trips for a
+project (both entry points), a character (both the detail panel and the
+grid card), a note, and a world entry (created directly against the mock
+to simulate an MCP-created entry) — each confirms the item disappears
+from its list and, for the project header's delete, that it redirects to
+`/projects`. Zero console errors in any pass.
+
+---
+
 ## 6. AI provider abstraction (the one piece of real network code)
 
 App code never imports a vendor SDK directly — it depends on the
