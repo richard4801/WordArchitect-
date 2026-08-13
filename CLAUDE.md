@@ -1253,7 +1253,7 @@ summary the backend team asked for.)
 
 ---
 
-## 5.5. "..." (options) menus — real actions, not decoration
+## 5.5. "..." (options) menus — real actions, not just delete
 
 Every `MoreHorizontal` ("...") button across the app used to render with no
 `onClick` at all — a card's options menu that did nothing when clicked.
@@ -1305,6 +1305,176 @@ grid card), a note, and a world entry (created directly against the mock
 to simulate an MCP-created entry) — each confirms the item disappears
 from its list and, for the project header's delete, that it redirects to
 `/projects`. Zero console errors in any pass.
+
+**Second pass: every menu now has Edit too, not just Delete.** The first
+pass above shipped every "..." menu with only a Delete action — a real
+improvement over doing nothing, but "the ... menu should allow more than
+delete" was the very next piece of feedback, and there was already
+UI expecting this: the project detail sidebar's "Edit Details" button and
+the Dashboard's "Writing Goal" card's "Edit" button both existed and were
+already wired to nothing (`<button>` with no `onClick`) before this pass.
+
+- **`updateProject()`** (`project-store.ts`) — PATCH title/tagline/genre/
+  subgenres/pov/tense/targetWords (every field `buildBookPayload` accepts
+  on PATCH, confirmed in the backend's `books.ts`), keeping the project's
+  existing `updatedRank` rather than re-sorting the list. A new
+  `EditProjectModal` (`src/components/edit-project-modal.tsx`, portaled)
+  reuses the exact same `PRIMARY_GENRES`/`SUBGENRE_OPTIONS`/`POV_OPTIONS`/
+  `TENSE_OPTIONS` vocabulary as `/projects/new` (now exported from that
+  page for reuse) — wired from the `/projects` list's "Edit Project" menu
+  item, the project detail header's "Edit Project" menu item, and the
+  sidebar's previously-dead "Edit Details" button (all three open the same
+  modal).
+- **`updateCharacter()`** (`character-store.ts`) — same field set as
+  `createCharacter`, but sends `null` (not `undefined`) for any field the
+  user cleared, since PATCH treats an omitted key as "leave unchanged"
+  while an explicit `null` clears it. The New Character form
+  (`characters/new/page.tsx`) was refactored into a shared, exported
+  `CharacterForm({ character? })` component: with no `character` it's the
+  original creation flow; passed one, every field pre-fills and submit
+  calls `updateCharacter()` instead. A new route,
+  `characters/[characterId]/edit/page.tsx`, looks the character up via
+  `useCharacter(bookId, characterId)` and renders `CharacterForm` in edit
+  mode — wired from "Edit Character" in both the Characters workspace
+  detail panel and the "All Characters" grid card's options menu.
+- **`updateNote()`** (`notes-store.ts`) — PATCH title/excerpt/category.
+  `NewNoteModal` (`notes/page.tsx`) now takes an optional `note` prop that
+  switches it into edit mode the same way `CharacterForm` does — wired
+  from "Edit Note" in the note card options menu.
+- **`updateWorldEntry()`** (`worldbuilding-store.ts`) — PATCH name/
+  description/entryType via the same `/codex/:id` endpoint
+  `deleteWorldEntry` already used (a world entry is still just a
+  `codex_entries` row, see §3.5). Since there was never a "New Entry" form
+  to extend (still true — see §4.3), a new small, purpose-built
+  `EditWorldEntryModal` (in `world/page.tsx`, portaled) covers name/
+  category/summary — wired from "Edit Entry" in the Worldbuilding hub's
+  Recent Entries row options menu.
+
+## 5.6. Real chapter/word counts, and a settable writing goal
+
+Three more concrete complaints, all about numbers that read as fabricated
+or permanently zero even once real data existed: a populated project's
+chapter count still read "no chapters" in places, word counts never moved
+off zero anywhere outside the editor itself, and the Dashboard's daily/
+monthly writing goals were hardcoded constants with no way to change them.
+
+**Chapter count** is cheap — `manuscript-store.ts` already fetches the
+real chapter list — so a new `useChapterCount(bookId)` (just
+`useManuscript(bookId)` summed) is wired into every place `project.chapters`
+used to render a permanent `0`: the `/projects` list cards, the project
+Overview tab, and the Dashboard's project cards.
+
+**Word count is expensive** — the chapter *list* endpoint deliberately
+excludes `paragraphs` (see §3.5), so a real total needs every chapter's
+full body. A new `useManuscriptWordCount(bookId)` in `manuscript-store.ts`
+lazily fetches every chapter's body in parallel (once per book, cached)
+and sums real word counts, exposing both a `total` and a `perChapter` map
+so the Overview tab's "Recent Chapters" list can show each chapter's own
+real count instead of `project.words / project.chapters` divided evenly
+across the average (the old mock's `deriveRecentChapters` fallback
+formula). Wired into the same three places as chapter count, plus the
+Dashboard's "Continue Writing" card. This is a real per-visible-project
+fetch cost (accepted deliberately, at the personal-project-count scale
+this app targets — not something to reproduce at a larger scale without
+revisiting).
+
+**`manuscript-store.ts`'s chapter-list cache had to become keyed by
+`bookId`** (a `Map`, not module-level scalars) as part of this — it was
+built assuming only one project's manuscript was ever in view at once (the
+editor, or the Dashboard's single "most recent" project), which broke the
+moment `/projects` needed several different books' chapter lists live
+simultaneously (the previous single global cache would thrash, showing
+one project's count on another's card). `useManuscript()`,
+`useManuscriptLoadStatus()`, and `useManuscriptError()` all now key off
+`bookId` for the same reason.
+
+**Two real bugs found and fixed while wiring word counts up, neither
+hypothetical — both reproduced and confirmed fixed against the local
+mock:**
+1. **A race condition that silently produced a permanent 0.** Calling
+   `useChapterCount(bookId)` and `useManuscriptWordCount(bookId)` in the
+   same component render for the same book (exactly what the `/projects`
+   row does) meant both hooks' effects fired in the same commit, and
+   `loadChapters()` flips its cache entry's `status` to `"loading"`
+   *synchronously* before its first `await` — so by the time the second
+   hook's effect checked `status === "idle"` to decide whether to await
+   the list, it was already `"loading"`, not `"idle"` or `"error"`, so it
+   skipped waiting and read `entry.rows` while still empty. Fixed with a
+   shared in-flight-promise map (`ensureChaptersLoaded()`) so every caller
+   for the same `bookId` awaits the one real request, however many
+   triggered it, instead of each doing its own racy status check.
+2. **A `useSyncExternalStore` snapshot that never changed reference.**
+   Word count's cache entry was a single object mutated in place
+   (`entry.total = total; entry.status = "loaded";`) and returned whole as
+   the hook's snapshot — but `useSyncExternalStore` decides whether to
+   re-render via `Object.is` on the snapshot value, and a mutated-in-place
+   object keeps the same reference, so React never noticed the update even
+   though `emit()` fired. Fixed by replacing the cache entry with a new
+   object on every state transition instead of mutating fields on the
+   persisted one (`setWordCountEntry()`) — the same class of bug
+   `getListEntry().rows` never had, since `loadChapters()` already
+   reassigns `.rows` to a new array each time rather than mutating it.
+
+**A third bug, found only because fixing the above finally let real
+content reach a save call: the editor's permanent "Type / for commands"
+slash-command hint was bleeding into saved chapter content.** It renders
+as a real, unprotected sibling `<p>` inside the same contentEditable
+region as the actual paragraphs (`chapters/page.tsx`), with no exclusion
+in `serializeParagraphs()` — so it always contributed to whatever got
+saved. Fixed by tagging it `data-placeholder="true"` and filtering
+`serializeParagraphs()`'s DOM walk on that attribute. Trying
+`contentEditable={false}` on the hint first (to also stop the browser from
+letting the user type into it) turned out to be the wrong fix and was
+reverted — it broke typing into a fresh empty chapter entirely, because a
+brand-new chapter's seed paragraph is a genuinely empty `<p></p>`, which
+browsers collapse to **zero height** with no content to anchor a line box
+to; with the hint non-editable, every click aimed at "the empty line" (the
+only visible line) landed in the *next* line down, i.e. the hint itself,
+and typing was silently lost once the hint got excluded from serialization.
+The real fix was giving the plain-paragraph branch of `EditorParagraph` a
+`min-h-[1.85em]` (matching the container's own `leading-[1.85]`) so an
+empty paragraph still occupies a real, clickable line — confirmed
+necessary by reproducing the zero-height bounding box directly (Playwright
+`boundingBox()` on a fresh empty paragraph: `height: 0`) before the fix
+and a real one after (`height: 31.4375`, matching one line at the
+zoomed font size). A `{paragraph.text || <br />}` alternative was tried
+and also reverted: it fixed the click target but introduced a *second*
+regression — once autosave round-trips and the component re-renders with
+fresh server data, React's reconciler tries to remove the `<br/>` element
+it still thinks is there to replace it with a text node, but the browser's
+own contentEditable typing had already replaced that `<br/>` outside
+React's knowledge, throwing `Failed to execute 'removeChild': the node to
+be removed is not a child of this node.` The CSS-only `min-h` fix touches
+no DOM children at all, so it carries none of that reconciliation risk.
+
+**Writing goals are deliberately NOT backed by the real backend** — there
+is no writing-session/goal-tracking table (see §4.7), so a new
+`src/lib/writing-goal-store.ts` persists `dailyTarget`/`monthlyTarget` to
+`localStorage` instead: a real, user-settable value (the actual
+complaint — the old `todaysProgress.target: 2000` / `writingGoal.target:
+50000` in `dashboard-data.ts` were permanent hardcoded constants with no
+way to ever change them), just not a synced one, the same "single stable
+value per browser install" tradeoff `getUserId()` already makes for
+identity. The Dashboard's "Writing Goal" card's pre-existing, previously-
+dead "Edit" button now opens a small modal (`EditWritingGoalModal`)
+covering both targets; "Today's Progress" reads the same `dailyTarget`
+reactively. `todaysProgress.current`/`writingGoal.current`/`daysActive`/
+`consistencyPercent`/`writingTime` stay honestly zeroed mock data, same
+as before — there's still no session-tracking backend to compute *actual*
+progress against the goal, only the goal number itself is now real.
+
+**Verified working** (same local-mock-server approach, extended with
+`PATCH /codex/:id` — previously only had DELETE — and a fuller
+`PATCH /books/:id` covering tagline/genre/subgenres/pov/tense): create a
+project with a chapter, type real content, confirm the exact real word
+count (not a placeholder-polluted one) appears on the `/projects` list
+card and the project detail Overview tab; edit a project's title from
+both the list and detail-header entry points and from the sidebar's "Edit
+Details" button; edit a character and confirm the edit form pre-fills
+from the existing character; edit a note and a world entry; set both
+writing goals and confirm the new values persist across a hard reload.
+Zero console errors in the full pass, including through the autosave →
+re-render cycle that originally surfaced the `removeChild` regression.
 
 ---
 
@@ -1365,16 +1535,17 @@ export interface AiProvider {
 /                                            Dashboard — Project[] (live) + dashboard-data.ts mock (§4.7)
 /projects                                    Project[] (live)
 /projects/new                                submits NewProjectInput
-/projects/[id]                               Project detail chrome (8-tab nav)
-/projects/[id]                (Overview tab) Project + deriveRecentChapters/deriveRecentActivity
+/projects/[id]                               Project detail chrome (8-tab nav), Edit Project modal (updateProject)
+/projects/[id]                (Overview tab) Project + real ManuscriptPart[]/word counts (§5.6) + deriveRecentActivity
 /projects/[id]/analytics                     stub — <ComingSoon>, no data model
 /projects/[id]/settings                      stub — <ComingSoon>, no data model
 /projects/[id]/chapters                      ManuscriptPart[] (live) + ChapterBody (live) + CommentThread[] (mock) (§4.5/§5)
 /projects/[id]/outlines                      Act[] / Beat[] (§4.6 — seed-only, no store)
-/projects/[id]/characters                    Character[] (live) + selected Character detail
-/projects/[id]/characters/all                Character[] (live), grid+pagination
-/projects/[id]/characters/new                submits NewCharacterInput
-/projects/[id]/world                         WorldCategoryMeta[] (live) + WorldEntry[] (seed-only) + WORLD_TIMELINE/WORLD_OVERVIEW/PINNED_WORLD_ITEMS (seed-only)
+/projects/[id]/characters                    Character[] (live) + selected Character detail, Edit/Delete via options menu
+/projects/[id]/characters/all                Character[] (live), grid+pagination, Edit/Delete via options menu
+/projects/[id]/characters/new                submits NewCharacterInput (shared CharacterForm, see §5.5)
+/projects/[id]/characters/[characterId]/edit submits same shape via updateCharacter (shared CharacterForm, see §5.5)
+/projects/[id]/world                         WorldCategoryMeta[] (live) + WorldEntry[] (live read, no in-app create — §3.5/§4.3) + WORLD_TIMELINE/WORLD_OVERVIEW/PINNED_WORLD_ITEMS (mock)
 /projects/[id]/world/new-category            submits NewCategoryInput
 /projects/[id]/notes                         Note[] (live)
 /writing /outlines /characters /worldbuilding /notes   redirect-only pages → most-recently-active project's real workspace, no data of their own

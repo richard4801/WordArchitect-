@@ -23,9 +23,13 @@ import { usePathname, useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CoverArt } from "@/components/ui/cover-art";
+import { EditProjectModal } from "@/components/edit-project-modal";
 import { OptionsMenu } from "@/components/ui/options-menu";
+import { useCharacters } from "@/lib/character-store";
+import { useManuscriptWordCount } from "@/lib/manuscript-store";
 import { deleteProject, updateProjectTarget, useProject } from "@/lib/project-store";
 import type { Project } from "@/lib/projects-data";
+import { useWorldEntries } from "@/lib/worldbuilding-store";
 
 const TABS = [
   { key: "", label: "Overview", icon: CircleDot },
@@ -57,6 +61,7 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
   const router = useRouter();
   const project = useProject(id);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [editingProject, setEditingProject] = useState(false);
 
   if (!project) {
     return (
@@ -125,6 +130,7 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
             ariaLabel="Options"
             buttonClassName="grid size-9 place-items-center rounded-xl border border-line text-ink-muted transition-colors hover:text-ink"
             items={[
+              { label: "Edit Project", Icon: PenLine, onClick: () => setEditingProject(true) },
               { label: "Delete Project", Icon: Trash2, danger: true, onClick: () => setConfirmingDelete(true) },
             ]}
           />
@@ -167,7 +173,7 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
 
         <aside className="scroll-slim space-y-6 lg:sticky lg:top-6 lg:max-h-[calc(100dvh-3rem)] lg:overflow-y-auto lg:pr-1">
           <CoverCard project={project} />
-          <DetailsCard project={project} />
+          <DetailsCard project={project} onEdit={() => setEditingProject(true)} />
           <StatsCard project={project} />
           <QuickActionsCard base={base} />
         </aside>
@@ -184,6 +190,8 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
           }}
         />
       )}
+
+      {editingProject && <EditProjectModal project={project} onClose={() => setEditingProject(false)} />}
     </div>
   );
 }
@@ -203,7 +211,7 @@ function CoverCard({ project }: { project: Project }) {
   );
 }
 
-function DetailsCard({ project }: { project: Project }) {
+function DetailsCard({ project, onEdit }: { project: Project; onEdit: () => void }) {
   return (
     <section className="card p-5">
       <h2 className="font-display text-lg text-ink">Project Details</h2>
@@ -232,6 +240,7 @@ function DetailsCard({ project }: { project: Project }) {
       </dl>
       <button
         type="button"
+        onClick={onEdit}
         className="mt-4 w-full rounded-xl border border-line py-2 text-sm text-ink-muted transition-colors hover:text-ink"
       >
         Edit Details
@@ -327,12 +336,15 @@ function TargetWordsRow({ project }: { project: Project }) {
 }
 
 function StatsCard({ project }: { project: Project }) {
-  const percent = Math.round((project.words / project.target) * 100);
+  const { total: words } = useManuscriptWordCount(project.id);
+  const characters = useCharacters(project.id);
+  const worldEntries = useWorldEntries(project.id);
+  const percent = project.target > 0 ? Math.round((words / project.target) * 100) : 0;
   const stats = [
     { value: `${percent}%`, label: "Manuscript" },
-    { value: project.words.toLocaleString(), label: "Total Words" },
-    { value: project.povCharacters ?? 0, label: "POV Characters" },
-    { value: project.worldEntries ?? 0, label: "World Entries" },
+    { value: words.toLocaleString(), label: "Total Words" },
+    { value: characters.filter((c) => c.povCharacter).length, label: "POV Characters" },
+    { value: worldEntries.length, label: "World Entries" },
   ];
   return (
     <section className="card p-5">

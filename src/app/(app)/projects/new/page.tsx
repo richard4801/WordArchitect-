@@ -32,7 +32,9 @@ import { DropdownSelect, MultiSelectDropdown } from "@/components/ui/dropdown-se
 import { useRef, useState } from "react";
 import { createProject } from "@/lib/project-store";
 
-const PRIMARY_GENRES = [
+// Exported for reuse by EditProjectModal (src/components/edit-project-modal.tsx)
+// so an edit uses the exact same genre/POV/tense vocabulary as creation.
+export const PRIMARY_GENRES = [
   "Epic Fantasy",
   "Dark Fantasy",
   "High Fantasy",
@@ -47,7 +49,7 @@ const PRIMARY_GENRES = [
   "Literary Fiction",
 ];
 
-const SUBGENRE_OPTIONS = [
+export const SUBGENRE_OPTIONS = [
   "Coming of Age",
   "Dark Academia",
   "Enemies to Lovers",
@@ -62,8 +64,8 @@ const SUBGENRE_OPTIONS = [
   "Time Travel",
 ];
 
-const POV_OPTIONS = ["First Person", "Third Person", "Third Person Limited", "Dual POV", "Epistolary"];
-const TENSE_OPTIONS = ["Past Tense", "Present Tense"];
+export const POV_OPTIONS = ["First Person", "Third Person", "Third Person Limited", "Dual POV", "Epistolary"];
+export const TENSE_OPTIONS = ["Past Tense", "Present Tense"];
 const LANGUAGE_OPTIONS = ["English", "Spanish", "French", "German", "Portuguese"];
 const AUDIENCE_OPTIONS = ["Adult", "Young Adult", "New Adult", "Middle Grade"];
 

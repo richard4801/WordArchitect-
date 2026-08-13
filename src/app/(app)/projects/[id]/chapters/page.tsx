@@ -207,17 +207,19 @@ export default function ChaptersPage() {
   function serializeParagraphs(): ChapterParagraph[] {
     const root = editableRef.current;
     if (!root) return [];
-    return Array.from(root.children).map((child) => {
-      const el = child as HTMLElement;
-      const clone = el.cloneNode(true) as HTMLElement;
-      clone.querySelectorAll('[data-commenter-tag="true"]').forEach((tag) => tag.remove());
-      const id = el.dataset.paragraphId || crypto.randomUUID();
-      const paragraph: ChapterParagraph = { id, text: clone.textContent ?? "" };
-      if (el.dataset.break === "true") paragraph.break = true;
-      if (el.dataset.emphasis === "true") paragraph.emphasis = true;
-      if (el.dataset.commenter) paragraph.commenter = el.dataset.commenter as Commenter;
-      return paragraph;
-    });
+    return Array.from(root.children)
+      .filter((child) => !(child as HTMLElement).dataset.placeholder)
+      .map((child) => {
+        const el = child as HTMLElement;
+        const clone = el.cloneNode(true) as HTMLElement;
+        clone.querySelectorAll('[data-commenter-tag="true"]').forEach((tag) => tag.remove());
+        const id = el.dataset.paragraphId || crypto.randomUUID();
+        const paragraph: ChapterParagraph = { id, text: clone.textContent ?? "" };
+        if (el.dataset.break === "true") paragraph.break = true;
+        if (el.dataset.emphasis === "true") paragraph.emphasis = true;
+        if (el.dataset.commenter) paragraph.commenter = el.dataset.commenter as Commenter;
+        return paragraph;
+      });
   }
 
   function scheduleSave() {
@@ -1404,7 +1406,7 @@ function EditorBody({
           {body.paragraphs.map((p) => (
             <EditorParagraph key={p.id} paragraph={p} />
           ))}
-          <p className="text-ink-faint" data-placeholder>
+          <p className="text-ink-faint" data-placeholder="true">
             Type / for commands
           </p>
         </div>
@@ -1439,7 +1441,11 @@ function EditorParagraph({ paragraph }: { paragraph: ChapterParagraph }) {
 
   if (!paragraph.commenter) {
     return (
-      <p data-paragraph-id={paragraph.id} data-emphasis={paragraph.emphasis ? "true" : undefined} className={textClass}>
+      <p
+        data-paragraph-id={paragraph.id}
+        data-emphasis={paragraph.emphasis ? "true" : undefined}
+        className={`min-h-[1.85em] ${textClass}`}
+      >
         {paragraph.text}
       </p>
     );

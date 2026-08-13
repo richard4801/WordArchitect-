@@ -5,12 +5,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { CoverArt } from "@/components/ui/cover-art";
 import { Ring } from "@/components/ui/ring";
+import { useChapterCount, useManuscript, useManuscriptWordCount } from "@/lib/manuscript-store";
 import { useProject } from "@/lib/project-store";
-import {
-  deriveRecentActivity,
-  deriveRecentChapters,
-  type ProjectActivityKind,
-} from "@/lib/projects-data";
+import { deriveRecentActivity, type ProjectActivityKind } from "@/lib/projects-data";
 
 const ACTIVITY_ICON: Record<ProjectActivityKind, typeof PenLine> = {
   wrote: PenLine,
@@ -23,10 +20,17 @@ const ACTIVITY_ICON: Record<ProjectActivityKind, typeof PenLine> = {
 export default function ProjectOverviewPage() {
   const { id } = useParams<{ id: string }>();
   const project = useProject(id);
+  const manuscript = useManuscript(id);
+  const chapterCount = useChapterCount(id);
+  const { total: words, perChapter } = useManuscriptWordCount(id);
   if (!project) return null;
 
-  const percent = Math.round((project.words / project.target) * 100);
-  const chapters = deriveRecentChapters(project);
+  const percent = project.target > 0 ? Math.round((words / project.target) * 100) : 0;
+  const recentChapters = manuscript
+    .flatMap((p) => p.chapters)
+    .sort((a, b) => b.number - a.number)
+    .slice(0, 5)
+    .map((c) => ({ number: c.number, title: c.title, words: perChapter[c.id] ?? 0 }));
   const activity = deriveRecentActivity(project);
 
   return (
@@ -74,7 +78,7 @@ export default function ProjectOverviewPage() {
             label={`${percent}%`}
             sublabel={
               <div className="text-center">
-                <div className="text-sm font-medium text-ink">{project.words.toLocaleString()}</div>
+                <div className="text-sm font-medium text-ink">{words.toLocaleString()}</div>
                 <div className="mt-0.5 text-xs text-ink-faint">
                   of {project.target.toLocaleString()} words
                 </div>
@@ -86,7 +90,7 @@ export default function ProjectOverviewPage() {
             <p className="label-caps">Current Status</p>
             <div className="mt-1.5 flex items-center justify-between text-sm text-ink">
               <span>
-                {project.words.toLocaleString()} / {project.target.toLocaleString()} words
+                {words.toLocaleString()} / {project.target.toLocaleString()} words
               </span>
             </div>
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-2">
@@ -97,7 +101,7 @@ export default function ProjectOverviewPage() {
             </div>
 
             <div className="mt-5 flex flex-wrap divide-x divide-line">
-              <MiniStat value={project.chapters} label="Chapters" className="pr-5" />
+              <MiniStat value={chapterCount} label="Chapters" className="pr-5" />
               <MiniStat value={project.sessions} label="Sessions" className="px-5" />
               <MiniStat value={project.daysActive} label="Days Active" className="px-5" />
               <MiniStat value={project.updated} label="Last Updated" className="pl-5" />
@@ -118,11 +122,11 @@ export default function ProjectOverviewPage() {
               View All
             </Link>
           </div>
-          {chapters.length === 0 ? (
+          {recentChapters.length === 0 ? (
             <p className="mt-4 text-sm text-ink-faint">No chapters yet — start writing to see them here.</p>
           ) : (
             <ul className="mt-2 divide-y divide-line">
-              {chapters.map((c) => (
+              {recentChapters.map((c) => (
                 <li key={c.number} className="flex items-center gap-3 py-3">
                   <span className="w-6 shrink-0 text-xs text-ink-faint">{c.number}</span>
                   <span className="min-w-0 flex-1 truncate text-sm text-ink">{c.title}</span>

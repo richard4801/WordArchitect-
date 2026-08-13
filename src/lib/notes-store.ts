@@ -153,6 +153,20 @@ export async function createNote(bookId: string, input: NewNoteInput): Promise<s
   return res.note.id;
 }
 
+/** Edit a real note's title/excerpt/category. */
+export async function updateNote(id: string, input: NewNoteInput): Promise<void> {
+  const res = await apiFetch<NoteResponse>(`/notes/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      title: input.title.trim() || "Untitled Note",
+      excerpt: input.excerpt.trim() || " ",
+      category: input.category,
+    }),
+  });
+  noteRows = noteRows.map((n) => (n.id === id ? res.note : n));
+  emit();
+}
+
 /** Delete a note for real. Optimistically removes it from the local cache on success. */
 export async function deleteNote(id: string): Promise<void> {
   await apiFetch<void>(`/notes/${id}`, { method: "DELETE" });

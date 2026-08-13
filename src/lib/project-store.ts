@@ -266,6 +266,43 @@ export async function updateProjectTarget(id: string, target: number): Promise<v
   emit();
 }
 
+export type UpdateProjectInput = {
+  title?: string;
+  tagline?: string;
+  genre?: string;
+  subgenres?: string[];
+  pov?: string;
+  tense?: string;
+  targetWords?: number;
+};
+
+/**
+ * Edit a project's own fields — title/tagline/genre/subgenres/pov/tense/
+ * targetWords are all real PATCH-able columns on `books` (see
+ * `buildBookPayload` in the backend's `books.ts`). Keeps the project's
+ * existing `updatedRank` rather than re-sorting the list to the top, so an
+ * edit doesn't jump the project around in "Recently Updated" order the way
+ * a genuine content change (a new chapter, etc.) would.
+ */
+export async function updateProject(id: string, input: UpdateProjectInput): Promise<void> {
+  const res = await apiFetch<BookResponse>(`/books/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      title: input.title?.trim() || undefined,
+      tagline: input.tagline?.trim() ?? undefined,
+      genre: input.genre || undefined,
+      subgenres: input.subgenres,
+      pov: input.pov || undefined,
+      tense: input.tense || undefined,
+      targetWords: input.targetWords && input.targetWords > 0 ? Math.round(input.targetWords) : undefined,
+    }),
+  });
+  const existingRank = projects.find((p) => p.id === id)?.updatedRank ?? 0;
+  const updated = mapBookToProject(res.book, existingRank);
+  projects = projects.map((p) => (p.id === id ? updated : p));
+  emit();
+}
+
 /** Delete a project for real. Optimistically removes it from the local cache on success. */
 export async function deleteProject(id: string): Promise<void> {
   await apiFetch<void>(`/books/${id}`, { method: "DELETE" });

@@ -25,12 +25,19 @@ import { useParams, useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { CharacterPortrait } from "@/components/ui/character-portrait";
 import { DropdownSelect } from "@/components/ui/dropdown-select";
-import type { CharacterRole } from "@/lib/character-data";
-import { createCharacter } from "@/lib/character-store";
+import type { Character, CharacterRole } from "@/lib/character-data";
+import { createCharacter, updateCharacter } from "@/lib/character-store";
 import { useProject } from "@/lib/project-store";
 import { CharactersTopBar } from "../_shared";
 
-/** New Character form (matches resources/+ New Character.png). */
+/**
+ * New/Edit Character form (matches resources/+ New Character.png). One
+ * shared component for both: passing `character` switches it into edit
+ * mode (fields pre-filled from the existing character, submit calls
+ * updateCharacter() instead of createCharacter()). `new/page.tsx`'s
+ * default export renders it with no character; `[characterId]/edit/
+ * page.tsx` looks the character up and passes it in.
+ */
 
 const TABS = ["Overview", "Appearance", "Personality", "Background", "Relationships", "Arc", "Notes"] as const;
 type Tab = (typeof TABS)[number];
@@ -68,33 +75,40 @@ const QUICK_LINKS = [
 ];
 
 export default function NewCharacterPage() {
+  return <CharacterForm />;
+}
+
+export function CharacterForm({ character }: { character?: Character }) {
+  const isEdit = Boolean(character);
   const { id } = useParams<{ id: string }>();
   const project = useProject(id);
   const router = useRouter();
 
   const [tab, setTab] = useState<Tab>("Overview");
 
-  const [fullName, setFullName] = useState("");
-  const [nickname, setNickname] = useState("");
-  const [role, setRole] = useState<CharacterRole | "">("");
-  const [age, setAge] = useState("");
-  const [gender, setGender] = useState("");
-  const [occupation, setOccupation] = useState("");
-  const [status, setStatus] = useState("");
-  const [alignment, setAlignment] = useState("");
+  const [fullName, setFullName] = useState(character?.name ?? "");
+  const [nickname, setNickname] = useState(character?.nickname ?? "");
+  const [role, setRole] = useState<CharacterRole | "">(character?.role ?? "");
+  const [age, setAge] = useState(character && character.age > 0 ? String(character.age) : "");
+  const [gender, setGender] = useState(character?.gender ?? "");
+  const [occupation, setOccupation] = useState(character?.occupation ?? "");
+  const [status, setStatus] = useState(character?.status ?? "");
+  const [alignment, setAlignment] = useState(character?.alignment ?? "");
 
-  const [povCharacter, setPovCharacter] = useState(false);
-  const [archetype, setArchetype] = useState("");
-  const [motivation, setMotivation] = useState("");
-  const [goal, setGoal] = useState("");
-  const [fear, setFear] = useState("");
-  const [secret, setSecret] = useState("");
+  const [povCharacter, setPovCharacter] = useState(character?.povCharacter ?? false);
+  const [archetype, setArchetype] = useState(character?.archetype ?? "");
+  const [motivation, setMotivation] = useState(character?.motivation ?? "");
+  const [goal, setGoal] = useState(character?.goal ?? "");
+  const [fear, setFear] = useState(character?.fear ?? "");
+  const [secret, setSecret] = useState(character?.secret ?? "");
 
-  const [traits, setTraits] = useState<string[]>(["Determined", "Introspective", "Compassionate", "Observant"]);
+  const [traits, setTraits] = useState<string[]>(
+    character?.personalityTraits ?? (isEdit ? [] : ["Determined", "Introspective", "Compassionate", "Observant"]),
+  );
   const [traitDraft, setTraitDraft] = useState("");
   const [addingTrait, setAddingTrait] = useState(false);
 
-  const [summary, setSummary] = useState("");
+  const [summary, setSummary] = useState(character?.overview ?? "");
 
   const [portraitSeed, setPortraitSeed] = useState<string | null>(null);
   const [portraitPreview, setPortraitPreview] = useState<string | null>(null);
@@ -156,28 +170,34 @@ export default function NewCharacterPage() {
     setRoleError(!roleOk);
     if (!nameOk || !roleOk || !project) return;
 
+    const input = {
+      name: fullName,
+      nickname: nickname || undefined,
+      role: role as CharacterRole,
+      age: age ? Number(age) : undefined,
+      gender: gender || undefined,
+      occupation: occupation || undefined,
+      status: status || undefined,
+      alignment: alignment || undefined,
+      archetype: archetype || undefined,
+      povCharacter,
+      motivation: motivation || undefined,
+      goal: goal || undefined,
+      fear: fear || undefined,
+      secret: secret || undefined,
+      quickTraits: traits,
+      summary: summary || undefined,
+    };
+
     setSubmitError(null);
     setSubmitting(true);
     try {
-      const newId = await createCharacter(project.id, {
-        name: fullName,
-        nickname: nickname || undefined,
-        role: role as CharacterRole,
-        age: age ? Number(age) : undefined,
-        gender: gender || undefined,
-        occupation: occupation || undefined,
-        status: status || undefined,
-        alignment: alignment || undefined,
-        archetype: archetype || undefined,
-        povCharacter,
-        motivation: motivation || undefined,
-        goal: goal || undefined,
-        fear: fear || undefined,
-        secret: secret || undefined,
-        quickTraits: traits,
-        summary: summary || undefined,
-      });
-
+      if (character) {
+        await updateCharacter(character.id, input);
+        router.push(`/projects/${project.id}/characters?c=${character.id}`);
+        return;
+      }
+      const newId = await createCharacter(project.id, input);
       if (createAnother) {
         setSubmitting(false);
         resetForm();
@@ -186,7 +206,9 @@ export default function NewCharacterPage() {
       router.push(`/projects/${project.id}/characters?c=${newId}`);
     } catch (err) {
       setSubmitting(false);
-      setSubmitError(err instanceof Error ? err.message : "Couldn't create the character. Try again.");
+      setSubmitError(
+        err instanceof Error ? err.message : `Couldn't ${character ? "save" : "create"} the character. Try again.`,
+      );
     }
   }
 
@@ -209,11 +231,13 @@ export default function NewCharacterPage() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
-      <CharactersTopBar project={project} crumb={["Characters", "New Character"]} />
+      <CharactersTopBar project={project} crumb={["Characters", isEdit ? "Edit Character" : "New Character"]} />
       <div className="scroll-slim flex flex-1 flex-col overflow-y-auto px-6 py-6">
         <div>
-          <h1 className="font-display text-3xl text-ink">New Character</h1>
-          <p className="mt-1 text-sm text-ink-muted">Create a memorable character that will live in your story.</p>
+          <h1 className="font-display text-3xl text-ink">{isEdit ? "Edit Character" : "New Character"}</h1>
+          <p className="mt-1 text-sm text-ink-muted">
+            {isEdit ? "Update this character's profile." : "Create a memorable character that will live in your story."}
+          </p>
         </div>
 
         <div className="mt-5 flex items-center gap-6 overflow-x-auto border-b border-line text-sm">
@@ -572,29 +596,39 @@ export default function NewCharacterPage() {
         <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-line pb-8 pt-5">
           <button
             type="button"
-            onClick={() => router.push(`/projects/${project.id}/characters`)}
+            onClick={() =>
+              router.push(
+                isEdit && character
+                  ? `/projects/${project.id}/characters?c=${character.id}`
+                  : `/projects/${project.id}/characters`,
+              )
+            }
             className="text-sm text-ink-muted transition-colors hover:text-ink"
           >
             Cancel
           </button>
           <div className="flex flex-wrap items-center gap-3">
             {submitError && <p className="text-sm text-danger">{submitError}</p>}
-            <label className="flex items-center gap-2 text-sm text-ink-muted">
-              <input
-                type="checkbox"
-                checked={createAnother}
-                onChange={(e) => setCreateAnother(e.target.checked)}
-                className="accent-gold"
-              />
-              Create another
-            </label>
-            <button
-              type="button"
-              className="flex items-center gap-1.5 rounded-xl border border-line-strong px-4 py-2.5 text-sm text-ink-muted transition-colors hover:text-ink"
-            >
-              <Users className="size-3.5" />
-              Save as Template
-            </button>
+            {!isEdit && (
+              <label className="flex items-center gap-2 text-sm text-ink-muted">
+                <input
+                  type="checkbox"
+                  checked={createAnother}
+                  onChange={(e) => setCreateAnother(e.target.checked)}
+                  className="accent-gold"
+                />
+                Create another
+              </label>
+            )}
+            {!isEdit && (
+              <button
+                type="button"
+                className="flex items-center gap-1.5 rounded-xl border border-line-strong px-4 py-2.5 text-sm text-ink-muted transition-colors hover:text-ink"
+              >
+                <Users className="size-3.5" />
+                Save as Template
+              </button>
+            )}
             <button
               type="button"
               onClick={handleSubmit}
@@ -602,7 +636,7 @@ export default function NewCharacterPage() {
               className="flex items-center gap-1.5 rounded-xl bg-gold px-5 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-60"
             >
               <Sparkles className="size-3.5" />
-              {submitting ? "Creating…" : "Create Character"}
+              {submitting ? (isEdit ? "Saving…" : "Creating…") : isEdit ? "Save Changes" : "Create Character"}
             </button>
           </div>
         </div>

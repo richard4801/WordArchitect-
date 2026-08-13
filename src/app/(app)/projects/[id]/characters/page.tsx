@@ -8,6 +8,7 @@ import {
   Crown,
   Eye,
   Filter,
+  Pencil,
   Pin,
   Plus,
   Search,
@@ -17,7 +18,7 @@ import {
   User as UserIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { CharacterPortrait } from "@/components/ui/character-portrait";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -258,8 +259,15 @@ function CharacterDetail({
 }) {
   const meta = ROLE_META[character.role];
   const isProfile = tab === "Profile";
+  const { id: projectId } = useParams<{ id: string }>();
+  const router = useRouter();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const optionsItems = [
+    {
+      label: "Edit Character",
+      Icon: Pencil,
+      onClick: () => router.push(`/projects/${projectId}/characters/${character.id}/edit`),
+    },
     { label: "Delete Character", Icon: Trash2, danger: true, onClick: () => setConfirmingDelete(true) },
   ];
   return (

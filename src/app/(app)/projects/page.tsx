@@ -9,6 +9,7 @@ import {
   Feather,
   Filter,
   Flame,
+  Pencil,
   Plus,
   Search,
   Sparkles,
@@ -20,6 +21,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DropdownSelect } from "@/components/ui/dropdown-select";
+import { EditProjectModal } from "@/components/edit-project-modal";
 import { OptionsMenu } from "@/components/ui/options-menu";
 import { Progress } from "@/components/ui/progress";
 import { Ring } from "@/components/ui/ring";
@@ -35,6 +37,7 @@ import {
   topGenres,
 } from "@/lib/projects-data";
 import { deleteProject, useProjects, useProjectsError, useProjectsLoadStatus } from "@/lib/project-store";
+import { useChapterCount, useManuscriptWordCount } from "@/lib/manuscript-store";
 
 const PER_PAGE = 6;
 type StatusFilter = "all" | ProjectStatus;
@@ -255,10 +258,13 @@ const STATUS_BADGE: Record<string, { label: string; varName: string }> = {
 };
 
 function ProjectRow({ project }: { project: Project }) {
-  const percent = Math.round((project.words / project.target) * 100);
+  const chapters = useChapterCount(project.id);
+  const { total: words } = useManuscriptWordCount(project.id);
+  const percent = project.target > 0 ? Math.round((words / project.target) * 100) : 0;
   const badgeKey = project.status === "active" ? (project.stage ?? "Active") : project.status;
   const badge = STATUS_BADGE[badgeKey]!;
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [editingProject, setEditingProject] = useState(false);
 
   return (
     <article className="card card-hover p-4 sm:p-5">
@@ -293,6 +299,7 @@ function ProjectRow({ project }: { project: Project }) {
               ariaLabel="Options"
               buttonClassName="shrink-0 text-ink-faint transition-colors hover:text-ink"
               items={[
+                { label: "Edit Project", Icon: Pencil, onClick: () => setEditingProject(true) },
                 { label: "Delete Project", Icon: Trash2, danger: true, onClick: () => setConfirmingDelete(true) },
               ]}
             />
@@ -306,7 +313,7 @@ function ProjectRow({ project }: { project: Project }) {
           <Progress value={percent} className="mt-3" />
           <div className="mt-1.5 flex items-center justify-between text-xs text-ink-faint">
             <span>
-              {project.words.toLocaleString()} / {project.target.toLocaleString()}{" "}
+              {words.toLocaleString()} / {project.target.toLocaleString()}{" "}
               words
             </span>
             <span className="text-gold">{percent}%</span>
@@ -315,7 +322,7 @@ function ProjectRow({ project }: { project: Project }) {
           <div className="mt-2.5 flex flex-wrap items-center gap-4 text-xs text-ink-faint">
             <span className="flex items-center gap-1.5">
               <BookOpen className="size-3.5" />
-              {project.chapters} Chapters
+              {chapters} {chapters === 1 ? "Chapter" : "Chapters"}
             </span>
             <span className="flex items-center gap-1.5">
               <Zap className="size-3.5" />
@@ -340,6 +347,8 @@ function ProjectRow({ project }: { project: Project }) {
           }}
         />
       )}
+
+      {editingProject && <EditProjectModal project={project} onClose={() => setEditingProject(false)} />}
     </article>
   );
 }

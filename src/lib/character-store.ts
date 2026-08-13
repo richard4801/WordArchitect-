@@ -364,6 +364,44 @@ export async function createCharacter(bookId: string, input: NewCharacterInput):
   return res.entry.id;
 }
 
+/**
+ * Edit a real character on the backend. Same field set as `createCharacter`
+ * — reused by the New/Edit Character form in edit mode — but sends `null`
+ * (not `undefined`) for any field the user cleared, since PATCH treats an
+ * omitted key as "leave unchanged" while an explicit `null` clears it (see
+ * `buildEntryPayload` in the backend's `codex.ts`); creation has nothing to
+ * clear, so `createCharacter` above keeps its `undefined`-omits-the-key
+ * behavior.
+ */
+export async function updateCharacter(id: string, input: NewCharacterInput): Promise<void> {
+  const res = await apiFetch<CodexEntryResponse>(`/codex/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      name: input.name.trim(),
+      description: input.summary?.trim() || "No overview written yet.",
+      tier: ROLE_TO_TIER[input.role],
+      nickname: input.nickname?.trim() || null,
+      epithet: input.nickname?.trim() || input.role,
+      age: input.age ? String(input.age) : null,
+      gender: input.gender || null,
+      occupation: input.occupation || null,
+      status: input.status || null,
+      alignment: input.alignment || null,
+      archetype: input.archetype || null,
+      povCharacter: input.povCharacter,
+      personalityTraits: input.quickTraits,
+      motivations: [input.motivation, input.goal].filter((v): v is string => Boolean(v)),
+      motivation: input.motivation || null,
+      goal: input.goal || null,
+      fear: input.fear || null,
+      secret: input.secret || null,
+    }),
+  });
+  const updated = mapEntryToCharacter(res.entry);
+  characters = characters.map((c) => (c.id === id ? updated : c));
+  emit();
+}
+
 /** Delete a character for real. Optimistically removes it from the local cache on success. */
 export async function deleteCharacter(id: string): Promise<void> {
   await apiFetch<void>(`/codex/${id}`, { method: "DELETE" });

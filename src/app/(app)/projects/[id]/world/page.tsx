@@ -15,11 +15,14 @@ import {
   Search,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { DropdownSelect } from "@/components/ui/dropdown-select";
 import { OptionsMenu } from "@/components/ui/options-menu";
 import { WorldMapArt } from "@/components/ui/world-map-art";
 import {
@@ -35,7 +38,14 @@ import {
   WORLD_OVERVIEW,
   WORLD_TIMELINE,
 } from "@/lib/worldbuilding-data";
-import { deleteWorldEntry, useWorldCategories, useWorldEntries, useWorldError, useWorldLoadStatus } from "@/lib/worldbuilding-store";
+import {
+  deleteWorldEntry,
+  updateWorldEntry,
+  useWorldCategories,
+  useWorldEntries,
+  useWorldError,
+  useWorldLoadStatus,
+} from "@/lib/worldbuilding-store";
 import { useProject } from "@/lib/project-store";
 import { WorldTopBar } from "./_shared";
 
@@ -274,7 +284,9 @@ export default function WorldbuildingPage() {
                     {(filter === "all" ? filtered.slice(0, 5) : filtered).map((entry) => {
                       const cat = categories.find((c) => c.key === entry.category);
                       if (!cat) return null;
-                      return <EntryRow key={entry.id} entry={entry} cat={cat} onFilter={() => setFilter(cat.key)} />;
+                      return (
+                        <EntryRow key={entry.id} entry={entry} cat={cat} categories={categories} onFilter={() => setFilter(cat.key)} />
+                      );
                     })}
                     {filtered.length === 0 && (
                       <tr>
@@ -368,13 +380,16 @@ export default function WorldbuildingPage() {
 function EntryRow({
   entry,
   cat,
+  categories,
   onFilter,
 }: {
   entry: WorldEntry;
   cat: WorldCategoryMeta;
+  categories: WorldCategoryMeta[];
   onFilter: () => void;
 }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [editingEntry, setEditingEntry] = useState(false);
   return (
     <tr className="border-b border-line last:border-0">
       <td className="py-3 pr-3">
@@ -404,9 +419,16 @@ function EntryRow({
           ariaLabel="More options"
           buttonClassName="ml-auto grid size-7 place-items-center rounded-lg text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink"
           iconClassName="size-3.5"
-          items={[{ label: "Delete Entry", Icon: Trash2, danger: true, onClick: () => setConfirmingDelete(true) }]}
+          items={[
+            { label: "Edit Entry", Icon: Pencil, onClick: () => setEditingEntry(true) },
+            { label: "Delete Entry", Icon: Trash2, danger: true, onClick: () => setConfirmingDelete(true) },
+          ]}
         />
       </td>
+
+      {editingEntry && (
+        <EditWorldEntryModal entry={entry} categories={categories} onClose={() => setEditingEntry(false)} />
+      )}
 
       {confirmingDelete && (
         <ConfirmDialog
@@ -420,6 +442,109 @@ function EntryRow({
         />
       )}
     </tr>
+  );
+}
+
+function EditWorldEntryModal({
+  entry,
+  categories,
+  onClose,
+}: {
+  entry: WorldEntry;
+  categories: WorldCategoryMeta[];
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(entry.name);
+  const [summary, setSummary] = useState(entry.summary);
+  const [category, setCategory] = useState<WorldCategoryKey>(entry.category);
+  const [nameError, setNameError] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  async function handleSave() {
+    const ok = name.trim().length > 0;
+    setNameError(!ok);
+    if (!ok) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      await updateWorldEntry(entry.id, { name, summary, category });
+      onClose();
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : "Failed to save entry.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-canvas/70 p-4 backdrop-blur-sm" onClick={(e) => e.stopPropagation()}>
+      <div className="card w-full max-w-md p-5">
+        <div className="flex items-center justify-between">
+          <h2 className="font-display text-xl text-ink">Edit Entry</h2>
+          <button type="button" onClick={onClose} aria-label="Close" className="text-ink-faint hover:text-ink">
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="mt-4">
+          <label className="text-sm text-ink">
+            Name <span className="text-danger">*</span>
+          </label>
+          <input
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              if (e.target.value.trim()) setNameError(false);
+            }}
+            className={`mt-1.5 w-full rounded-xl border bg-surface px-4 py-2.5 text-sm text-ink placeholder:text-ink-faint focus:outline-none ${
+              nameError ? "border-danger" : "border-line focus:border-line-strong"
+            }`}
+          />
+        </div>
+
+        <div className="mt-3">
+          <label className="text-sm text-ink">Category</label>
+          <DropdownSelect
+            value={categories.find((c) => c.key === category)?.label ?? category}
+            onChange={(label) => {
+              const match = categories.find((c) => c.label === label);
+              if (match) setCategory(match.key);
+            }}
+            options={categories.map((c) => c.label)}
+            placeholder="Select category"
+            className="mt-1.5"
+          />
+        </div>
+
+        <div className="mt-3">
+          <label className="text-sm text-ink">Summary</label>
+          <textarea
+            value={summary}
+            onChange={(e) => setSummary(e.target.value)}
+            rows={4}
+            className="mt-1.5 w-full resize-y rounded-xl border border-line bg-surface px-4 py-3 text-sm text-ink placeholder:text-ink-faint focus:border-line-strong focus:outline-none"
+          />
+        </div>
+
+        {submitError && <p className="mt-3 text-xs text-danger">{submitError}</p>}
+
+        <div className="mt-5 flex items-center justify-end gap-3">
+          <button type="button" onClick={onClose} className="text-sm text-ink-muted transition-colors hover:text-ink">
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={submitting}
+            className="flex items-center gap-1.5 rounded-xl bg-gold px-4 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-60"
+          >
+            {submitting ? "Saving…" : "Save Changes"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

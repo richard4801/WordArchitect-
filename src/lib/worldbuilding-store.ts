@@ -65,6 +65,7 @@ type CodexEntryRow = {
   updated_at?: string;
 };
 type CodexListResponse = { entries: CodexEntryRow[] };
+type CodexEntryResponse = { entry: CodexEntryRow };
 
 const FALLBACK_COLOR = "#8a93a6";
 
@@ -205,5 +206,25 @@ export async function createWorldCategory(bookId: string, input: NewCategoryInpu
 export async function deleteWorldEntry(id: string): Promise<void> {
   await apiFetch<void>(`/codex/${id}`, { method: "DELETE" });
   entryRows = entryRows.filter((e) => e.id !== id);
+  emit();
+}
+
+export type UpdateWorldEntryInput = {
+  name: string;
+  summary: string;
+  category: WorldCategoryKey;
+};
+
+/** Edit a world entry's name/summary/category for real — same `/codex/:id` endpoint as deleteWorldEntry, see that function's comment. */
+export async function updateWorldEntry(id: string, input: UpdateWorldEntryInput): Promise<void> {
+  const res = await apiFetch<CodexEntryResponse>(`/codex/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      name: input.name.trim(),
+      description: input.summary.trim() || "No summary written yet.",
+      entryType: input.category,
+    }),
+  });
+  entryRows = entryRows.map((e) => (e.id === id ? res.entry : e));
   emit();
 }

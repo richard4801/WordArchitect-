@@ -37,7 +37,15 @@ import {
   recentNotes,
   sceneFor,
 } from "@/lib/notes-data";
-import { createNote, deleteNote, togglePinned, useNotes, useNotesError, useNotesLoadStatus } from "@/lib/notes-store";
+import {
+  createNote,
+  deleteNote,
+  togglePinned,
+  updateNote,
+  useNotes,
+  useNotesError,
+  useNotesLoadStatus,
+} from "@/lib/notes-store";
 import { useProject } from "@/lib/project-store";
 import { ThemeToggle } from "@/components/theme-toggle";
 
@@ -389,6 +397,7 @@ export default function NotesPage() {
 function NoteCard({ note, compact, onTogglePin }: { note: Note; compact: boolean; onTogglePin: () => void }) {
   const meta = NOTE_CATEGORY_META[note.category];
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [editingNote, setEditingNote] = useState(false);
   return (
     <div className={`card-2 overflow-hidden ${compact ? "flex items-center gap-4 p-3" : ""}`}>
       <div className={`relative shrink-0 overflow-hidden ${compact ? "size-20 rounded-lg" : "aspect-[4/3]"}`}>
@@ -403,6 +412,7 @@ function NoteCard({ note, compact, onTogglePin }: { note: Note; compact: boolean
             ariaLabel="More options"
             buttonClassName="absolute right-2 top-11 grid size-7 place-items-center rounded-full bg-canvas/60 text-ink-muted backdrop-blur transition-colors hover:text-ink"
             items={[
+              { label: "Edit Note", Icon: Pencil, onClick: () => setEditingNote(true) },
               { label: "Delete Note", Icon: Trash2, danger: true, onClick: () => setConfirmingDelete(true) },
             ]}
           />
@@ -420,6 +430,7 @@ function NoteCard({ note, compact, onTogglePin }: { note: Note; compact: boolean
           }}
         />
       )}
+      {editingNote && <NewNoteModal note={note} onClose={() => setEditingNote(false)} />}
       <div className={compact ? "min-w-0 flex-1" : "p-4"}>
         <div className="flex items-center justify-between gap-2">
           <span
@@ -446,25 +457,30 @@ function NoteCard({ note, compact, onTogglePin }: { note: Note; compact: boolean
   );
 }
 
-function NewNoteModal({ bookId, onClose }: { bookId: string; onClose: () => void }) {
-  const [title, setTitle] = useState("");
-  const [category, setCategory] = useState<NoteCategory>("Inspiration");
-  const [body, setBody] = useState("");
+function NewNoteModal({ bookId, note, onClose }: { bookId?: string; note?: Note; onClose: () => void }) {
+  const isEdit = Boolean(note);
+  const [title, setTitle] = useState(note?.title ?? "");
+  const [category, setCategory] = useState<NoteCategory>(note?.category ?? "Inspiration");
+  const [body, setBody] = useState(note?.excerpt ?? "");
   const [titleError, setTitleError] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  async function handleCreate() {
+  async function handleSave() {
     const ok = title.trim().length > 0;
     setTitleError(!ok);
     if (!ok) return;
     setSubmitting(true);
     setSubmitError(null);
     try {
-      await createNote(bookId, { title, excerpt: body, category });
+      if (note) {
+        await updateNote(note.id, { title, excerpt: body, category });
+      } else if (bookId) {
+        await createNote(bookId, { title, excerpt: body, category });
+      }
       onClose();
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Failed to create note.");
+      setSubmitError(err instanceof Error ? err.message : `Failed to ${note ? "save" : "create"} note.`);
     } finally {
       setSubmitting(false);
     }
@@ -474,7 +490,7 @@ function NewNoteModal({ bookId, onClose }: { bookId: string; onClose: () => void
     <div className="fixed inset-0 z-30 grid place-items-center bg-canvas/70 p-4 backdrop-blur-sm">
       <div className="card w-full max-w-md p-5">
         <div className="flex items-center justify-between">
-          <h2 className="font-display text-xl text-ink">New Note</h2>
+          <h2 className="font-display text-xl text-ink">{isEdit ? "Edit Note" : "New Note"}</h2>
           <button type="button" onClick={onClose} aria-label="Close" className="text-ink-faint hover:text-ink">
             <X className="size-4" />
           </button>
@@ -527,12 +543,12 @@ function NewNoteModal({ bookId, onClose }: { bookId: string; onClose: () => void
           </button>
           <button
             type="button"
-            onClick={handleCreate}
+            onClick={handleSave}
             disabled={submitting}
             className="flex items-center gap-1.5 rounded-xl bg-gold px-4 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-60"
           >
             <Plus className="size-3.5" />
-            {submitting ? "Creating…" : "Create Note"}
+            {submitting ? (isEdit ? "Saving…" : "Creating…") : isEdit ? "Save Changes" : "Create Note"}
           </button>
         </div>
       </div>

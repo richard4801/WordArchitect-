@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+import { Suspense, useState } from "react";
 import { Sparkle } from "@/components/brand-mark";
 import { CoverArt } from "@/components/ui/cover-art";
 import { MiniCalendar } from "@/components/ui/mini-calendar";
@@ -29,9 +29,9 @@ import { Progress } from "@/components/ui/progress";
 import { Ring } from "@/components/ui/ring";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { Sparkline } from "@/components/ui/sparkline";
-import { useManuscript } from "@/lib/manuscript-store";
+import { useManuscript, useManuscriptWordCount } from "@/lib/manuscript-store";
 import { useProjects, useProjectsError, useProjectsLoadStatus } from "@/lib/project-store";
-import { deriveRecentChapters } from "@/lib/projects-data";
+import { setWritingGoals, useWritingGoals } from "@/lib/writing-goal-store";
 import {
   activity,
   type ActivityKind,
@@ -178,9 +178,10 @@ function ContinueWritingCard({ project }: { project: Project }) {
   // now, so use that instead of a stat that can't tell the difference
   // between "never started" and "not tracked."
   const manuscript = useManuscript(project.id);
+  const { total: words } = useManuscriptWordCount(project.id);
   const hasChapters = manuscript.some((part) => part.chapters.length > 0);
-  const percent = project.target > 0 ? Math.round((project.words / project.target) * 100) : 0;
-  const latestChapter = deriveRecentChapters(project, 1)[0];
+  const percent = project.target > 0 ? Math.round((words / project.target) * 100) : 0;
+  const latestChapter = manuscript.flatMap((p) => p.chapters).sort((a, b) => b.number - a.number)[0];
   const chapterLabel = latestChapter ? `Chapter ${latestChapter.number}: ${latestChapter.title}` : "No chapters yet";
 
   return (
@@ -214,7 +215,7 @@ function ContinueWritingCard({ project }: { project: Project }) {
               <Progress value={percent} />
               <div className="mt-2 flex items-center justify-between text-sm">
                 <span className="text-ink-muted">
-                  {project.words.toLocaleString()} / {project.target.toLocaleString()} words
+                  {words.toLocaleString()} / {project.target.toLocaleString()} words
                 </span>
                 <span className="text-gold">{percent}%</span>
               </div>
@@ -234,7 +235,8 @@ function ContinueWritingCard({ project }: { project: Project }) {
 }
 
 function TodaysProgressCard() {
-  const percent = Math.round((todaysProgress.words / todaysProgress.target) * 100);
+  const { dailyTarget } = useWritingGoals();
+  const percent = dailyTarget > 0 ? Math.round((todaysProgress.words / dailyTarget) * 100) : 0;
   return (
     <section className="card card-hover p-6">
       <div className="flex items-center justify-between">
@@ -250,7 +252,7 @@ function TodaysProgressCard() {
             value={percent}
             label={todaysProgress.words.toLocaleString()}
             sublabel={
-              <span className="text-xs text-ink-faint">/ {todaysProgress.target.toLocaleString()} words</span>
+              <span className="text-xs text-ink-faint">/ {dailyTarget.toLocaleString()} words</span>
             }
             size={128}
             labelClassName="text-xl"
@@ -434,12 +436,14 @@ function ActivityCard() {
 }
 
 function WritingGoalCard() {
-  const percent = Math.round((writingGoal.current / writingGoal.target) * 100);
+  const { monthlyTarget } = useWritingGoals();
+  const [editing, setEditing] = useState(false);
+  const percent = monthlyTarget > 0 ? Math.round((writingGoal.current / monthlyTarget) * 100) : 0;
   return (
     <section className="card card-hover p-6">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-xl text-ink">Writing Goal</h2>
-        <button type="button" className="text-xs text-gold hover:opacity-80">
+        <button type="button" onClick={() => setEditing(true)} className="text-xs text-gold hover:opacity-80">
           Edit
         </button>
       </div>
@@ -448,7 +452,7 @@ function WritingGoalCard() {
         <p className="text-sm font-medium text-ink">Monthly Goal</p>
         <div className="mt-2 flex items-center justify-between text-sm text-ink">
           <span>
-            {writingGoal.current.toLocaleString()} / {writingGoal.target.toLocaleString()} words
+            {writingGoal.current.toLocaleString()} / {monthlyTarget.toLocaleString()} words
           </span>
           <span className="text-gold">{percent}%</span>
         </div>
@@ -463,7 +467,69 @@ function WritingGoalCard() {
           <MiniStat value={writingGoal.writingTime} label="Writing Time" />
         </div>
       </div>
+
+      {editing && <EditWritingGoalModal onClose={() => setEditing(false)} />}
     </section>
+  );
+}
+
+function EditWritingGoalModal({ onClose }: { onClose: () => void }) {
+  const { dailyTarget, monthlyTarget } = useWritingGoals();
+  const [daily, setDaily] = useState(String(dailyTarget));
+  const [monthly, setMonthly] = useState(String(monthlyTarget));
+
+  function handleSave() {
+    setWritingGoals({
+      dailyTarget: daily ? Number(daily) : undefined,
+      monthlyTarget: monthly ? Number(monthly) : undefined,
+    });
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-canvas/70 p-4 backdrop-blur-sm">
+      <div className="card w-full max-w-sm p-5">
+        <h2 className="font-display text-lg text-ink">Edit Writing Goals</h2>
+        <p className="mt-1 text-xs text-ink-muted">
+          Saved on this device — there&rsquo;s no writing-session tracking backend yet, so these are personal targets, not synced.
+        </p>
+
+        <div className="mt-4">
+          <label className="text-sm text-ink">Daily Word Goal</label>
+          <input
+            type="number"
+            min={1}
+            value={daily}
+            onChange={(e) => setDaily(e.target.value)}
+            className="mt-1.5 w-full rounded-xl border border-line bg-surface px-4 py-2.5 text-sm text-ink placeholder:text-ink-faint focus:border-line-strong focus:outline-none"
+          />
+        </div>
+
+        <div className="mt-3">
+          <label className="text-sm text-ink">Monthly Word Goal</label>
+          <input
+            type="number"
+            min={1}
+            value={monthly}
+            onChange={(e) => setMonthly(e.target.value)}
+            className="mt-1.5 w-full rounded-xl border border-line bg-surface px-4 py-2.5 text-sm text-ink placeholder:text-ink-faint focus:border-line-strong focus:outline-none"
+          />
+        </div>
+
+        <div className="mt-5 flex items-center justify-end gap-3">
+          <button type="button" onClick={onClose} className="text-sm text-ink-muted transition-colors hover:text-ink">
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            className="rounded-xl bg-gold px-4 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -497,7 +563,8 @@ function ProjectsGrid({ projects }: { projects: Project[] }) {
 }
 
 function ProjectCard({ project, featured }: { project: Project; featured: boolean }) {
-  const percent = Math.round((project.words / project.target) * 100);
+  const { total: words } = useManuscriptWordCount(project.id);
+  const percent = project.target > 0 ? Math.round((words / project.target) * 100) : 0;
   return (
     <Link href={`/projects/${project.id}`} className="card card-hover block overflow-hidden">
       <div className="relative">
@@ -513,7 +580,7 @@ function ProjectCard({ project, featured }: { project: Project; featured: boolea
         <p className="mt-0.5 truncate text-xs text-ink-muted">{project.genre}</p>
         <div className="mt-3 flex items-center justify-between text-[0.68rem]">
           <span className="truncate text-ink-faint">
-            {project.words.toLocaleString()} / {project.target.toLocaleString()} words
+            {words.toLocaleString()} / {project.target.toLocaleString()} words
           </span>
           <span className="shrink-0 text-gold">{percent}%</span>
         </div>

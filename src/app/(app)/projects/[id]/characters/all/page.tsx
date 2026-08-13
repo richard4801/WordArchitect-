@@ -10,6 +10,7 @@ import {
   Grid2x2,
   Heart,
   LayoutGrid,
+  Pencil,
   Plus,
   Search,
   Sparkles,
@@ -289,6 +290,11 @@ function CharacterCard({
           buttonClassName="absolute right-2 top-2 grid size-6 place-items-center rounded-md bg-canvas/50 text-ink-muted backdrop-blur transition-colors hover:text-ink"
           iconClassName="size-3.5"
           items={[
+            {
+              label: "Edit Character",
+              Icon: Pencil,
+              onClick: () => router.push(`/projects/${projectId}/characters/${character.id}/edit`),
+            },
             { label: "Delete Character", Icon: Trash2, danger: true, onClick: () => setConfirmingDelete(true) },
           ]}
         />
