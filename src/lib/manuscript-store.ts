@@ -80,12 +80,22 @@ function countWords(text: string): number {
 }
 
 const listeners = new Set<() => void>();
+// Bumped on every emit() — lets a hook that aggregates across several keys
+// (useTotalWordCount, summing multiple books) detect "something in the
+// store changed" via a single stable primitive, instead of trying to hand
+// useSyncExternalStore a freshly-computed sum object each render (which
+// would fail its reference-stability contract and thrash re-renders).
+let version = 0;
 function emit() {
+  version++;
   for (const listener of listeners) listener();
 }
 function subscribe(listener: () => void) {
   listeners.add(listener);
   return () => listeners.delete(listener);
+}
+function getVersion() {
+  return version;
 }
 
 // ---------------------------------------------------------------------
@@ -367,4 +377,33 @@ export function useManuscriptWordCount(bookId: string | undefined): WordCountEnt
     () => (bookId ? getWordCountEntry(bookId) : EMPTY_WORD_COUNT),
     () => (bookId ? getWordCountEntry(bookId) : EMPTY_WORD_COUNT),
   );
+}
+
+/** Live combined word count across several books at once — a real cross-project total (e.g. the /projects sidebar's "Word Count" card), not a per-project stat. */
+export function useTotalWordCount(bookIds: string[]): { total: number; status: LoadStatus } {
+  const key = bookIds.join(",");
+  useEffect(() => {
+    for (const id of bookIds) {
+      if (getWordCountEntry(id).status === "idle") void loadWordCount(id);
+    }
+    // key is the intentional dep — bookIds itself is a fresh array each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  const storeVersion = useSyncExternalStore(subscribe, getVersion, getVersion);
+
+  return useMemo(() => {
+    let total = 0;
+    let anyLoading = false;
+    let anyLoaded = false;
+    for (const id of bookIds) {
+      const entry = getWordCountEntry(id);
+      total += entry.total;
+      if (entry.status === "loading") anyLoading = true;
+      if (entry.status === "loaded") anyLoaded = true;
+    }
+    const status: LoadStatus = anyLoading ? "loading" : anyLoaded ? "loaded" : "idle";
+    return { total, status };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, storeVersion]);
 }

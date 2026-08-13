@@ -200,6 +200,24 @@ body {
   }
 
   /*
+    Manuscript editor "Type / for commands" hint — CSS-only ::before content
+    on a genuinely empty paragraph, never a real DOM node. An earlier version
+    rendered this as a real trailing <p> sibling inside the contentEditable
+    region; it was real, editable text the browser could merge into an
+    adjacent paragraph on backspace, corrupting the DOM in a way React's next
+    reconcile pass couldn't recover from (a "removeChild: node not a child of
+    this node" crash). Pseudo-element content isn't part of the DOM tree at
+    all — it can't receive focus, can't be selected, and disappears the
+    instant the paragraph stops being :empty, so there's nothing to
+    accidentally type into or delete.
+  */
+  .editor-placeholder:empty::before {
+    content: "Type / for commands";
+    color: var(--ink-faint);
+    pointer-events: none;
+  }
+
+  /*
     Carved material surface — obsidian / smoked walnut / aged bronze.
     A warm vertical gradient (brighter/warmer at top), a soft ambient bronze
     glow and grain from the upper-left light, a 1px inner highlight, a soft

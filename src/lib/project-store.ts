@@ -22,6 +22,7 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import { apiFetch, getUserId } from "@/lib/api-client";
+import { logActivity } from "@/lib/activity-log-store";
 import type { Project, ProjectStatus } from "@/lib/projects-data";
 
 export type LoadStatus = "idle" | "loading" | "loaded" | "error";
@@ -247,6 +248,7 @@ export async function createProject(input: NewProjectInput): Promise<string> {
   projects = [newProject, ...projects.map((p) => ({ ...p, updatedRank: p.updatedRank + 1 }))];
   status = "loaded";
   emit();
+  logActivity("project", `Created project "${newProject.title}"`);
   return res.book.id;
 }
 

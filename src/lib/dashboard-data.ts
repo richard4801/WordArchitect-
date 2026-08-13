@@ -12,36 +12,18 @@ export const user = {
 };
 
 /**
- * Today's word-count ring + writing streak + a month of activity dots.
- * No writing-session tracking exists yet, so this is honestly zeroed —
- * not fabricated activity — until that backend resource exists.
- */
-export const todaysProgress = {
-  words: 0,
-  target: 2000,
-  streakDays: 0,
-  // Fixed placeholder day-of-month (not real Date math — see MiniCalendar's
-  // own doc comment on why: this avoids a server/client hydration mismatch
-  // for a cosmetic "today" ring with no real activity data behind it yet).
-  today: 18,
-  activeDays: [] as number[],
-};
-
-/**
- * The five headline stat tiles above the AI Insights / Activity / Goal row.
- * wordsWritten/writingTime have no real time-tracking backend yet, so they
- * stay honestly zeroed rather than showing fabricated numbers.
+ * "Words Written (This Week)" and the Writing Goal card's "Days
+ * Active"/"Consistency"/monthly total are all real now — see
+ * `daily-progress-store.ts`, which derives them from actual autosaved
+ * word-count deltas. `writingTime` has no real time-tracking backend at
+ * all (not even a localStorage-derivable proxy), so it stays honestly
+ * zeroed rather than showing a fabricated number.
  */
 export const weeklyStats = {
-  wordsWritten: { value: 0, trendPercent: 0, sparkline: [0, 0] },
-  writingTime: { value: "0h 0m", trendPercent: 0 },
+  writingTime: { value: "0h 0m" },
 };
 
 export const writingGoal = {
-  current: 0,
-  target: 50000,
-  daysActive: 0,
-  consistencyPercent: 0,
   writingTime: "0h 0m",
 };
 
@@ -66,12 +48,4 @@ export const aiInsights: {
 export type { Project } from "@/lib/projects-data";
 export { projects } from "@/lib/projects-data";
 
-export type ActivityKind = "wrote" | "character" | "world" | "session" | "note";
-
-export const activity: {
-  id: string;
-  kind: ActivityKind;
-  text: string;
-  context: string;
-  time: string;
-}[] = [];
+// Recent Activity is real now — see activity-log-store.ts.

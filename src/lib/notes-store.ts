@@ -15,6 +15,7 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import { apiFetch, getUserId } from "@/lib/api-client";
+import { logActivity } from "@/lib/activity-log-store";
 import type { Note, NoteCategory } from "@/lib/notes-data";
 
 export type LoadStatus = "idle" | "loading" | "loaded" | "error";
@@ -150,6 +151,7 @@ export async function createNote(bookId: string, input: NewNoteInput): Promise<s
   noteRows = [res.note, ...noteRows];
   status = "loaded";
   emit();
+  logActivity("note", `Added note "${res.note.title}"`);
   return res.note.id;
 }
 

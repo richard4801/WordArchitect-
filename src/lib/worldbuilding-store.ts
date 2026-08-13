@@ -28,6 +28,7 @@
 
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { apiFetch } from "@/lib/api-client";
+import { logActivity } from "@/lib/activity-log-store";
 import {
   iconForKey,
   WORLD_CATEGORIES as BASE_CATEGORIES,
@@ -193,6 +194,7 @@ export async function createWorldCategory(bookId: string, input: NewCategoryInpu
   categoryRows = [...categoryRows, res.category];
   status = "loaded";
   emit();
+  logActivity("world", `Created world category "${res.category.name}"`);
   return res.category.key as WorldCategoryKey;
 }
 

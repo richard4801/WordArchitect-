@@ -84,16 +84,6 @@ export function projectStatusCounts(list: Project[]) {
   };
 }
 
-/** Word-count progress across the currently-active projects only. */
-export function activeWordStats(list: Project[]) {
-  const active = list.filter((p) => p.status === "active");
-  const written = active.reduce((sum, p) => sum + p.words, 0);
-  const goal = active.reduce((sum, p) => sum + p.target, 0);
-  const remaining = Math.max(goal - written, 0);
-  const percent = goal > 0 ? Math.round((written / goal) * 100) : 0;
-  return { written, goal, remaining, percent };
-}
-
 const GENRE_BUCKETS: [needle: string, label: string][] = [
   ["fantasy", "Fantasy"],
   ["romance", "Romance"],

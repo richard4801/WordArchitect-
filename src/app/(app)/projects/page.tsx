@@ -24,11 +24,9 @@ import { DropdownSelect } from "@/components/ui/dropdown-select";
 import { EditProjectModal } from "@/components/edit-project-modal";
 import { OptionsMenu } from "@/components/ui/options-menu";
 import { Progress } from "@/components/ui/progress";
-import { Ring } from "@/components/ui/ring";
 import { CoverArt } from "@/components/ui/cover-art";
 import {
   achievements,
-  activeWordStats,
   type AchievementIcon,
   type Project,
   type ProjectStatus,
@@ -37,7 +35,7 @@ import {
   topGenres,
 } from "@/lib/projects-data";
 import { deleteProject, useProjects, useProjectsError, useProjectsLoadStatus } from "@/lib/project-store";
-import { useChapterCount, useManuscriptWordCount } from "@/lib/manuscript-store";
+import { useChapterCount, useManuscriptWordCount, useTotalWordCount } from "@/lib/manuscript-store";
 
 const PER_PAGE = 6;
 type StatusFilter = "all" | ProjectStatus;
@@ -63,7 +61,6 @@ export default function ProjectsPage() {
   // Overview stats always reflect the whole roster, independent of the list
   // filters below.
   const counts = projectStatusCounts(projects);
-  const wordStats = activeWordStats(projects);
   const genres = topGenres(projects);
   const genreOptions = useMemo(
     () => [...new Set(projects.map((p) => primaryGenre(p.genre)))].sort(),
@@ -237,7 +234,7 @@ export default function ProjectsPage() {
             through to the page (default overscroll behaviour, no JS needed). */}
         <aside className="scroll-slim space-y-6 lg:sticky lg:top-6 lg:max-h-[calc(100dvh-3rem)] lg:overflow-y-auto lg:pr-1">
           <ProjectOverviewCard counts={counts} />
-          <WordCountCard stats={wordStats} />
+          <WordCountCard projects={projects} />
           <TopGenresCard genres={genres} />
           <AchievementsCard />
           <InspirationCard />
@@ -448,53 +445,27 @@ function ProjectOverviewCard({
   );
 }
 
-function WordCountCard({ stats }: { stats: ReturnType<typeof activeWordStats> }) {
+/**
+ * A cross-project aggregate — real total word count summed across every
+ * project's actual chapter bodies (useTotalWordCount), not a single
+ * project's progress. Deliberately has no Written/Remaining/Total Goal
+ * breakdown: those only mean something against one project's own target,
+ * and summing per-project targets across a whole roster produced a
+ * "progress ring" that didn't correspond to anything the user could
+ * actually work toward.
+ */
+function WordCountCard({ projects }: { projects: Project[] }) {
+  const { total, status } = useTotalWordCount(useMemo(() => projects.map((p) => p.id), [projects]));
   return (
     <section className="card p-5">
       <h2 className="font-display text-lg text-ink">Word Count</h2>
-      <div className="mt-4 flex justify-center">
-        <Ring
-          value={stats.percent}
-          label={stats.written.toLocaleString()}
-          sublabel={<span className="label-caps">Total Words</span>}
-          size={152}
-          labelClassName="text-2xl"
-        />
-      </div>
-      <div className="mt-4 space-y-2 text-sm">
-        <LegendRow color="var(--gold)" label="Written" value={stats.written.toLocaleString()} />
-        <LegendRow
-          color="var(--line-strong)"
-          label="Remaining"
-          value={stats.remaining.toLocaleString()}
-        />
-        <LegendRow
-          color="var(--ink-faint)"
-          label="Total Goal"
-          value={stats.goal.toLocaleString()}
-        />
+      <div className="mt-4 flex flex-col items-center gap-1 py-2 text-center">
+        <span className="font-num text-4xl text-ink">{total.toLocaleString()}</span>
+        <span className="label-caps text-[0.6rem]">
+          {status === "loading" ? "Counting…" : "Total Words Across All Projects"}
+        </span>
       </div>
     </section>
-  );
-}
-
-function LegendRow({
-  color,
-  label,
-  value,
-}: {
-  color: string;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="flex items-center gap-2 text-ink-muted">
-        <span className="size-2 shrink-0 rounded-full" style={{ background: color }} />
-        {label}
-      </span>
-      <span className="text-ink">{value}</span>
-    </div>
   );
 }
 

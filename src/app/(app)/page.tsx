@@ -29,15 +29,22 @@ import { Progress } from "@/components/ui/progress";
 import { Ring } from "@/components/ui/ring";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { Sparkline } from "@/components/ui/sparkline";
+import { EditWritingGoalModal } from "@/components/edit-writing-goal-modal";
+import { type ActivityKind, formatRelativeTime, useActivityLog } from "@/lib/activity-log-store";
+import {
+  useActiveDaysThisMonth,
+  useMonthWordsWritten,
+  useTodayDayOfMonth,
+  useTodaysWordsWritten,
+  useWeeklyWordsWritten,
+  useWritingStreak,
+} from "@/lib/daily-progress-store";
 import { useManuscript, useManuscriptWordCount } from "@/lib/manuscript-store";
 import { useProjects, useProjectsError, useProjectsLoadStatus } from "@/lib/project-store";
-import { setWritingGoals, useWritingGoals } from "@/lib/writing-goal-store";
+import { useWritingGoals } from "@/lib/writing-goal-store";
 import {
-  activity,
-  type ActivityKind,
   aiInsights,
   type AiInsightTone,
-  todaysProgress,
   type Project,
   user,
   weeklyStats,
@@ -236,12 +243,30 @@ function ContinueWritingCard({ project }: { project: Project }) {
 
 function TodaysProgressCard() {
   const { dailyTarget } = useWritingGoals();
-  const percent = dailyTarget > 0 ? Math.round((todaysProgress.words / dailyTarget) * 100) : 0;
+  const words = useTodaysWordsWritten();
+  const streak = useWritingStreak();
+  const activeDays = useActiveDaysThisMonth();
+  const today = useTodayDayOfMonth();
+  const percent = dailyTarget > 0 ? Math.round((words / dailyTarget) * 100) : 0;
+  const [editing, setEditing] = useState(false);
+
   return (
-    <section className="card card-hover p-6">
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => setEditing(true)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") setEditing(true);
+      }}
+      className="card card-hover cursor-pointer p-6 text-left"
+    >
       <div className="flex items-center justify-between">
         <h2 className="font-display text-xl text-ink">Today&rsquo;s Progress</h2>
-        <Link href="/timeline" className="text-xs text-gold hover:opacity-80">
+        <Link
+          href="/timeline"
+          onClick={(e) => e.stopPropagation()}
+          className="text-xs text-gold hover:opacity-80"
+        >
           View Calendar →
         </Link>
       </div>
@@ -250,7 +275,7 @@ function TodaysProgressCard() {
         <div className="shrink-0">
           <Ring
             value={percent}
-            label={todaysProgress.words.toLocaleString()}
+            label={words.toLocaleString()}
             sublabel={
               <span className="text-xs text-ink-faint">/ {dailyTarget.toLocaleString()} words</span>
             }
@@ -260,18 +285,20 @@ function TodaysProgressCard() {
         </div>
 
         <div className="min-w-0 flex-1">
-          <MiniCalendar activeDays={todaysProgress.activeDays} today={todaysProgress.today} />
+          <MiniCalendar activeDays={activeDays} today={today} />
         </div>
       </div>
 
       <div className="mt-4 flex items-center justify-between border-t border-line pt-3">
         <div>
-          <div className="font-num text-lg text-gilded">{todaysProgress.streakDays}</div>
+          <div className="font-num text-lg text-gilded">{streak}</div>
           <div className="label-caps text-[0.6rem]">Day Streak</div>
         </div>
         <p className="text-xs text-ink-faint">🔥 Keep it going!</p>
       </div>
-    </section>
+
+      {editing && <EditWritingGoalModal onClose={() => setEditing(false)} />}
+    </div>
   );
 }
 
@@ -279,17 +306,18 @@ function WeeklyStatsRow({ projects }: { projects: Project[] }) {
   const active = projects.filter((p) => p.status === "active");
   const characters = projects.reduce((sum, p) => sum + (p.povCharacters ?? 0), 0);
   const worldEntries = projects.reduce((sum, p) => sum + (p.worldEntries ?? 0), 0);
+  const weekWords = useWeeklyWordsWritten();
 
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
       <StatTile label="Words Written (This Week)">
         <div className="flex items-end justify-between gap-2">
-          <span className="font-num text-2xl text-ink">
-            {weeklyStats.wordsWritten.value.toLocaleString()}
-          </span>
-          <Sparkline data={weeklyStats.wordsWritten.sparkline} className="h-6 w-14" />
+          <span className="font-num text-2xl text-ink">{weekWords.total.toLocaleString()}</span>
+          <Sparkline data={weekWords.sparkline} className="h-6 w-14" />
         </div>
-        <StatCaption text={`${weeklyStats.wordsWritten.trendPercent}% from last week`} />
+        {weekWords.trendPercent !== 0 && (
+          <StatCaption text={`${weekWords.trendPercent}% from last week`} up={weekWords.trendPercent > 0} />
+        )}
       </StatTile>
       <StatTile label="Projects">
         <span className="font-num text-2xl text-ink">{projects.length}</span>
@@ -303,7 +331,7 @@ function WeeklyStatsRow({ projects }: { projects: Project[] }) {
       </StatTile>
       <StatTile label="Writing Time (This Week)">
         <span className="font-num text-2xl text-ink">{weeklyStats.writingTime.value}</span>
-        <StatCaption text={`${weeklyStats.writingTime.trendPercent}% from last week`} />
+        <p className="mt-1 text-xs text-ink-faint">No session-time tracking yet</p>
       </StatTile>
     </div>
   );
@@ -395,28 +423,29 @@ const ACTIVITY_ICON: Record<ActivityKind, typeof PenLine> = {
   wrote: PenLine,
   character: UserPlus,
   world: Globe2,
-  session: Sparkles,
+  project: FilePlus2,
   note: FileText,
 };
 const ACTIVITY_TONE: Record<ActivityKind, string> = {
   wrote: "bg-gold/20 text-gold",
   character: "bg-purple/20 text-purple",
   world: "bg-info/20 text-info",
-  session: "bg-success/20 text-success",
+  project: "bg-success/20 text-success",
   note: "bg-warn/20 text-warn",
 };
 
 function ActivityCard() {
+  const log = useActivityLog();
   return (
     <section className="card card-hover p-6">
       <SectionHeading title="Recent Activity" actionLabel="View All" actionHref="/timeline" />
-      {activity.length === 0 && (
+      {log.length === 0 && (
         <p className="py-3 text-sm text-ink-muted">
           No activity yet — start writing to see it appear here.
         </p>
       )}
       <ul className="divide-y divide-line">
-        {activity.map((item) => {
+        {log.map((item) => {
           const Icon = ACTIVITY_ICON[item.kind];
           return (
             <li key={item.id} className="flex items-center gap-3 py-3">
@@ -426,7 +455,7 @@ function ActivityCard() {
                 <Icon className="size-3.5" strokeWidth={1.7} />
               </span>
               <p className="min-w-0 flex-1 truncate text-sm text-ink">{item.text}</p>
-              <span className="shrink-0 text-xs text-ink-faint">{item.time}</span>
+              <span className="shrink-0 text-xs text-ink-faint">{formatRelativeTime(item.timestamp)}</span>
             </li>
           );
         })}
@@ -438,21 +467,31 @@ function ActivityCard() {
 function WritingGoalCard() {
   const { monthlyTarget } = useWritingGoals();
   const [editing, setEditing] = useState(false);
-  const percent = monthlyTarget > 0 ? Math.round((writingGoal.current / monthlyTarget) * 100) : 0;
+  const current = useMonthWordsWritten();
+  const activeDays = useActiveDaysThisMonth();
+  const daysElapsed = useTodayDayOfMonth();
+  const consistencyPercent = daysElapsed > 0 ? Math.round((activeDays.length / daysElapsed) * 100) : 0;
+  const percent = monthlyTarget > 0 ? Math.round((current / monthlyTarget) * 100) : 0;
   return (
-    <section className="card card-hover p-6">
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => setEditing(true)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") setEditing(true);
+      }}
+      className="card card-hover cursor-pointer p-6 text-left"
+    >
       <div className="flex items-center justify-between">
         <h2 className="font-display text-xl text-ink">Writing Goal</h2>
-        <button type="button" onClick={() => setEditing(true)} className="text-xs text-gold hover:opacity-80">
-          Edit
-        </button>
+        <span className="text-xs text-gold hover:opacity-80">Edit</span>
       </div>
 
       <div className="mt-4 rounded-xl bg-surface-2/60 p-4">
         <p className="text-sm font-medium text-ink">Monthly Goal</p>
         <div className="mt-2 flex items-center justify-between text-sm text-ink">
           <span>
-            {writingGoal.current.toLocaleString()} / {monthlyTarget.toLocaleString()} words
+            {current.toLocaleString()} / {monthlyTarget.toLocaleString()} words
           </span>
           <span className="text-gold">{percent}%</span>
         </div>
@@ -462,73 +501,13 @@ function WritingGoalCard() {
       <div className="mt-5">
         <p className="label-caps">This Month</p>
         <div className="mt-2 flex items-center justify-between gap-2">
-          <MiniStat value={writingGoal.daysActive} label="Days Active" />
-          <MiniStat value={`${writingGoal.consistencyPercent}%`} label="Consistency" />
+          <MiniStat value={activeDays.length} label="Days Active" />
+          <MiniStat value={`${consistencyPercent}%`} label="Consistency" />
           <MiniStat value={writingGoal.writingTime} label="Writing Time" />
         </div>
       </div>
 
       {editing && <EditWritingGoalModal onClose={() => setEditing(false)} />}
-    </section>
-  );
-}
-
-function EditWritingGoalModal({ onClose }: { onClose: () => void }) {
-  const { dailyTarget, monthlyTarget } = useWritingGoals();
-  const [daily, setDaily] = useState(String(dailyTarget));
-  const [monthly, setMonthly] = useState(String(monthlyTarget));
-
-  function handleSave() {
-    setWritingGoals({
-      dailyTarget: daily ? Number(daily) : undefined,
-      monthlyTarget: monthly ? Number(monthly) : undefined,
-    });
-    onClose();
-  }
-
-  return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-canvas/70 p-4 backdrop-blur-sm">
-      <div className="card w-full max-w-sm p-5">
-        <h2 className="font-display text-lg text-ink">Edit Writing Goals</h2>
-        <p className="mt-1 text-xs text-ink-muted">
-          Saved on this device — there&rsquo;s no writing-session tracking backend yet, so these are personal targets, not synced.
-        </p>
-
-        <div className="mt-4">
-          <label className="text-sm text-ink">Daily Word Goal</label>
-          <input
-            type="number"
-            min={1}
-            value={daily}
-            onChange={(e) => setDaily(e.target.value)}
-            className="mt-1.5 w-full rounded-xl border border-line bg-surface px-4 py-2.5 text-sm text-ink placeholder:text-ink-faint focus:border-line-strong focus:outline-none"
-          />
-        </div>
-
-        <div className="mt-3">
-          <label className="text-sm text-ink">Monthly Word Goal</label>
-          <input
-            type="number"
-            min={1}
-            value={monthly}
-            onChange={(e) => setMonthly(e.target.value)}
-            className="mt-1.5 w-full rounded-xl border border-line bg-surface px-4 py-2.5 text-sm text-ink placeholder:text-ink-faint focus:border-line-strong focus:outline-none"
-          />
-        </div>
-
-        <div className="mt-5 flex items-center justify-end gap-3">
-          <button type="button" onClick={onClose} className="text-sm text-ink-muted transition-colors hover:text-ink">
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            className="rounded-xl bg-gold px-4 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
-          >
-            Save
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

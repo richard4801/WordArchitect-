@@ -137,6 +137,151 @@ two passes hadn't fully exercised). Found and fixed:
   added), and building disposable local state for it first would just be
   redone immediately after.
 
+**Fourth pass — real activity tracking end-to-end, and a second, more
+serious editor-crash root cause found underneath the first fix.** User
+report: the editor's Daily Goal widget and the Dashboard's Today's
+Progress never moved as you wrote; nothing on the Dashboard tracked real
+activity; the `/projects` Word Count sidebar card (a cross-project
+aggregate) wrongly showed a per-project-shaped Written/Remaining/Total
+Goal breakdown; and, worst, the editor would crash outright while
+writing, specifically when backspacing into the "Type / for commands"
+placeholder.
+
+- **Editor crash, actual root cause.** The placeholder was a real,
+  permanently-rendered `<p data-placeholder>` *sibling* inside the same
+  contentEditable region as the real paragraphs — always present, not
+  conditional on the body being empty. Backspacing into it let the browser
+  merge/delete that untracked node via native contentEditable editing,
+  corrupting the DOM in a way React's next reconcile pass (after an
+  autosave echo, see below) couldn't recover from — a
+  `Failed to execute 'removeChild'` crash. Fixed by deleting the node
+  entirely and replacing it with a CSS-only hint: `.editor-placeholder`
+  (globals.css) pairs `content: "Type / for commands"` with `:empty::before`
+  and is applied to every plain paragraph's own class list. Pseudo-element
+  content isn't part of the DOM tree — it can't be focused, selected, or
+  typed into, and disappears the instant the paragraph stops being
+  `:empty`, so there's nothing left to accidentally delete.
+- **A second, deeper crash underneath that one, still reachable after the
+  placeholder fix:** backspacing a paragraph *fully* empty and continuing
+  to backspace makes the browser delete the block element itself, not
+  just its text — the last remaining `<p>` in the contentEditable region
+  gets removed, leaving the root with zero element children. Any further
+  typing at that point still has to land somewhere, so the browser inserts
+  it as a bare text node directly under the root, with no `<p>` wrapper at
+  all. That's invisible to `serializeParagraphs()` — it reads
+  `root.children`, which (unlike `childNodes`) skips text nodes — so
+  everything typed after that point silently never made it into what got
+  saved, and (compounding via the bug below) could still trigger the
+  `removeChild` crash once a stale autosave echoed back. Fixed with
+  `normalizeEditableRoot()` in `chapters/page.tsx`, called at the top of
+  every `handleInput`: if the contentEditable root has zero element
+  children, it creates a fresh `<p>`, moves any stray child nodes into it,
+  and restores the caret to the end of its content — restoring the "always
+  at least one `<p>`" invariant *before* the next keystroke can land as an
+  orphaned node, rather than trying to detect/repair the damage later.
+- **The `removeChild` crash's other trigger, unrelated to the placeholder:**
+  every successful autosave (`saveChapterBody` in `manuscript-store.ts`)
+  echoes the server's saved paragraphs back into the reactive `bodyRow`
+  cache, which flows into `ChaptersPage`'s `body` and then into
+  `EditorBody`'s `body.paragraphs` prop — a *new* object on every save,
+  even though the content is (usually) identical to what was just typed.
+  If the user kept typing between a save firing and its response landing,
+  that echo is stale relative to the live DOM; React would then try to
+  reconcile `<EditorParagraph>` against text content the browser's native
+  typing had already restructured out from under it — the same
+  `removeChild` crash, with no placeholder involved at all. Fixed by
+  making `EditorBody`'s rendered paragraph list captured once at mount
+  (`useState(() => body.paragraphs)`) rather than read live from the
+  `body` prop — effectively an uncontrolled `<textarea defaultValue>`
+  pattern. Safe because `EditorBody` already remounts (`key={activeChapter.id}`)
+  on every real chapter switch, and nothing else in this single-user
+  editor ever mutates a chapter's content except the DOM itself.
+- **Daily Goal (editor) and Today's Progress (Dashboard) now share one
+  real source:** new `src/lib/daily-progress-store.ts`, same
+  localStorage-backed-per-browser tradeoff as `writing-goal-store.ts` (no
+  writing-session backend resource exists — see §4.7). Every autosave
+  reports its chapter's post-save word count via
+  `recordChapterWordCount(chapterId, words)`; only the *positive* delta
+  versus that chapter's last-known count credits "today" (deleting text
+  never subtracts — matches what a writer means by "words written," not
+  "net change"). A chapter's baseline is seeded via `seedChapterBaseline()`
+  the moment its body first loads, *before* any edits, so opening an
+  existing chapter with real content never credits its whole word count as
+  one day's work — only words actually added after that point count.
+  Exposes `useTodaysWordsWritten`, `useWritingStreak`,
+  `useActiveDaysThisMonth`, `useMonthWordsWritten`, `useWeeklyWordsWritten`
+  — the manuscript editor's Daily Goal widget and the Dashboard's Today's
+  Progress ring, Writing Goal card, and Weekly Stats "Words Written" tile
+  all read from these now, so they can never drift out of sync with each
+  other or with what was actually saved.
+- **Both Daily Goal surfaces are now click-to-edit,** not just a separate
+  "Edit" link: `EditWritingGoalModal` was extracted out of the Dashboard's
+  `page.tsx` into a shared `src/components/edit-writing-goal-modal.tsx`
+  (portaled to `<body>`, `onClick` stops propagation on its own root) so
+  it can be opened from a card whose *entire* body is the click target
+  (`role="button"`, matching the existing convention in
+  `characters/all/page.tsx`) without the modal's own clicks bubbling back
+  up and re-triggering the card. Wired to the Dashboard's Today's Progress
+  card, the Dashboard's Writing Goal card, and the manuscript editor's
+  Daily Goal sidebar widget.
+- **Real Dashboard activity feed:** new `src/lib/activity-log-store.ts`,
+  same per-browser localStorage tradeoff — there's no activity-log backend
+  resource (§4.7). `logActivity(kind, text)` is called at the moment a
+  real action actually succeeds: `createProject` (project-store.ts),
+  `createCharacter` (character-store.ts), `createNote` (notes-store.ts),
+  `createWorldCategory` (worldbuilding-store.ts), and a chapter autosave
+  crediting a positive word delta (`chapters/page.tsx`, sharing the same
+  delta `recordChapterWordCount` already computed). The Dashboard's
+  `ActivityCard` now reads `useActivityLog()` instead of the old
+  always-empty `dashboard-data.ts` mock; `dashboard-data.ts`'s `activity`/
+  `ActivityKind`/`todaysProgress` exports were deleted (superseded), and
+  `weeklyStats`/`writingGoal` were trimmed to just the one field
+  (`writingTime`) that still has no real-data source at all.
+- **`/projects` Word Count card simplified to an honest cross-project
+  total:** it was rendering a per-project-shaped Written/Remaining/Total
+  Goal ring despite being a sum across every project — summing per-project
+  *targets* into one number doesn't correspond to anything a user is
+  actually working toward. New `useTotalWordCount(bookIds)` in
+  `manuscript-store.ts` sums real per-book word counts (each lazily
+  fetched via the existing `loadWordCount`) across an arbitrary set of
+  books at once — the store gained a module-level `version` counter
+  (bumped in `emit()`) so this aggregating hook can detect "something
+  changed" via one stable primitive instead of returning a freshly
+  computed sum object from `useSyncExternalStore`'s `getSnapshot` (which
+  would fail its reference-stability contract). The card itself now just
+  shows the real total; `activeWordStats()` (projects-data.ts) and its
+  `LegendRow`/`Ring` rendering were deleted as dead code.
+- **Slash-command trigger shell** (explicitly scoped by the user to *only*
+  the mechanism — "don't add anything to it, I'll route it to the backend
+  later"): `getSlashTrigger()` in `chapters/page.tsx` detects "/" typed as
+  the first character of an otherwise-empty paragraph (checked on every
+  `input`/`mouseup`/`keyup`) and opens `SlashCommandMenu`, a portaled,
+  fixed-positioned panel near the caret. It live-filters a static preview
+  list (Heading 1/2, lists, image, table, scene break) by whatever's typed
+  after the "/", but every row is inert — no `onClick`, muted styling, a
+  "Soon" badge — so it reads unmistakably as a preview, not a menu that's
+  silently broken. Closes on Escape, or a click outside both the menu and
+  the editor (a `mousedown` listener while open; clicks *inside* the
+  editor are already handled by the selection-change recompute). Escape's
+  own `keyup` had to be special-cased out of the same handler that
+  recomputes the trigger on every `keyup` — otherwise it would immediately
+  reopen the menu it was just told to close, since the "/…" text under the
+  caret hadn't changed.
+- **Collaboration and comment persistence were explicitly deferred** —
+  asked by the user directly, given the backend has no realtime
+  infrastructure or comments table (confirmed by reading the backend repo)
+  and this session has no push access to it anyway. "Active Collaborators"
+  and Share remain the existing honest static placeholders; do not build
+  real-time sync or persisted comments without the user raising it again.
+- **Toolbar audited, not rebuilt** — already substantially real from an
+  earlier pass (`document.execCommand`-backed bold/italic/underline/
+  strike/color/highlight/link/image/table/lists, undo/redo). Verified via
+  a scripted pass against a local mock backend: `Ctrl+B` and the toolbar's
+  Bold button both genuinely apply/toggle `<b>`, text color and
+  bulleted/numbered lists apply real DOM changes, Undo/Redo actually
+  undo/redo. No changes needed here beyond the crash fixes above, which
+  were the actual "editor breaks" complaint.
+
 ---
 
 ## 1. What this is
@@ -784,11 +929,16 @@ on the project detail page's right rail — the only post-creation mutation
 that exists for Projects).
 
 Derived/computed helpers the frontend relies on (`projects-data.ts`):
-`projectStatusCounts()`, `activeWordStats()`, `primaryGenre()`,
-`topGenres()`, `deriveRecentChapters()`, `deriveRecentActivity()` — these
-are pure functions over the `Project[]` list; the backend does not need to
+`projectStatusCounts()`, `primaryGenre()`, `topGenres()`,
+`deriveRecentChapters()`, `deriveRecentActivity()` — these are pure
+functions over the `Project[]` list; the backend does not need to
 reproduce them as stored fields, just needs to serve the underlying data
-they're computed from.
+they're computed from. (`activeWordStats()` was deleted — see the "Fourth
+pass" changelog entry: it summed per-project `words`/`target`, which are
+always `0` on the live backend anyway, into a per-project-shaped
+Written/Remaining/Total Goal breakdown for what's actually a cross-project
+card; `useTotalWordCount()` in `manuscript-store.ts` replaced it with a
+real cross-project total.)
 
 ### 4.2 Character
 
@@ -1188,48 +1338,46 @@ string array of names, not `Character.id` references, and
 reference. If the backend introduces real relational IDs here, the
 frontend will need updating to resolve them, not just to fetch them.
 
-### 4.7 Dashboard-only data (never gets its own resource yet)
+### 4.7 Dashboard-only data — mostly real now, via localStorage, not a backend resource
 
-Source: `src/lib/dashboard-data.ts`. Re-exports `projects`/`Project` from
-`projects-data.ts` (so "Your Projects" is real Project data), but every
-other export is standalone mock with **no reactive store and nothing in the
-UI that ever writes to it**:
+Source: `src/lib/dashboard-data.ts` re-exports `projects`/`Project` from
+`projects-data.ts` (so "Your Projects" is real Project data) and still
+holds `user` (hardcoded display name/quote — no auth to source a real one
+from) and `aiInsights` (empty; no real AI plot/pacing analysis runs yet).
+Everything else that used to live here as always-zero mock — Today's
+Progress, Writing Goal, Weekly Stats' "Words Written", Recent Activity —
+is **real now**, just not backend-synced: see the "Fourth pass" changelog
+entry above for the full story. Two new per-browser localStorage-backed
+stores, same tradeoff `writing-goal-store.ts` already established (real
+and user-generated, just not synced across devices, since no
+writing-session or activity-log backend resource exists):
 
-```ts
-export const user = { name: string, quote: { text: string, attribution: string } };
+- **`src/lib/daily-progress-store.ts`** — `useTodaysWordsWritten()`,
+  `useWritingStreak()`, `useActiveDaysThisMonth()`,
+  `useMonthWordsWritten()`, `useWeeklyWordsWritten()`. Fed by
+  `recordChapterWordCount(chapterId, words)`, called from every successful
+  chapter autosave (`chapters/page.tsx`) with that chapter's real post-save
+  word count; only a positive delta versus the chapter's last-known count
+  credits "today" (matches "words written," not "net change"). This is
+  the single source both the manuscript editor's Daily Goal widget and the
+  Dashboard's Today's Progress / Writing Goal / Weekly Stats cards read
+  from — they can't drift apart.
+- **`src/lib/activity-log-store.ts`** — `useActivityLog()`, fed by
+  `logActivity(kind, text)` calls placed at the exact moment a real action
+  succeeds: project/character/note/world-category creation, and a chapter
+  autosave crediting a positive word delta. `ActivityKind` here is
+  `"wrote" | "character" | "world" | "note" | "project"` (the old mock's
+  `"session"` kind is gone — nothing ever produced it for real).
 
-export const todaysProgress = {
-  words: number, target: number, streakDays: number, today: number,
-  activeDays: number[],   // day-of-month values with ≥1 session, for the mini-calendar's active dots
-};
-
-export const weeklyStats = {
-  wordsWritten: { value: number, trendPercent: number, sparkline: number[] },
-  writingTime: { value: string, trendPercent: number },   // value is a display string, e.g. "8h 45m"
-};
-
-export const writingGoal = {
-  current: number, target: number, daysActive: number, consistencyPercent: number, writingTime: string,
-};
-
-export type AiInsightTone = "warn" | "purple" | "success";
-// aiInsights: { id: string, tone: AiInsightTone, text: string, linkLabel: string, linkHref: string }[]
-
-export type ActivityKind = "wrote" | "character" | "world" | "session" | "note";
-// activity: { id: string, kind: ActivityKind, text: string, context: string, time: string }[]
-```
-
-**Decision on record:** these stay mock for now. Each would need its own
-new backend resource (writing-session time tracking, an activity-log table
-fed by real app events, actual AI plot/dialogue analysis to produce
-`aiInsights`, goal-tracking) that doesn't exist yet and isn't derivable
-from Projects/Characters/Worldbuilding/Notes alone. Sequence: wire these up
-in a later pass once the resources they depend on exist — not bundled into
-the current Projects/Characters/etc. integration effort. "Projects",
-"Characters", and "World Entries" counts on the Weekly Stats row ARE
-computed live from real `Project`/`Character`/`WorldEntry` data via
-`.reduce()` in-component — only `wordsWritten`/`writingTime` (with their
-trend %s and sparkline) are the mock ones needing a new resource.
+`aiInsights` stays genuinely mock (`AiInsightTone = "warn" | "purple" |
+"success"`) — no real AI plot/dialogue analysis pipeline exists to feed
+it, and building one is out of scope here. "Projects", "Characters", and
+"World Entries" counts on the Weekly Stats row are computed live from real
+`Project`/`Character`/`WorldEntry` data via `.reduce()` in-component, same
+as before. `weeklyStats.writingTime` (a display string like `"0h 0m"`) is
+the one field left with no real-data source of any kind, not even a
+localStorage-derivable proxy — there's no session-time tracking anywhere
+in the app.
 
 ---
 

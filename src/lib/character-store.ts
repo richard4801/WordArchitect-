@@ -20,6 +20,7 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import { apiFetch, getUserId } from "@/lib/api-client";
+import { logActivity } from "@/lib/activity-log-store";
 import type { Character, CharacterArc, CharacterRole } from "@/lib/character-data";
 
 export type LoadStatus = "idle" | "loading" | "loaded" | "error";
@@ -361,6 +362,7 @@ export async function createCharacter(bookId: string, input: NewCharacterInput):
   characters = [newCharacter, ...characters];
   status = "loaded";
   emit();
+  logActivity("character", `Added character "${newCharacter.name}"`);
   return res.entry.id;
 }
 

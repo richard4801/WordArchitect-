@@ -39,6 +39,7 @@ import {
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ACTIVE_COLLABORATORS,
   CHAPTER_18_COMMENTS,
@@ -59,8 +60,17 @@ import {
   useManuscript,
 } from "@/lib/manuscript-store";
 import { Progress } from "@/components/ui/progress";
+import { EditWritingGoalModal } from "@/components/edit-writing-goal-modal";
+import { logActivity } from "@/lib/activity-log-store";
+import {
+  recordChapterWordCount,
+  seedChapterBaseline,
+  useTodaysWordsWritten,
+  useWritingStreak,
+} from "@/lib/daily-progress-store";
 import { useProject } from "@/lib/project-store";
 import { setFocusModeActive } from "@/lib/ui-store";
+import { useWritingGoals } from "@/lib/writing-goal-store";
 
 /**
  * The manuscript editor — a dedicated, full-bleed workspace distinct from
@@ -195,6 +205,14 @@ export default function ChaptersPage() {
     setStats(bodyBaseline);
   }
 
+  // Seed this chapter's word-count baseline the moment its body loads —
+  // before any edits happen — so the very first autosave afterward credits
+  // only the words actually typed in this session, not the chapter's whole
+  // pre-existing content (see daily-progress-store.ts's doc comment).
+  useEffect(() => {
+    if (activeChapter && body) seedChapterBaseline(activeChapter.id, bodyBaseline.words);
+  }, [activeChapter, body, bodyBaseline]);
+
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Reads the editor's actual DOM paragraphs back into the structured shape
@@ -207,19 +225,31 @@ export default function ChaptersPage() {
   function serializeParagraphs(): ChapterParagraph[] {
     const root = editableRef.current;
     if (!root) return [];
-    return Array.from(root.children)
-      .filter((child) => !(child as HTMLElement).dataset.placeholder)
-      .map((child) => {
-        const el = child as HTMLElement;
-        const clone = el.cloneNode(true) as HTMLElement;
-        clone.querySelectorAll('[data-commenter-tag="true"]').forEach((tag) => tag.remove());
-        const id = el.dataset.paragraphId || crypto.randomUUID();
-        const paragraph: ChapterParagraph = { id, text: clone.textContent ?? "" };
-        if (el.dataset.break === "true") paragraph.break = true;
-        if (el.dataset.emphasis === "true") paragraph.emphasis = true;
-        if (el.dataset.commenter) paragraph.commenter = el.dataset.commenter as Commenter;
-        return paragraph;
-      });
+    return Array.from(root.children).map((child) => {
+      const el = child as HTMLElement;
+      const clone = el.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll('[data-commenter-tag="true"]').forEach((tag) => tag.remove());
+      const id = el.dataset.paragraphId || crypto.randomUUID();
+      const paragraph: ChapterParagraph = { id, text: clone.textContent ?? "" };
+      if (el.dataset.break === "true") paragraph.break = true;
+      if (el.dataset.emphasis === "true") paragraph.emphasis = true;
+      if (el.dataset.commenter) paragraph.commenter = el.dataset.commenter as Commenter;
+      return paragraph;
+    });
+  }
+
+  // Persist a chapter body and, in the same beat, credit the daily-progress
+  // tracker with whatever positive word delta this save represents — the
+  // single choke point every autosave path (debounced + flushed) goes
+  // through, so the Daily Goal widget and Dashboard's Today's Progress can
+  // never drift out of sync with what actually got saved.
+  function persistChapter(chapterId: string, paragraphs: ChapterParagraph[]) {
+    void saveChapterBody(chapterId, paragraphs);
+    const words = wordsInParagraphs(paragraphs);
+    const delta = recordChapterWordCount(chapterId, words);
+    if (delta > 0 && project) {
+      logActivity("wrote", `Wrote ${delta.toLocaleString()} word${delta === 1 ? "" : "s"} in "${project.title}"`);
+    }
   }
 
   function scheduleSave() {
@@ -228,7 +258,7 @@ export default function ChaptersPage() {
     const chapterId = activeChapter.id;
     saveTimeoutRef.current = setTimeout(() => {
       saveTimeoutRef.current = null;
-      void saveChapterBody(chapterId, serializeParagraphs());
+      persistChapter(chapterId, serializeParagraphs());
     }, 1200);
   }
 
@@ -242,7 +272,7 @@ export default function ChaptersPage() {
     if (!saveTimeoutRef.current || !activeChapter) return;
     clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = null;
-    void saveChapterBody(activeChapter.id, serializeParagraphs());
+    persistChapter(activeChapter.id, serializeParagraphs());
   }
 
   // Belt-and-suspenders: flush on genuine unmount too (navigating away from
@@ -587,10 +617,15 @@ function ManuscriptPanel({
         .filter((part) => part.chapters.length > 0)
     : manuscript;
 
-  // No real writing-session tracking exists yet (see CLAUDE.md §4.5/§4.7),
-  // so this reads honestly as zero rather than a fabricated number.
-  const dailyGoal = { current: 0, target: 1500, streak: 0 };
-  const percent = Math.round((dailyGoal.current / dailyGoal.target) * 100);
+  // Same source the Dashboard's Today's Progress ring reads from — see
+  // daily-progress-store.ts — so the two never show different numbers for
+  // the same day's writing.
+  const { dailyTarget } = useWritingGoals();
+  const current = useTodaysWordsWritten();
+  const streak = useWritingStreak();
+  const dailyGoal = { current, target: dailyTarget, streak };
+  const percent = dailyGoal.target > 0 ? Math.round((dailyGoal.current / dailyGoal.target) * 100) : 0;
+  const [editingGoal, setEditingGoal] = useState(false);
 
   return (
     <aside className="flex w-[280px] shrink-0 flex-col border-r border-line">
@@ -667,7 +702,15 @@ function ManuscriptPanel({
       </nav>
 
       <div className="p-4">
-        <div className="card-2 p-4">
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => setEditingGoal(true)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") setEditingGoal(true);
+          }}
+          className="card-2 w-full cursor-pointer p-4 text-left transition-colors hover:border-line-strong"
+        >
           <p className="label-caps text-[0.6rem]">Daily Goal</p>
           <div className="mt-1.5 flex items-baseline justify-between">
             <p className="text-sm text-ink">
@@ -682,6 +725,8 @@ function ManuscriptPanel({
           </p>
         </div>
       </div>
+
+      {editingGoal && <EditWritingGoalModal onClose={() => setEditingGoal(false)} />}
     </aside>
   );
 }
@@ -1134,6 +1179,31 @@ function closestBlock(node: Node): HTMLElement | null {
   return null;
 }
 
+/**
+ * Detects "/" typed as the very first character of an otherwise-empty
+ * line — the trigger for the slash-command menu. Only the mechanism: the
+ * menu it opens previews commands, it doesn't execute any (see
+ * SlashCommandMenu's own comment for why).
+ */
+function getSlashTrigger(root: HTMLElement): { query: string; top: number; left: number } | null {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return null;
+  const range = sel.getRangeAt(0);
+  if (!root.contains(range.startContainer)) return null;
+  const block = closestBlock(range.startContainer);
+  if (!block || !root.contains(block)) return null;
+  const text = block.textContent ?? "";
+  if (!/^\/\S*$/.test(text)) return null;
+
+  const caretRange = range.cloneRange();
+  caretRange.collapse(true);
+  let rect = caretRange.getBoundingClientRect();
+  if (rect.width === 0 && rect.height === 0 && rect.top === 0) {
+    rect = block.getBoundingClientRect();
+  }
+  return { query: text.slice(1), top: rect.bottom + 6, left: rect.left };
+}
+
 function Baseline({ className = "" }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" className={className} strokeWidth={1.7} stroke="currentColor">
@@ -1285,6 +1355,26 @@ function EditorBody({
 }) {
   const baseline = useRef({ words: 0, characters: 0 });
   const scrollRef = useRef<HTMLDivElement>(null);
+  const slashMenuRef = useRef<HTMLDivElement>(null);
+  const [slashMenu, setSlashMenu] = useState<{ query: string; top: number; left: number } | null>(null);
+
+  // Captured once at mount, deliberately never re-synced from `body` after
+  // that — this contentEditable region is uncontrolled past its initial
+  // render, same idea as an <input defaultValue>. Every successful autosave
+  // echoes the server's saved paragraphs back into `body` (see
+  // saveChapterBody in manuscript-store.ts), and without this, that echo
+  // would re-render <EditorParagraph> with that snapshot's text on every
+  // save — which, if the user kept typing between the save firing and its
+  // response landing, is already stale relative to the live DOM. React
+  // would then try to reconcile its believed text content against a DOM
+  // the browser's native contentEditable typing had already restructured
+  // out from under it, throwing "Failed to execute 'removeChild': the node
+  // to be removed is not a child of this node" mid-keystroke — exactly the
+  // "editor breaks while writing" crash this fixes. Safe because this
+  // component remounts (fresh initial state) via its `key={activeChapter.id}`
+  // whenever the open chapter actually changes, and nothing else in this
+  // single-user editor ever mutates a chapter's content except this DOM.
+  const [initialParagraphs] = useState(() => body.paragraphs);
   // Top/bottom padding for typewriter mode, computed from the scroll
   // container's own measured height (see the effect below) rather than a
   // static vh value. A static value can't work: with box-sizing:border-box
@@ -1363,17 +1453,71 @@ function EditorBody({
     if (Math.abs(delta) > 1) container.scrollTop += delta;
   }
 
+  // Backspacing a paragraph fully empty and continuing to backspace at that
+  // point makes the browser delete the block element itself, not just its
+  // text — the *last* remaining `<p>` in a contentEditable region gets
+  // removed entirely, leaving zero element children. Any further typing at
+  // that point still has to land somewhere, so the browser inserts it as a
+  // bare text node directly under the contentEditable root, with no `<p>`
+  // wrapper at all. That's invisible to serializeParagraphs() (it only
+  // reads `root.children`, which — unlike `childNodes` — skips text nodes
+  // entirely), so the words the user just typed silently never made it
+  // into what gets saved. Restoring the invariant "the editor always has
+  // at least one <p>" the instant it's lost, before the next keystroke can
+  // land as a stray node, is what closes that gap.
+  function normalizeEditableRoot(root: HTMLElement) {
+    if (root.children.length > 0) return;
+    const p = document.createElement("p");
+    p.dataset.paragraphId = crypto.randomUUID();
+    p.className = "editor-placeholder min-h-[1.85em]";
+    while (root.firstChild) p.appendChild(root.firstChild);
+    root.appendChild(p);
+
+    const sel = window.getSelection();
+    if (sel) {
+      const range = document.createRange();
+      range.selectNodeContents(p);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  }
+
+  function updateSlashMenu() {
+    const root = editableRef.current;
+    setSlashMenu(root ? getSlashTrigger(root) : null);
+  }
+
+  // Closes the menu on any click that lands outside both it and the editor
+  // itself — clicks *inside* the editor are already handled by handleSelect
+  // recomputing the trigger from the new caret position, so this only needs
+  // to cover clicks elsewhere on the page (toolbar, sidebar, etc.).
+  useEffect(() => {
+    if (!slashMenu) return;
+    function onDocMouseDown(e: MouseEvent) {
+      const target = e.target as Node;
+      if (slashMenuRef.current?.contains(target)) return;
+      if (editableRef.current?.contains(target)) return;
+      setSlashMenu(null);
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [slashMenu, editableRef]);
+
   function handleSelect() {
     onSelect();
     centerCaret();
+    updateSlashMenu();
   }
 
   function handleInput() {
+    if (editableRef.current) normalizeEditableRoot(editableRef.current);
     const text = editableRef.current?.innerText ?? "";
     const current = countText(text);
     onStatsChange(current.words - baseline.current.words, current.characters - baseline.current.characters);
     onContentChange();
     centerCaret();
+    updateSlashMenu();
     // A second, deferred pass: on a line-wrap the browser's own
     // scroll-into-view can land after this handler runs, nudging the caret
     // back toward the edge between our correction and the next paint. This
@@ -1399,19 +1543,120 @@ function EditorBody({
           suppressContentEditableWarning
           onInput={handleInput}
           onMouseUp={handleSelect}
-          onKeyUp={handleSelect}
+          onKeyUp={(e) => {
+            // Escape's own keyup would otherwise immediately undo keydown's
+            // close below: updateSlashMenu() re-reads the (unchanged) "/…"
+            // text still under the caret and reopens the menu it was just
+            // told to dismiss. Every other key still needs this for
+            // caret-centering/selection-tracking as usual.
+            if (e.key !== "Escape") handleSelect();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && slashMenu) setSlashMenu(null);
+          }}
           style={{ fontSize: `${(17 * zoomPercent) / 100}px` }}
           className="mt-8 font-display leading-[1.85] text-ink/90 focus:outline-none [&_p]:mb-5"
         >
-          {body.paragraphs.map((p) => (
+          {initialParagraphs.map((p) => (
             <EditorParagraph key={p.id} paragraph={p} />
           ))}
-          <p className="text-ink-faint" data-placeholder="true">
-            Type / for commands
-          </p>
         </div>
       </div>
+
+      {slashMenu && (
+        <SlashCommandMenu
+          menuRef={slashMenuRef}
+          query={slashMenu.query}
+          top={slashMenu.top}
+          left={slashMenu.left}
+          onClose={() => setSlashMenu(null)}
+        />
+      )}
     </div>
+  );
+}
+
+const SLASH_COMMAND_PREVIEW: { label: string; description: string; icon: typeof Type }[] = [
+  { label: "Heading 1", description: "Big section heading", icon: Type },
+  { label: "Heading 2", description: "Medium section heading", icon: Type },
+  { label: "Bulleted list", description: "Simple bulleted list", icon: ListIcon },
+  { label: "Numbered list", description: "List with numbering", icon: ListOrdered },
+  { label: "Checklist", description: "Track tasks with checkboxes", icon: ListChecks },
+  { label: "Image", description: "Embed an image", icon: ImageIcon },
+  { label: "Table", description: "Insert a table", icon: Table2 },
+  { label: "Scene break", description: "Mark a scene transition", icon: Minus },
+];
+
+/**
+ * Slash-command menu shell — detects the "/" trigger (see getSlashTrigger)
+ * and previews what's coming, but doesn't execute anything: deliberately
+ * scoped to just the trigger + UI, no command wired to a real action.
+ * Every row is inert (no onClick, muted styling, a "Soon" badge) so it
+ * reads unmistakably as a preview, not a menu that's silently broken.
+ */
+function SlashCommandMenu({
+  menuRef,
+  query,
+  top,
+  left,
+  onClose,
+}: {
+  menuRef: React.RefObject<HTMLDivElement | null>;
+  query: string;
+  top: number;
+  left: number;
+  onClose: () => void;
+}) {
+  const filtered = SLASH_COMMAND_PREVIEW.filter((c) => c.label.toLowerCase().includes(query.toLowerCase()));
+
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <div ref={menuRef} className="fixed z-50 w-72" style={{ top, left }}>
+      <div className="card-2 max-h-80 overflow-y-auto p-2">
+        <div className="flex items-center justify-between px-2 py-1">
+          <p className="label-caps text-[0.6rem]">Slash Commands</p>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="grid size-5 place-items-center rounded text-ink-faint transition-colors hover:text-ink"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+
+        {filtered.length === 0 ? (
+          <p className="px-2 py-3 text-xs text-ink-faint">No matching commands.</p>
+        ) : (
+          <ul className="mt-1 flex flex-col gap-0.5">
+            {filtered.map((c) => (
+              <li
+                key={c.label}
+                title="Coming soon"
+                className="flex cursor-default items-center gap-2.5 rounded-lg px-2 py-1.5 opacity-60"
+              >
+                <span className="grid size-7 shrink-0 place-items-center rounded-md bg-surface-2 text-ink-muted">
+                  <c.icon className="size-3.5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm text-ink">{c.label}</span>
+                  <span className="block truncate text-xs text-ink-faint">{c.description}</span>
+                </span>
+                <span className="shrink-0 rounded-full bg-surface-2 px-1.5 py-0.5 text-[0.55rem] text-ink-faint">
+                  Soon
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <p className="mt-1 border-t border-line px-2 pt-2 text-[0.65rem] text-ink-faint">
+          Slash commands aren&rsquo;t wired up yet — this previews what&rsquo;s coming.
+        </p>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -1421,6 +1666,14 @@ function countText(text: string): { words: number; characters: number } {
     words: trimmed ? trimmed.split(/\s+/).length : 0,
     characters: text.replace(/\s/g, "").length,
   };
+}
+
+function wordsInParagraphs(paragraphs: ChapterParagraph[]): number {
+  const text = paragraphs
+    .filter((p) => !p.break)
+    .map((p) => p.text)
+    .join(" ");
+  return countText(text).words;
 }
 
 // data-* attributes here aren't styling hooks — they're how
@@ -1444,7 +1697,7 @@ function EditorParagraph({ paragraph }: { paragraph: ChapterParagraph }) {
       <p
         data-paragraph-id={paragraph.id}
         data-emphasis={paragraph.emphasis ? "true" : undefined}
-        className={`min-h-[1.85em] ${textClass}`}
+        className={`editor-placeholder min-h-[1.85em] ${textClass}`}
       >
         {paragraph.text}
       </p>
