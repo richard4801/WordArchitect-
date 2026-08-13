@@ -36,7 +36,7 @@ import {
   recentNotes,
   sceneFor,
 } from "@/lib/notes-data";
-import { createNote, togglePinned, useNotes } from "@/lib/notes-store";
+import { createNote, togglePinned, useNotes, useNotesError, useNotesLoadStatus } from "@/lib/notes-store";
 import { useProject } from "@/lib/project-store";
 import { ThemeToggle } from "@/components/theme-toggle";
 
@@ -61,7 +61,9 @@ const CATEGORY_OPTIONS = Object.keys(NOTE_CATEGORY_META) as NoteCategory[];
 export default function NotesPage() {
   const { id } = useParams<{ id: string }>();
   const project = useProject(id);
-  const notes = useNotes();
+  const notes = useNotes(project?.id);
+  const notesLoadStatus = useNotesLoadStatus();
+  const notesError = useNotesError();
 
   const [topTab, setTopTab] = useState<TopTab>("All Notes");
   const [folder, setFolder] = useState<NoteFolderKey>("all");
@@ -69,6 +71,8 @@ export default function NotesPage() {
   const [view, setView] = useState<"grid" | "compact">("grid");
   const [showComposer, setShowComposer] = useState(false);
   const [quickDraft, setQuickDraft] = useState("");
+  const [quickSubmitting, setQuickSubmitting] = useState(false);
+  const [quickError, setQuickError] = useState<string | null>(null);
 
   const base = useMemo(() => notesInFolder(notes, folder), [notes, folder]);
   const filtered = useMemo(() => {
@@ -85,17 +89,36 @@ export default function NotesPage() {
   const pinned = useMemo(() => pinnedNotes(notes), [notes]);
   const recent = useMemo(() => recentNotes(notes), [notes]);
 
-  function submitQuickNote() {
+  async function submitQuickNote() {
     const text = quickDraft.trim();
-    if (!text) return;
-    createNote({ title: text.slice(0, 40), excerpt: text, category: "Inspiration" });
-    setQuickDraft("");
+    if (!text || !project) return;
+    setQuickSubmitting(true);
+    setQuickError(null);
+    try {
+      await createNote(project.id, { title: text.slice(0, 40), excerpt: text, category: "Inspiration" });
+      setQuickDraft("");
+    } catch (err) {
+      setQuickError(err instanceof Error ? err.message : "Failed to save note.");
+    } finally {
+      setQuickSubmitting(false);
+    }
   }
 
   if (!project) {
     return (
       <div className="grid h-dvh place-items-center text-center">
         <p className="text-sm text-ink-muted">Project not found.</p>
+      </div>
+    );
+  }
+
+  if (notesLoadStatus === "error") {
+    return (
+      <div className="grid h-dvh place-items-center text-center">
+        <div>
+          <p className="font-display text-xl text-ink">Couldn&rsquo;t reach the server</p>
+          <p className="mt-2 text-sm text-ink-muted">{notesError ?? "Something went wrong loading your notes."}</p>
+        </div>
       </div>
     );
   }
@@ -223,7 +246,7 @@ export default function NotesPage() {
             }`}
           >
             {sorted.map((note) => (
-              <NoteCard key={note.id} note={note} compact={view === "compact"} onTogglePin={() => togglePinned(note.id)} />
+              <NoteCard key={note.id} note={note} compact={view === "compact"} onTogglePin={() => void togglePinned(note.id)} />
             ))}
             <button
               type="button"
@@ -343,19 +366,21 @@ export default function NotesPage() {
                   <ImageIcon className="size-3.5" />
                 </button>
               </div>
+              {quickError && <p className="mt-2 text-xs text-danger">{quickError}</p>}
               <button
                 type="button"
                 onClick={submitQuickNote}
-                className="mt-3 w-full rounded-xl bg-gold py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
+                disabled={quickSubmitting}
+                className="mt-3 w-full rounded-xl bg-gold py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-60"
               >
-                Save Note
+                {quickSubmitting ? "Saving…" : "Save Note"}
               </button>
             </section>
           </aside>
         </div>
       </div>
 
-      {showComposer && <NewNoteModal onClose={() => setShowComposer(false)} />}
+      {showComposer && <NewNoteModal bookId={project.id} onClose={() => setShowComposer(false)} />}
     </div>
   );
 }
@@ -407,18 +432,28 @@ function NoteCard({ note, compact, onTogglePin }: { note: Note; compact: boolean
   );
 }
 
-function NewNoteModal({ onClose }: { onClose: () => void }) {
+function NewNoteModal({ bookId, onClose }: { bookId: string; onClose: () => void }) {
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<NoteCategory>("Inspiration");
   const [body, setBody] = useState("");
   const [titleError, setTitleError] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
-  function handleCreate() {
+  async function handleCreate() {
     const ok = title.trim().length > 0;
     setTitleError(!ok);
     if (!ok) return;
-    createNote({ title, excerpt: body, category });
-    onClose();
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      await createNote(bookId, { title, excerpt: body, category });
+      onClose();
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : "Failed to create note.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -470,6 +505,8 @@ function NewNoteModal({ onClose }: { onClose: () => void }) {
           />
         </div>
 
+        {submitError && <p className="mt-3 text-xs text-danger">{submitError}</p>}
+
         <div className="mt-5 flex items-center justify-end gap-3">
           <button type="button" onClick={onClose} className="text-sm text-ink-muted transition-colors hover:text-ink">
             Cancel
@@ -477,10 +514,11 @@ function NewNoteModal({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             onClick={handleCreate}
-            className="flex items-center gap-1.5 rounded-xl bg-gold px-4 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
+            disabled={submitting}
+            className="flex items-center gap-1.5 rounded-xl bg-gold px-4 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-60"
           >
             <Plus className="size-3.5" />
-            Create Note
+            {submitting ? "Creating…" : "Create Note"}
           </button>
         </div>
       </div>

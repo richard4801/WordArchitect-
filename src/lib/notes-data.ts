@@ -52,12 +52,6 @@ export function sceneFor(note: Note): NoteScene {
   return CATEGORY_SCENE[note.category];
 }
 
-export const NOTES: Note[] = [];
-
-export function findNote(id: string): Note | undefined {
-  return NOTES.find((n) => n.id === id);
-}
-
 export function pinnedNotes(notes: Note[], limit = 3): Note[] {
   return [...notes].filter((n) => n.pinned).sort((a, b) => a.dateRank - b.dateRank).slice(0, limit);
 }

@@ -1,39 +1,131 @@
 "use client";
 
 /**
- * Tiny in-memory reactive store wrapping notes-data.ts's mock note list —
- * same pattern as character-store.ts / worldbuilding-store.ts — so the
- * "New Note" and "Quick Notes" composers can fake-create a note, and the
- * pin toggle actually persists across the grid/rail/folder counts, without
- * a backend. Resets on a hard refresh, same as every other mock-data page.
+ * Real backend-backed Notes store — wraps the WordArchitect backend's
+ * `notes` CRUD (`/api/v1/notes`, see the backend repo's `017_notes.sql`
+ * migration and `src/routes/notes.ts`). Same shape as `character-store.ts`:
+ * data is scoped by `bookId`, so `useNotes()` takes it as an argument.
+ *
+ * `Note.mine` has no backend column by design (the migration's own comment
+ * explains why: it's relative to whoever's viewing, not an inherent
+ * property of the note) — computed here as `note.user_id === getUserId()`.
+ * `Note.date`/`dateRank` are likewise display-only, derived client-side
+ * from `updated_at`, same pattern as Project's `updated`/`updatedRank`.
  */
 
-import { useSyncExternalStore } from "react";
-import { NOTES as seedNotes, type Note, type NoteCategory } from "@/lib/notes-data";
+import { useEffect, useSyncExternalStore } from "react";
+import { apiFetch, getUserId } from "@/lib/api-client";
+import type { Note, NoteCategory } from "@/lib/notes-data";
 
-let notes: Note[] = [...seedNotes];
+export type LoadStatus = "idle" | "loading" | "loaded" | "error";
+
+/** `notes` row exactly as the backend returns it — raw snake_case columns. */
+type NoteRow = {
+  id: string;
+  user_id: string;
+  book_id: string;
+  title: string;
+  excerpt: string;
+  category: NoteCategory;
+  pinned: boolean;
+  comments: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type NotesListResponse = { notes: NoteRow[] };
+type NoteResponse = { note: NoteRow };
+
+function formatRelative(iso: string): string {
+  const then = new Date(iso).getTime();
+  const diffMs = Date.now() - then;
+  const minutes = Math.round(diffMs / 60000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+}
+
+function mapRowToNote(row: NoteRow, dateRank: number): Note {
+  return {
+    id: row.id,
+    title: row.title,
+    excerpt: row.excerpt,
+    category: row.category,
+    date: formatRelative(row.updated_at),
+    dateRank,
+    comments: row.comments,
+    pinned: row.pinned,
+    mine: row.user_id === getUserId(),
+  };
+}
+
+let noteRows: NoteRow[] = [];
+let currentBookId: string | null = null;
+let status: LoadStatus = "idle";
+let error: string | null = null;
 const listeners = new Set<() => void>();
 
 function emit() {
   for (const listener of listeners) listener();
 }
-
 function subscribe(listener: () => void) {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
-
-function getSnapshot() {
-  return notes;
+function getNoteRowsSnapshot() {
+  return noteRows;
+}
+function getStatusSnapshot() {
+  return status;
+}
+function getErrorSnapshot() {
+  return error;
 }
 
-/** Live note list — re-renders on create/pin-toggle. */
-export function useNotes(): Note[] {
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+async function loadNotes(bookId: string): Promise<void> {
+  currentBookId = bookId;
+  status = "loading";
+  error = null;
+  emit();
+  try {
+    const res = await apiFetch<NotesListResponse>(`/notes?bookId=${encodeURIComponent(bookId)}`);
+    noteRows = res.notes;
+    status = "loaded";
+  } catch (err) {
+    status = "error";
+    error = err instanceof Error ? err.message : "Failed to load notes.";
+  }
+  emit();
 }
 
-export function togglePinned(id: string): void {
-  notes = notes.map((n) => (n.id === id ? { ...n, pinned: !n.pinned } : n));
+/** Live note list for one project — fetches on first use or when `bookId` changes. Already sorted pinned-first, most-recently-updated (server order); `dateRank` is assigned by that same order. */
+export function useNotes(bookId: string | undefined): Note[] {
+  useEffect(() => {
+    if (bookId && bookId !== currentBookId) void loadNotes(bookId);
+  }, [bookId]);
+  const rows = useSyncExternalStore(subscribe, getNoteRowsSnapshot, getNoteRowsSnapshot);
+  return rows.map((row, i) => mapRowToNote(row, i));
+}
+
+export function useNotesLoadStatus(): LoadStatus {
+  return useSyncExternalStore(subscribe, getStatusSnapshot, getStatusSnapshot);
+}
+export function useNotesError(): string | null {
+  return useSyncExternalStore(subscribe, getErrorSnapshot, getErrorSnapshot);
+}
+
+export async function togglePinned(id: string): Promise<void> {
+  const current = noteRows.find((n) => n.id === id);
+  if (!current) return;
+  const res = await apiFetch<NoteResponse>(`/notes/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ pinned: !current.pinned }),
+  });
+  noteRows = noteRows.map((n) => (n.id === id ? res.note : n));
   emit();
 }
 
@@ -43,21 +135,20 @@ export type NewNoteInput = {
   category: NoteCategory;
 };
 
-/** Fake-create a note (in-memory only) and return its id. */
-export function createNote(input: NewNoteInput): string {
-  const id = `${input.title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")}-${Date.now().toString(36)}`;
-  const note: Note = {
-    id,
-    title: input.title.trim() || "Untitled Note",
-    excerpt: input.excerpt.trim(),
-    category: input.category,
-    date: "Just now",
-    dateRank: 0,
-    comments: 0,
-    pinned: false,
-    mine: true,
-  };
-  notes = [note, ...notes];
+/** Create a real note and return its id. */
+export async function createNote(bookId: string, input: NewNoteInput): Promise<string> {
+  const res = await apiFetch<NoteResponse>("/notes", {
+    method: "POST",
+    body: JSON.stringify({
+      userId: getUserId(),
+      bookId,
+      title: input.title.trim() || "Untitled Note",
+      excerpt: input.excerpt.trim() || " ",
+      category: input.category,
+    }),
+  });
+  noteRows = [res.note, ...noteRows];
+  status = "loaded";
   emit();
-  return id;
+  return res.note.id;
 }

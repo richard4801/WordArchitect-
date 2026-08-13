@@ -259,7 +259,7 @@ backend during backend-side development.
 | Project | **Live** — `/books` | `project-store.ts` |
 | Character | **Live** — `/codex` (`entryType: "character"`) | `character-store.ts` |
 | Worldbuilding | Mock (next) | `worldbuilding-store.ts` |
-| Notes | Mock (next) | `notes-store.ts` |
+| Notes | **Live** — `/notes` | `notes-store.ts` |
 | Manuscript/Chapters | **Live** — `/manuscript/chapters` | `manuscript-store.ts` |
 | Outliner | Mock, deferred | none yet (backend has no Outliner endpoints — confirmed low priority) |
 | Dashboard-only stats | Mock, deferred | `dashboard-data.ts` (no backend resource exists for these — see §4.7) |
@@ -541,6 +541,59 @@ in-session state); the Dashboard shows no blocking loading screen on
 initial nav; and the Continue Writing card correctly reads "Start
 Writing" (no fabricated progress bar) before any chapter exists and
 "Resume Writing" (with a real progress bar) once one is created.
+
+### Notes (live)
+
+`notes-store.ts` now fetches/writes real `notes` rows via `/notes`. Same
+`bookId`-scoped signature pattern as Character: `useNotes(bookId)`,
+`useNotesLoadStatus()`, `useNotesError()`. `createNote()` and
+`togglePinned()` are both now `async` — the "New Note" modal and the
+"Quick Notes" composer (`notes/page.tsx`) both await `createNote()` with a
+submitting/error state, and the star-icon pin toggle fires
+`void togglePinned(id)` without a dedicated loading state (a lightweight
+single-field PATCH, same latency tolerance as Project's inline Target
+Words field).
+
+**Response shape confirmed by reading `notes.ts` directly**: `{notes:
+[...]}` from the list endpoint (server-sorted pinned-first, then
+`updated_at` descending — matches the frontend's desired "recent activity"
+ordering exactly, so no client-side re-sort is needed beyond assigning
+`dateRank`), `{note: {...}}` from get/create/patch.
+
+**Field mapping** (`mapRowToNote` in `notes-store.ts`): `id`/`title`/
+`excerpt`/`category`/`comments`/`pinned` map directly (the backend's
+`category` CHECK constraint — `017_notes.sql` — uses the exact same
+6-value set as the frontend's `NoteCategory` union, so no conversion
+needed, unlike Character's `role`/`tier`). `date` and `dateRank` are
+display-only derived fields with no backend column, same as Project's
+`updated`/`updatedRank`: `date` is formatted client-side from
+`updated_at` (`formatRelative()`, a local copy of the same helper
+`project-store.ts` uses — not shared, since neither store exports it);
+`dateRank` is assigned by index in the already-server-sorted list, so
+lower rank = more recently updated/pinned, same effect as before.
+
+**`mine` is deliberately not a stored column** — the migration's own
+comment explains why: "mine" is relative to whoever's viewing, not an
+inherent property of the note. The backend stores `user_id` (the author)
+instead, and `mapRowToNote` computes `mine: row.user_id === getUserId()`
+client-side, the same pattern `getUserId()` already exists for.
+
+**`notes-data.ts` cleanup:** the old `NOTES` seed array and `findNote()`
+helper (which only existed to look values up in that array) were deleted
+— nothing else referenced them once the store stopped importing seed
+data. Every other export (`NOTE_CATEGORY_META`, `sceneFor`, `pinnedNotes`,
+`recentNotes`, `folderCount`, `notesInFolder`, the `Note`/`NoteCategory`/
+`NoteFolderKey` types) is unchanged and still used as-is by `notes/
+page.tsx` — these are pure functions over whatever `Note[]` they're given,
+real or mock, so none of them needed touching.
+
+**Verified working** (same local-mock-server approach as Project/
+Character/Manuscript): a project with zero notes shows a correct empty
+state (`0 notes`, "No pinned notes yet"); creating a note through the
+"New Note" modal shows it in the grid and updates the count; pinning a
+note moves it into the Pinned Notes rail; the note and its pinned state
+both survive a hard reload (real persistence); and the Quick Notes
+composer creates a second real note the same way.
 
 ---
 
@@ -856,8 +909,11 @@ for the entries themselves, only for the category taxonomy around them.
 
 ### 4.4 Notes
 
-Source: `src/lib/notes-data.ts` (types + 24 seed notes), wrapped by
-`src/lib/notes-store.ts`.
+**Live — backed by the real backend's `/notes`, see §3.5's Notes section
+for the field mapping and integration notes.** Types are still defined in
+`src/lib/notes-data.ts` (now just types + the pure folder/sort/scene
+helpers — the old 24-note seed array and `findNote()` were deleted, see
+§3.5); `src/lib/notes-store.ts` fetches/writes real data.
 
 ```ts
 export type NoteCategory = "World Building" | "Character" | "Plot" | "Research" | "Inspiration" | "Magic System";
@@ -891,13 +947,14 @@ export type NewNoteInput = {
 
 (1) the "New Note" modal — title/category-dropdown/content; (2) the
 "Quick Notes" composer — plain textarea, `category` hardcoded to
-`"Inspiration"`, `title` = first 40 chars of the text. `createNote()` sets
-`date: "Just now"`, `dateRank: 0` (sorts as newest), `comments: 0`,
-`pinned: false`, `mine: true`. **EDITABLE:** `pinned` also toggles via
-`togglePinned(id)` (the star icon on any note card). **SEED-ONLY:**
-`comments` count and `mine: false` (used to mark 6 of the 24 seed notes as
-not-authored-by-the-current-user, simulating shared notes) — no UI sets
-either after creation.
+`"Inspiration"`, `title` = first 40 chars of the text. Both now call the
+real, `async` `createNote(bookId, input)`. `pinned` also toggles for real
+via `togglePinned(id)` (the star icon on any note card, now an `async`
+network call). `comments` and `mine` have real backend meaning now too
+(see §3.5) rather than being seed-only — `comments` just has no UI that
+increments it yet (no comment-adding feature exists), and `mine` is
+computed live from the real `user_id` column instead of hardcoded seed
+values.
 
 ### 4.5 Manuscript / Chapters
 
