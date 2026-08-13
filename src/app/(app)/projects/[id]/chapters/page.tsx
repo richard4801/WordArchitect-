@@ -63,7 +63,13 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EditWritingGoalModal } from "@/components/edit-writing-goal-modal";
-import { banTerm, unbanTerm, useBannedTerms, useBannedTermsLoadStatus } from "@/lib/banned-terms-store";
+import {
+  banTerm,
+  type BannedTermRow,
+  unbanTerm,
+  useBannedTerms,
+  useBannedTermsLoadStatus,
+} from "@/lib/banned-terms-store";
 import { logActivity } from "@/lib/activity-log-store";
 import {
   recordChapterWordCount,
@@ -91,7 +97,7 @@ import { useWritingGoals } from "@/lib/writing-goal-store";
  * Word/character counts are computed live from the editable content.
  */
 
-const PANEL_TABS = ["Comments", "Versions", "Outline", "AI"] as const;
+const PANEL_TABS = ["Comments", "Versions", "Outline", "AI", "Ban"] as const;
 type PanelTab = (typeof PANEL_TABS)[number];
 
 type FocusModeKind = "normal" | "typewriter" | "zen" | "typewriterZen";
@@ -110,11 +116,9 @@ export default function ChaptersPage() {
   const [stats, setStats] = useState({ words: 0, characters: 0 });
   const [zoomPercent, setZoomPercent] = useState(100);
   const [creatingChapter, setCreatingChapter] = useState(false);
-  const [showBannedWordsPanel, setShowBannedWordsPanel] = useState(false);
 
   const editableRef = useRef<HTMLDivElement>(null);
   const savedRangeRef = useRef<Range | null>(null);
-  const bannedTerms = useBannedTerms(project?.id);
 
   function saveSelection() {
     const sel = window.getSelection();
@@ -465,14 +469,8 @@ export default function ChaptersPage() {
               <TopBar
                 project={project}
                 chapterTitle={activeChapter ? `Chapter ${activeChapter.number} – ${activeChapter.title}` : "Loading…"}
-                onOpenPanel={(tab) => {
-                  setFocusMode(null);
-                  setPanelTab(tab);
-                }}
                 makeRoomForExitButton={hidePanels}
                 saveStatus={saveStatus}
-                bannedCount={bannedTerms.length}
-                onOpenBannedWords={() => setShowBannedWordsPanel(true)}
               />
             )}
             <div className="grid flex-1 place-items-center">
@@ -487,14 +485,8 @@ export default function ChaptersPage() {
               <TopBar
                 project={project}
                 chapterTitle={`Chapter ${activeChapter.number} – ${body.title}`}
-                onOpenPanel={(tab) => {
-                  setFocusMode(null);
-                  setPanelTab(tab);
-                }}
                 makeRoomForExitButton={hidePanels}
                 saveStatus={saveStatus}
-                bannedCount={bannedTerms.length}
-                onOpenBannedWords={() => setShowBannedWordsPanel(true)}
               />
             )}
             {!hideChrome && <FormattingToolbar withSelection={withSelection} />}
@@ -538,7 +530,9 @@ export default function ChaptersPage() {
         )}
       </div>
 
-      {!hidePanels && hasChapters && <CommentsPanel tab={panelTab} onTabChange={setPanelTab} />}
+      {!hidePanels && hasChapters && (
+        <CommentsPanel tab={panelTab} onTabChange={setPanelTab} bookId={project.id} />
+      )}
 
       {hidePanels && <FocusExitButton onClick={exitFocusMode} />}
       {showFocusPicker && (
@@ -569,9 +563,6 @@ export default function ChaptersPage() {
           }}
           onCancel={() => setPendingLongBan(null)}
         />
-      )}
-      {showBannedWordsPanel && (
-        <BannedWordsPanel bookId={project.id} onClose={() => setShowBannedWordsPanel(false)} />
       )}
     </div>
   );
@@ -610,6 +601,7 @@ function FocusModeTabStrip({ onSelect }: { onSelect: (tab: PanelTab) => void }) 
     Versions: History,
     Outline: ListTree,
     AI: Sparkles,
+    Ban: Ban,
   };
   return (
     <div className="absolute right-4 top-4 z-10 flex flex-col gap-1 rounded-xl border border-line bg-surface/90 p-1 shadow-lg backdrop-blur">
@@ -964,19 +956,13 @@ function ChapterRow({
 function TopBar({
   project,
   chapterTitle,
-  onOpenPanel,
   makeRoomForExitButton = false,
   saveStatus,
-  bannedCount = 0,
-  onOpenBannedWords,
 }: {
   project: { id: string; title: string };
   chapterTitle: string;
-  onOpenPanel: (tab: PanelTab) => void;
   makeRoomForExitButton?: boolean;
   saveStatus?: SaveStatus;
-  bannedCount?: number;
-  onOpenBannedWords?: () => void;
 }) {
   return (
     <header
@@ -1050,39 +1036,12 @@ function TopBar({
         </span>
       </div>
 
+      {/* Comments/Versions/Outline/AI/Ban are reachable via the panel's own
+          tab bar whenever it's visible, and via FocusModeTabStrip's icon
+          strip whenever it's hidden (focus mode) — icon shortcuts here too
+          would just duplicate one or the other in every reachable state. */}
       <div className="flex shrink-0 items-center gap-1">
         <ShareButton />
-
-        <button
-          type="button"
-          aria-label="Comments"
-          onClick={() => onOpenPanel("Comments")}
-          className="ml-1 grid size-8 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
-        >
-          <MessageSquare className="size-4" />
-        </button>
-        <button
-          type="button"
-          aria-label="Version history"
-          onClick={() => onOpenPanel("Versions")}
-          className="grid size-8 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
-        >
-          <History className="size-4" />
-        </button>
-        <button
-          type="button"
-          aria-label="Banned words"
-          title="Banned words"
-          onClick={onOpenBannedWords}
-          className="relative grid size-8 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
-        >
-          <Ban className="size-4" />
-          {bannedCount > 0 && (
-            <span className="absolute -right-0.5 -top-0.5 grid size-3.5 place-items-center rounded-full bg-danger text-[0.55rem] font-medium text-white">
-              {bannedCount > 9 ? "9+" : bannedCount}
-            </span>
-          )}
-        </button>
         <MoreMenu projectId={project.id} />
       </div>
     </header>
@@ -1244,106 +1203,6 @@ function SelectionBubbleMenu({
   );
 }
 
-/**
- * Lists every term banned for this book, with a way to unban each one —
- * the "full experience" side of banning, not just an add-only trigger.
- * Opened from the TopBar's Ban icon (badge shows the live count). Banning
- * has no other configuration surface: once a term exists here, every
- * future `POST /generate-prose` for this book enforces it automatically,
- * server-side — nothing else to wire up, which is also why the one UX
- * consequence worth surfacing (no live token streaming once a book has
- * any banned term — the backend needs to check/regenerate before it can
- * show you anything) is explained right here rather than in a separate
- * settings screen.
- */
-function BannedWordsPanel({ bookId, onClose }: { bookId: string; onClose: () => void }) {
-  const terms = useBannedTerms(bookId);
-  const status = useBannedTermsLoadStatus();
-  const [removingId, setRemovingId] = useState<string | null>(null);
-  const [removeError, setRemoveError] = useState<string | null>(null);
-
-  async function handleRemove(id: string) {
-    setRemovingId(id);
-    setRemoveError(null);
-    try {
-      await unbanTerm(id);
-    } catch (err) {
-      setRemoveError(err instanceof Error ? err.message : "Couldn't unban this term.");
-    } finally {
-      setRemovingId(null);
-    }
-  }
-
-  if (typeof document === "undefined") return null;
-
-  return createPortal(
-    <>
-      <button
-        type="button"
-        aria-label="Close"
-        className="fixed inset-0 z-40 cursor-default"
-        onClick={onClose}
-      />
-      <div className="fixed right-5 top-16 z-50 w-80 max-w-[calc(100vw-2.5rem)]">
-        <div className="card-2 max-h-[70vh] overflow-y-auto p-4">
-          <div className="flex items-start justify-between gap-2">
-            <h2 className="font-display text-lg text-ink">Banned Words</h2>
-            <button
-              type="button"
-              aria-label="Close"
-              onClick={onClose}
-              className="grid size-6 shrink-0 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
-            >
-              <X className="size-4" />
-            </button>
-          </div>
-          <p className="mt-1.5 text-xs text-ink-muted">
-            Banned for this project — every future AI generation avoids these automatically, nothing
-            else to set up. One tradeoff worth knowing: once a project has at least one banned term,
-            generation loses live streaming — the prose appears once it&rsquo;s done and checked, not
-            typed out in real time.
-          </p>
-
-          {status === "loading" && terms.length === 0 && (
-            <p className="mt-4 text-xs text-ink-faint">Loading…</p>
-          )}
-          {status === "error" && (
-            <p className="mt-4 text-xs text-danger">Couldn&rsquo;t load banned words. Try reopening this panel.</p>
-          )}
-          {status !== "loading" && status !== "error" && terms.length === 0 && (
-            <p className="mt-4 text-xs text-ink-faint">
-              No banned words yet. Highlight text in the chapter and choose &ldquo;Ban this&rdquo; to add one.
-            </p>
-          )}
-          {removeError && <p className="mt-3 text-xs text-danger">{removeError}</p>}
-
-          {terms.length > 0 && (
-            <ul className="mt-3 flex flex-col gap-1.5">
-              {terms.map((t) => (
-                <li
-                  key={t.id}
-                  className="flex items-center justify-between gap-2 rounded-lg bg-surface-2/60 px-3 py-2"
-                >
-                  <span className="min-w-0 truncate text-sm text-ink">{t.term}</span>
-                  <button
-                    type="button"
-                    aria-label={`Unban "${t.term}"`}
-                    onClick={() => handleRemove(t.id)}
-                    disabled={removingId === t.id}
-                    className="shrink-0 text-ink-faint transition-colors hover:text-danger disabled:opacity-50"
-                  >
-                    <X className="size-3.5" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-    </>,
-    document.body,
-  );
-}
 
 function BookIcon() {
   return (
@@ -2172,7 +2031,16 @@ function StatusBar({
 
 type CommentFilter = "All" | "Open" | "Resolved";
 
-function CommentsPanel({ tab, onTabChange }: { tab: PanelTab; onTabChange: (tab: PanelTab) => void }) {
+function CommentsPanel({
+  tab,
+  onTabChange,
+  bookId,
+}: {
+  tab: PanelTab;
+  onTabChange: (tab: PanelTab) => void;
+  bookId: string;
+}) {
+  const bannedTerms = useBannedTerms(bookId);
   const [comments, setComments] = useState<CommentThread[]>(CHAPTER_18_COMMENTS);
   const [draft, setDraft] = useState("");
   const [filter, setFilter] = useState<CommentFilter>("All");
@@ -2213,11 +2081,16 @@ function CommentsPanel({ tab, onTabChange }: { tab: PanelTab; onTabChange: (tab:
             key={t}
             type="button"
             onClick={() => onTabChange(t)}
-            className={`relative pb-3 transition-colors ${
+            className={`relative flex items-center gap-1.5 pb-3 transition-colors ${
               tab === t ? "text-ink" : "text-ink-muted hover:text-ink"
             }`}
           >
             {t}
+            {t === "Ban" && bannedTerms.length > 0 && (
+              <span className="grid size-4 place-items-center rounded-full bg-danger text-[0.6rem] font-medium text-white">
+                {bannedTerms.length > 9 ? "9+" : bannedTerms.length}
+              </span>
+            )}
             {tab === t && <span className="absolute inset-x-0 -bottom-px h-[2px] rounded-full bg-gold" />}
           </button>
         ))}
@@ -2301,6 +2174,8 @@ function CommentsPanel({ tab, onTabChange }: { tab: PanelTab; onTabChange: (tab:
             </ul>
           </div>
         </>
+      ) : tab === "Ban" ? (
+        <BannedWordsTab terms={bannedTerms} />
       ) : (
         <div className="flex flex-1 items-center justify-center p-8 text-center text-sm text-ink-faint">
           {tab === "Versions" && "Version history isn't wired up yet."}
@@ -2309,6 +2184,76 @@ function CommentsPanel({ tab, onTabChange }: { tab: PanelTab; onTabChange: (tab:
         </div>
       )}
     </aside>
+  );
+}
+
+/**
+ * The "Ban" tab's content — a real list of everything banned for this
+ * book, with a way to unban each one, living as a normal tab alongside
+ * Comments/Versions/Outline/AI rather than its own floating popup (an
+ * earlier version opened this from a dedicated TopBar icon; that read as
+ * redundant once the same action was always one click away via this tab
+ * bar, or via FocusModeTabStrip's icon strip whenever this whole panel is
+ * hidden). Banning itself still happens from the selection bubble in the
+ * prose — this tab is purely the "see and manage what's already banned"
+ * side of the feature.
+ */
+function BannedWordsTab({ terms }: { terms: BannedTermRow[] }) {
+  const status = useBannedTermsLoadStatus();
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+
+  async function handleRemove(id: string) {
+    setRemovingId(id);
+    setRemoveError(null);
+    try {
+      await unbanTerm(id);
+    } catch (err) {
+      setRemoveError(err instanceof Error ? err.message : "Couldn't unban this term.");
+    } finally {
+      setRemovingId(null);
+    }
+  }
+
+  return (
+    <div className="scroll-slim flex-1 overflow-y-auto px-5 py-4">
+      <p className="text-xs text-ink-muted">
+        Banned for this project — every future AI generation avoids these automatically, nothing else
+        to set up. One tradeoff worth knowing: once a project has at least one banned term, generation
+        loses live streaming — the prose appears once it&rsquo;s done and checked, not typed out in
+        real time.
+      </p>
+
+      {status === "loading" && terms.length === 0 && <p className="mt-4 text-xs text-ink-faint">Loading…</p>}
+      {status === "error" && (
+        <p className="mt-4 text-xs text-danger">Couldn&rsquo;t load banned words. Try switching tabs and back.</p>
+      )}
+      {status !== "loading" && status !== "error" && terms.length === 0 && (
+        <p className="mt-4 text-xs text-ink-faint">
+          No banned words yet. Highlight text in the chapter and choose &ldquo;Ban this&rdquo; to add one.
+        </p>
+      )}
+      {removeError && <p className="mt-3 text-xs text-danger">{removeError}</p>}
+
+      {terms.length > 0 && (
+        <ul className="mt-3 flex flex-col gap-1.5">
+          {terms.map((t) => (
+            <li key={t.id} className="flex items-center justify-between gap-2 rounded-lg bg-surface-2/60 px-3 py-2">
+              <span className="min-w-0 truncate text-sm text-ink">{t.term}</span>
+              <button
+                type="button"
+                aria-label={`Unban "${t.term}"`}
+                onClick={() => handleRemove(t.id)}
+                disabled={removingId === t.id}
+                className="shrink-0 text-ink-faint transition-colors hover:text-danger disabled:opacity-50"
+              >
+                <X className="size-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

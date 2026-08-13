@@ -1372,14 +1372,26 @@ returns `204`.
   the bubble the instant it was clicked — banning still succeeded, but the
   "Banned" feedback never had a bubble left to show up in. Fixed by
   suspending that listener entirely while the confirm dialog is open.
-- **`BannedWordsPanel`** — opened from a new Ban-icon button in the
-  editor's `TopBar` (badge shows the live count), lists every banned term
-  for the book with a per-term unban (×) button, and is where the
-  streaming-tradeoff note actually lives, per the feature's own "no
-  separate settings panel required to ban" framing — the ban-from-selection
-  flow doesn't need its own explanation of the tradeoff since it's a
-  one-line action, but the panel a writer would open to review what's
-  banned is the right place to explain the consequence.
+- **A real "Ban" tab, not a floating popup** (`BannedWordsTab`) — lists
+  every banned term for the book with a per-term unban (×) button, and is
+  where the streaming-tradeoff note lives (the ban-from-selection flow
+  doesn't need its own explanation since it's a one-line action; the tab a
+  writer would open to review what's banned is the right place for the
+  consequence). This is a second-pass fix: the first version opened this
+  from a dedicated Ban-icon button in the editor's `TopBar`
+  (badge showing the live count) as a portaled floating panel. User
+  feedback caught that this was redundant — `PANEL_TABS` already has a
+  visible Comments/Versions/Outline/AI tab bar right next to it doing the
+  same "switch what the right rail shows" job, and `TopBar` even had
+  *separate* Comments/Version-history icon buttons duplicating those two
+  tabs specifically. Fixed by adding `"Ban"` as a fifth entry in
+  `PANEL_TABS` (badge now lives on the tab label itself) and deleting all
+  three of `TopBar`'s Comments/Versions/Banned-words icon buttons outright
+  — `FocusModeTabStrip` (the icon-only strip that already existed
+  specifically for "the tab bar is hidden, focus mode is active") was
+  already the correct place for icon-shortcut access to all five tabs,
+  and having `TopBar` *also* offer icon shortcuts to the same three tabs
+  meant every reachable app state showed the same action twice.
 - Bans and unbans both call `logActivity("banned", ...)`/read into the
   Dashboard's real activity feed (`activity-log-store.ts`) the same way
   every other real action does — `ActivityKind` gained a `"banned"` member
@@ -1389,9 +1401,13 @@ returns `204`.
 domain in this file, extended with `/banned-terms` GET/POST/DELETE
 handlers matching the real envelope/flat-body shapes and the
 case-insensitive dedup behavior): select a word, confirm the bubble
-appears and banning shows "Banned" then auto-dismisses; the TopBar badge
-and panel both reflect the real count; a selection over 8 words routes
-through the confirm dialog and still shows "Banned" feedback after
+appears and banning shows "Banned" then auto-dismisses; the Ban tab's
+badge and content both reflect the real count and survive switching to
+another tab and back; `TopBar`'s Comments/Versions/Banned-words icon
+buttons are confirmed gone; `FocusModeTabStrip` shows all five tabs
+(including Ban) and clicking one correctly exits focus mode straight into
+that tab; a selection over 8 words routes through the confirm dialog and
+still shows "Banned" feedback after
 confirming; a plain click with no drag shows no bubble; banning the same
 word in different casing three times still lists only one panel entry;
 unbanning removes it from the panel and drops the badge count. Zero
