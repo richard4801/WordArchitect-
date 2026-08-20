@@ -72,6 +72,7 @@ import {
   useBannedTermsLoadStatus,
 } from "@/lib/banned-terms-store";
 import { logActivity } from "@/lib/activity-log-store";
+import { useChapterBeats, type BeatStatus } from "@/lib/outline-store";
 import {
   recordChapterWordCount,
   seedChapterBaseline,
@@ -532,7 +533,7 @@ export default function ChaptersPage() {
       </div>
 
       {!hidePanels && hasChapters && (
-        <CommentsPanel tab={panelTab} onTabChange={setPanelTab} bookId={project.id} />
+        <CommentsPanel tab={panelTab} onTabChange={setPanelTab} bookId={project.id} chapterId={activeChapter?.id} />
       )}
 
       {hidePanels && <FocusExitButton onClick={exitFocusMode} />}
@@ -2036,10 +2037,12 @@ function CommentsPanel({
   tab,
   onTabChange,
   bookId,
+  chapterId,
 }: {
   tab: PanelTab;
   onTabChange: (tab: PanelTab) => void;
   bookId: string;
+  chapterId: string | undefined;
 }) {
   const bannedTerms = useBannedTerms(bookId);
   const [comments, setComments] = useState<CommentThread[]>(CHAPTER_18_COMMENTS);
@@ -2179,10 +2182,11 @@ function CommentsPanel({
         <BannedWordsTab terms={bannedTerms} />
       ) : tab === "AI" ? (
         <ChatPanel bookId={bookId} layout="compact" />
+      ) : tab === "Outline" ? (
+        <OutlineTab bookId={bookId} chapterId={chapterId} />
       ) : (
         <div className="flex flex-1 items-center justify-center p-8 text-center text-sm text-ink-faint">
           {tab === "Versions" && "Version history isn't wired up yet."}
-          {tab === "Outline" && "A live outline of this chapter's beats will live here."}
         </div>
       )}
     </aside>
@@ -2200,6 +2204,89 @@ function CommentsPanel({
  * prose — this tab is purely the "see and manage what's already banned"
  * side of the feature.
  */
+const OUTLINE_STATUS_LABEL: Record<BeatStatus, string> = {
+  completed: "Completed",
+  in_progress: "In Progress",
+  planned: "Planned",
+  not_started: "Not Started",
+};
+const OUTLINE_STATUS_COLOR: Record<BeatStatus, string> = {
+  completed: "var(--success)",
+  in_progress: "var(--warn)",
+  planned: "var(--purple)",
+  not_started: "#8f8a82",
+};
+
+/**
+ * The Outline tab's content — a real, read-only list of this chapter's
+ * beats (`GET /manuscript/chapters/:id/beats`, see outline-store.ts).
+ * Editing a beat (title/outline text/status, adding/deleting) happens in
+ * the full Outliner board, linked at the bottom — this tab is deliberately
+ * just a quick reference while writing, not a second place to edit beats.
+ */
+function OutlineTab({ bookId, chapterId }: { bookId: string; chapterId: string | undefined }) {
+  const { beats, status, error } = useChapterBeats(chapterId);
+
+  if (!chapterId) {
+    return (
+      <div className="flex flex-1 items-center justify-center p-8 text-center text-sm text-ink-faint">
+        Open a chapter to see its outline beats.
+      </div>
+    );
+  }
+
+  return (
+    <div className="scroll-slim flex-1 overflow-y-auto px-5 py-4">
+      {status === "loading" && beats.length === 0 && <p className="text-xs text-ink-faint">Loading…</p>}
+      {status === "error" && (
+        <p className="text-xs text-danger">{error ?? "Couldn’t load this chapter’s beats."}</p>
+      )}
+      {status !== "loading" && status !== "error" && beats.length === 0 && (
+        <p className="text-xs text-ink-faint">No beats planned for this chapter yet.</p>
+      )}
+
+      {beats.length > 0 && (
+        <ul className="space-y-2.5">
+          {beats
+            .slice()
+            .sort((a, b) => a.orderIndex - b.orderIndex)
+            .map((beat, i) => (
+              <li key={beat.id} className="card-2 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <h4 className="min-w-0 truncate text-sm text-ink">
+                    {i + 1}. {beat.title}
+                  </h4>
+                  <span
+                    className="shrink-0 rounded-full border px-2 py-0.5 text-[0.65rem]"
+                    style={{ borderColor: OUTLINE_STATUS_COLOR[beat.status], color: OUTLINE_STATUS_COLOR[beat.status] }}
+                  >
+                    {OUTLINE_STATUS_LABEL[beat.status]}
+                  </span>
+                </div>
+                {beat.outlineText && (
+                  <p className="mt-1.5 line-clamp-3 text-xs leading-relaxed text-ink-muted">{beat.outlineText}</p>
+                )}
+                {beat.linkedToManuscript && (
+                  <div className="mt-2 flex items-center gap-1.5 text-[0.65rem] text-gold">
+                    <Link2 className="size-3" />
+                    Linked to Manuscript
+                  </div>
+                )}
+              </li>
+            ))}
+        </ul>
+      )}
+
+      <Link
+        href={`/projects/${bookId}/outlines`}
+        className="mt-4 flex items-center justify-center gap-1.5 rounded-xl border border-line-strong py-2.5 text-sm text-gold transition-colors hover:bg-surface-2"
+      >
+        Open in Outliner
+      </Link>
+    </div>
+  );
+}
+
 function BannedWordsTab({ terms }: { terms: BannedTermRow[] }) {
   const status = useBannedTermsLoadStatus();
   const [removingId, setRemovingId] = useState<string | null>(null);

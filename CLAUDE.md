@@ -364,12 +364,9 @@ state) — the backend team should expect the frontend to need those call
 sites converted to `async` with loading/error handling once real endpoints
 exist.
 
-**Two domains have no store yet, seed data only:** the Outliner
-(`outline-data.ts`) and the Manuscript editor's structure/body content
-(`manuscript-data.ts`) — see §5. Nothing in the UI currently creates or
-edits outline beats or manuscript structure, and the editor's own prose
-isn't read from `manuscript-data.ts` after initial mount at all — see §5's
-persistence-gap note.
+This was true of every domain at the start of backend integration,
+including the Outliner and the Manuscript editor's structure/body content
+— both are now live, see §3.5 and §4.5/§4.8.
 
 ---
 
@@ -410,7 +407,7 @@ backend during backend-side development.
 | Manuscript/Chapters | **Live** — `/manuscript/chapters` | `manuscript-store.ts` |
 | Banned Terms | **Live** — `/banned-terms` | `banned-terms-store.ts` |
 | AI Assistant Chat | **Live** — `/chat` + `/chat/sessions` | `chat-store.ts` |
-| Outliner | Mock, deferred (backend is real, not yet wired here) | `/outline/beats` + `/manuscript/chapters/:id/beats` exist on the backend (`claude/ai-fiction-platform-backend-qnvkm5`, confirmed by reading `src/routes/outline.ts`) — next domain in line per the frontend handoff brief's suggested build order, not started yet |
+| Outliner | **Live** — `/outline/beats` + `/manuscript/chapters/:id/beats` + `/manuscript/beats/:id` | `outline-store.ts` |
 | Dashboard-only stats | Mock, deferred | `dashboard-data.ts` (no backend resource exists for these — see §4.9) |
 
 ### Project (live)
@@ -1536,57 +1533,101 @@ assistant page. Zero console errors across the full pass.
 
 ### 4.8 Outliner (beats)
 
-Source: `src/lib/outline-data.ts`. **No store, no creation UI, seed-only,**
-one hardcoded structure (Three Act) for `shadows-of-elarion`; other
-outline modes shown in mockups (Hero's Journey, Save the Cat) are not
-built as distinct data structures yet. **The backend side is real and
-live** — `GET /outline/beats?bookId=` (flat `parts`/`chapters`/`beats`,
-group client-side), per-chapter `GET /manuscript/chapters/:id/beats`,
-full beat CRUD, and `beatId`/`userSceneBeat` wiring into
-`/generate-prose` — confirmed by reading `src/routes/outline.ts` on
-`claude/ai-fiction-platform-backend-qnvkm5`. Frontend integration is next
-in line per the handoff brief's suggested build order but hasn't started;
-the type shapes below are still the old mock's, not yet reconciled with
-the real `Beat` row shape (`chapter_id`, `order_index`, `outline_text`,
-`status: BeatStatus`, `linked_to_manuscript` — four fixed statuses, not
-this mock's `BeatStatus`/`BeatColor` union).
+**Live — backed by the real backend's `/outline/beats` (whole-book board)
+and `/manuscript/chapters/:id/beats` + `/manuscript/beats/:id` (per-chapter
+CRUD), on `claude/ai-fiction-platform-backend-qnvkm5` (see the backend
+repo's `src/routes/outline.ts` and the Beats section of
+`src/routes/manuscriptChapters.ts`).** The old mock's `outline-data.ts`
+(`THREE_ACT_STRUCTURE`, `Act`, `Beat`, `BeatColor`) is gone — replaced by
+`src/lib/outline-store.ts` and real `chapter_beats` rows.
+
+**The backend has no "Act" concept at all** — only Parts (optional,
+`manuscript_parts`) → Chapters (`manuscript_chapters`) → Beats
+(`chapter_beats`). This is a real architectural discovery, not a detail
+that could be papered over: the old mock's entire board was three fixed
+Act I/II/III columns, and nothing on the backend corresponds to that
+grouping. The board (`outlines/page.tsx`) now groups by real chapter
+instead — the "Group: Chapters / Status" toggle replaces the old
+"Group: Acts / Status" one, and the copy under the page title says so
+explicitly ("Beats are grouped by real chapter — the classic Act I/II/III
+framing is a planning lens you apply yourself, not a stored structure").
 
 ```ts
-export type BeatStatus = "completed" | "inProgress" | "planned" | "notStarted";
-export type BeatColor = "green" | "gold" | "purple" | "blue" | "rose" | "gray";  // derived 1:1 from BeatStatus via a fixed map, not independently stored
+export type BeatStatus = "not_started" | "planned" | "in_progress" | "completed";
 
-export type Beat = {
+// chapter_beats row, mapped from snake_case
+export type OutlineBeat = {
   id: string;
-  number: number;
+  chapterId: string;
+  orderIndex: number;
   title: string;
-  purpose: string;        // short line, shown on the board card
-  description: string;    // longer craft note, detail-panel only
-  chapterLabel: string;   // free-text label, e.g. "Chapter 7" — not a foreign key to ManuscriptChapter
-  sceneCount: number;
+  outlineText: string;      // what /generate-prose pulls as sceneBeat when generating from a beat — not built into this frontend pass
   status: BeatStatus;
-  color: BeatColor;
-  pov: string;
-  location: string;
-  time: string;
-  mood: string;
-  characters: string[];   // free-text names, not Character.id references — no referential integrity today
-  notes: string[];
+  linkedToManuscript: boolean;  // true once generated/accepted prose for this beat has been written into the chapter — read-only here, nothing in this app's UI sets it
+  createdAt: string;
+  updatedAt: string;
 };
 
-export type Act = {
-  id: string;
-  label: string;
-  shortLabel: string;
-  color: "green" | "purple" | "blue";
-  beats: Beat[];
-};
+// GET /outline/beats's own chapter projection — id/part_id/number/title/heading/complete only, no paragraphs
+export type OutlineChapter = { id: string; partId: string | null; number: number; title: string; heading: string | null; complete: boolean };
+export type OutlinePart = { id: string; title: string; orderIndex: number };
 ```
 
-Note the explicit lack of foreign keys today: `Beat.characters` is a plain
-string array of names, not `Character.id` references, and
-`Beat.chapterLabel` is a display string, not a `ManuscriptChapter.id`
-reference. If the backend introduces real relational IDs here, the
-frontend will need updating to resolve them, not just to fetch them.
+**Also gone: the old mock's rich per-beat fields with no backend
+column** — `purpose`, `description`, `sceneCount`, `color`, `pov`,
+`location`, `time`, `mood`, `characters`, `notes` all had no real analogue
+(`chapter_beats` only has `title`/`outline_text`/`status`/
+`linked_to_manuscript`/`order_index`) and were dropped rather than kept as
+inert UI, matching this repo's established "no fabricated fields" rule.
+The detail panel is correspondingly simpler than the old mock's: an
+editable title, an editable Outline Text (what the mock called
+"purpose"+"description" combined into the one real field the backend
+actually stores), a real Status dropdown, a real "Linked to Manuscript"
+badge (shown only when true, read-only), a link to the chapter in the
+editor, and Delete. The old mock's per-beat Color Label picker,
+Duplicate action, and the Scenes/Notes/Links detail tabs are gone with
+them — none had a real backend field to persist to.
+
+**Two independent caches in `outline-store.ts`, same split pattern as
+`manuscript-store.ts`/`chat-store.ts`:**
+1. The whole-book outline (`useOutline(bookId)`, keyed by `bookId`) —
+   parts + chapter metadata + every beat in one `GET /outline/beats?bookId=`
+   call, for the board.
+2. A single chapter's beats (`useChapterBeats(chapterId)`, keyed by
+   `chapterId`) — `GET /manuscript/chapters/:id/beats`, for the editor's
+   own Outline side-panel tab, so opening the editor never has to fetch
+   the whole book's beats just to show one chapter's.
+
+A beat mutation (`createBeat`/`updateBeat`/`deleteBeat`) patches whichever
+of these two caches actually holds the affected beat/chapter, so the board
+and the editor tab never drift out of sync with each other without a
+manual refetch.
+
+**Editor integration** (`chapters/page.tsx`): the "Outline" side-panel tab
+— previously an honest placeholder ("A live outline of this chapter's
+beats will live here") — is now `OutlineTab`, a real read-only list of the
+open chapter's beats (title, status badge, an outline-text excerpt, a
+"Linked to Manuscript" indicator where true) plus an "Open in Outliner"
+link to the full board. Deliberately read-only: editing a beat happens on
+the board, not here — this tab is a quick reference while writing, not a
+second place to edit the same row. `CommentsPanel` gained a `chapterId`
+prop (the editor's own `activeChapter?.id`) threaded down to it.
+
+**Verified working** (same local-mock-server approach as every other
+domain, extended with `/outline/beats`, `/manuscript/chapters/:id/beats`,
+and `/manuscript/beats/:id` handlers matching the real envelope/
+snake-case shapes): a project with real chapters shows one board column
+per chapter (no "No chapters yet" false positive); Add Beat creates a
+real beat and opens its detail panel; editing the title and outline text
+both save on blur and the change survives a hard reload; changing status
+via the dropdown updates the real row and the Outline Progress ring
+recomputes live (confirmed going from "0 of 1" to "1 of 1" after marking
+the one beat Completed); Delete removes it from the board for real;
+grouping by Status works; a beat created directly against the mock
+backend (simulating an editor-tab or MCP-created beat) correctly shows up
+in the chapter editor's Outline tab with its real title/outline
+text/status, and its "Open in Outliner" link is present. Zero console
+errors across the full pass.
 
 ### 4.9 Dashboard-only data — mostly real now, via localStorage, not a backend resource
 
@@ -1938,8 +1979,8 @@ export interface AiProvider {
 /projects/[id]                (Overview tab) Project + real ManuscriptPart[]/word counts (§5.6) + deriveRecentActivity
 /projects/[id]/analytics                     stub — <ComingSoon>, no data model
 /projects/[id]/settings                      stub — <ComingSoon>, no data model
-/projects/[id]/chapters                      ManuscriptPart[] (live) + ChapterBody (live) + CommentThread[] (mock) (§4.5/§5) + BannedTermRow[] (live, §4.6) + ChatSessionRow[]/ChatMessage[] (live, AI tab, §4.7)
-/projects/[id]/outlines                      Act[] / Beat[] (§4.8 — seed-only, no store)
+/projects/[id]/chapters                      ManuscriptPart[] (live) + ChapterBody (live) + CommentThread[] (mock) (§4.5/§5) + BannedTermRow[] (live, §4.6) + ChatSessionRow[]/ChatMessage[] (live, AI tab, §4.7) + OutlineBeat[] (live read-only, Outline tab, §4.8)
+/projects/[id]/outlines                      OutlinePart[]/OutlineChapter[]/OutlineBeat[] (live, §4.8)
 /projects/[id]/assistant                     ChatSessionRow[]/ChatMessage[] (live, §4.7) — full-page AI Assistant workspace
 /projects/[id]/characters                    Character[] (live) + selected Character detail, Edit/Delete via options menu
 /projects/[id]/characters/all                Character[] (live), grid+pagination, Edit/Delete via options menu

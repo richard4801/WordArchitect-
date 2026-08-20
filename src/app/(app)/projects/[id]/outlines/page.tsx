@@ -16,6 +16,7 @@ import {
   Info,
   Link2,
   List as ListIcon,
+  Loader2,
   Mail,
   Maximize2,
   Minimize2,
@@ -23,30 +24,30 @@ import {
   Network,
   PanelLeftClose,
   PanelLeftOpen,
-  PenLine,
   Plus,
   Search,
-  Shuffle,
   Snowflake,
-  Sparkles,
   Trash2,
   X,
   LayoutGrid as ThreeActIcon,
-  Copy,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DropdownSelect } from "@/components/ui/dropdown-select";
 import { Ring } from "@/components/ui/ring";
 import {
-  type Act,
-  type Beat,
-  type BeatColor,
+  createBeat,
+  deleteBeat,
+  updateBeat,
+  useOutline,
+  VALID_BEAT_STATUSES,
   type BeatStatus,
-  THREE_ACT_STRUCTURE,
-} from "@/lib/outline-data";
+  type OutlineBeat,
+  type OutlineChapter,
+} from "@/lib/outline-store";
 import { useProject } from "@/lib/project-store";
 import type { Project } from "@/lib/projects-data";
 import { setFocusModeActive } from "@/lib/ui-store";
@@ -57,9 +58,13 @@ import { setFocusModeActive } from "@/lib/ui-store";
  * standard app header, global Sidebar stays but the page builds its own top
  * bar) rather than living inside the project detail tab chrome, because its
  * two-sidebar + board + detail-panel layout needs the full viewport width.
- * Matches resources/Outliner Three Act.png. Only the "Three Act" outline
- * mode is actually built — the other 8 mode tiles are visible (matching the
- * mockup's switcher) but inert, since nothing else was asked for.
+ *
+ * Backed by real `chapter_beats` rows (see outline-store.ts) grouped under
+ * real chapters — the backend has no "Act" concept at all, only Parts
+ * (optional) -> Chapters -> Beats, so unlike the old mock's Act I/II/III
+ * columns, board columns here are real chapters. Only the "Three Act" mode
+ * tile stays selectable (matching the mockup's switcher); the other 8 are
+ * visible but inert, since nothing else was asked for.
  */
 
 const OUTLINE_MODES = [
@@ -74,83 +79,76 @@ const OUTLINE_MODES = [
   { key: "canvas", label: "Canvas", icon: Frame },
 ] as const;
 
-const STATUS_ORDER: BeatStatus[] = ["completed", "inProgress", "planned", "notStarted"];
+const STATUS_ORDER: BeatStatus[] = ["completed", "in_progress", "planned", "not_started"];
 const STATUS_LABEL: Record<BeatStatus, string> = {
   completed: "Completed",
-  inProgress: "In Progress",
+  in_progress: "In Progress",
   planned: "Planned",
-  notStarted: "Not Started",
+  not_started: "Not Started",
 };
 const STATUS_BY_LABEL: Record<string, BeatStatus> = Object.fromEntries(
   STATUS_ORDER.map((s) => [STATUS_LABEL[s], s]),
 );
-const STATUS_TO_COLOR: Record<BeatStatus, BeatColor> = {
-  completed: "green",
-  inProgress: "gold",
-  planned: "purple",
-  notStarted: "gray",
+const STATUS_COLOR: Record<BeatStatus, string> = {
+  completed: "var(--success)",
+  in_progress: "var(--warn)",
+  planned: "var(--purple)",
+  not_started: "#8f8a82",
 };
-const COLOR_ORDER: BeatColor[] = ["green", "gold", "purple", "blue", "rose", "gray"];
-const COLOR_HEX: Record<BeatColor, string> = {
-  green: "var(--success)",
-  gold: "var(--warn)",
-  purple: "var(--purple)",
-  blue: "var(--info)",
-  rose: "#c2668a",
-  gray: "#8f8a82",
-};
-const ACT_COLOR_HEX: Record<Act["color"], string> = {
-  green: "var(--success)",
-  purple: "var(--purple)",
-  blue: "var(--info)",
-};
+// Chapters have no backend color of their own — a small fixed palette cycled
+// by column position gives the board some visual rhythm, purely cosmetic.
+const CHAPTER_COLOR_CYCLE = ["var(--success)", "var(--purple)", "var(--info)"];
 
 type ViewMode = "board" | "list" | "timeline";
-type RightTab = "Details" | "Scenes" | "Notes" | "Links";
-type Column = { id: string; label: string; beats: Beat[]; barColor: string };
+type Column = { id: string; label: string; beats: OutlineBeat[]; barColor: string; chapterId: string | null };
 
-function cloneStructure(): Act[] {
-  return THREE_ACT_STRUCTURE.map((act) => ({ ...act, beats: act.beats.map((b) => ({ ...b })) }));
+function chapterLabelFor(chapter: OutlineChapter | undefined): string {
+  if (!chapter) return "—";
+  return chapter.heading?.trim() || chapter.title;
 }
 
 export default function OutlinerPage() {
   const { id } = useParams<{ id: string }>();
   const project = useProject(id);
+  const outline = useOutline(project?.id);
 
-  const [acts, setActs] = useState<Act[]>(cloneStructure);
-  const [selectedId, setSelectedId] = useState<string>("beat-1");
-  const [rightTab, setRightTab] = useState<RightTab>("Details");
+  const [selectedId, setSelectedId] = useState<string>("");
   const [view, setView] = useState<ViewMode>("board");
-  const [groupBy, setGroupBy] = useState<"Acts" | "Status">("Acts");
+  const [groupBy, setGroupBy] = useState<"Chapters" | "Status">("Chapters");
   const [zoom, setZoom] = useState(100);
-  const [collapsedActs, setCollapsedActs] = useState<Set<string>>(new Set());
+  const [collapsedChapters, setCollapsedChapters] = useState<Set<string>>(new Set());
   const [fullscreen, setFullscreen] = useState(false);
   const [navOpen, setNavOpen] = useState(true);
+  const [creatingChapterId, setCreatingChapterId] = useState<string | null>(null);
 
   useEffect(() => {
     setFocusModeActive(fullscreen);
     return () => setFocusModeActive(false);
   }, [fullscreen]);
 
-  const allBeats = useMemo(() => acts.flatMap((a) => a.beats), [acts]);
-  const selectedBeat = allBeats.find((b) => b.id === selectedId);
+  const chapters = useMemo(() => [...outline.chapters].sort((a, b) => a.number - b.number), [outline.chapters]);
+  const beats = outline.beats;
+  const selectedBeat = beats.find((b) => b.id === selectedId);
+  const chapterById = useMemo(() => new Map(chapters.map((c) => [c.id, c])), [chapters]);
 
   const columns: Column[] = useMemo(() => {
     if (groupBy === "Status") {
       return STATUS_ORDER.map((s) => ({
         id: s,
         label: STATUS_LABEL[s].toUpperCase(),
-        beats: allBeats.filter((b) => b.status === s),
-        barColor: COLOR_HEX[STATUS_TO_COLOR[s]],
+        beats: beats.filter((b) => b.status === s),
+        barColor: STATUS_COLOR[s],
+        chapterId: null,
       }));
     }
-    return acts.map((act) => ({
-      id: act.id,
-      label: act.label.toUpperCase(),
-      beats: act.beats,
-      barColor: ACT_COLOR_HEX[act.color],
+    return chapters.map((chapter, i) => ({
+      id: chapter.id,
+      label: chapterLabelFor(chapter).toUpperCase(),
+      beats: beats.filter((b) => b.chapterId === chapter.id).sort((a, b) => a.orderIndex - b.orderIndex),
+      barColor: CHAPTER_COLOR_CYCLE[i % CHAPTER_COLOR_CYCLE.length],
+      chapterId: chapter.id,
     }));
-  }, [acts, allBeats, groupBy]);
+  }, [chapters, beats, groupBy]);
 
   if (!project) {
     return (
@@ -166,84 +164,26 @@ export default function OutlinerPage() {
     );
   }
 
-  // A fresh const so the closures below (defined after the guard) keep the
-  // narrowed `Project` type — TS's control-flow narrowing of `project`
-  // doesn't carry into nested function declarations on its own.
-  const proj = project;
-
-  function patchBeat(beatId: string, patch: Partial<Beat>) {
-    setActs((prev) =>
-      prev.map((act) => ({
-        ...act,
-        beats: act.beats.map((b) => (b.id === beatId ? { ...b, ...patch } : b)),
-      })),
-    );
+  async function addBeat(chapterId: string) {
+    setCreatingChapterId(chapterId);
+    try {
+      const beat = await createBeat(chapterId, { title: "New Beat" });
+      setSelectedId(beat.id);
+    } catch {
+      // The store already surfaces load errors elsewhere; a failed create
+      // just leaves the board as-is — nothing to add.
+    } finally {
+      setCreatingChapterId(null);
+    }
   }
 
-  function selectBeat(beatId: string) {
-    setSelectedId(beatId);
-    setRightTab("Details");
-  }
-
-  function addBeat(actId: string) {
-    const newId = `beat-${crypto.randomUUID()}`;
-    setActs((prev) =>
-      prev.map((act) => {
-        if (act.id !== actId) return act;
-        const newBeat: Beat = {
-          id: newId,
-          number: allBeats.length + 1,
-          title: "New Beat",
-          purpose: "Describe what happens in this beat.",
-          description: "",
-          chapterLabel: "—",
-          sceneCount: 0,
-          status: "notStarted",
-          color: "gray",
-          pov: proj.pov || "—",
-          location: "—",
-          time: "—",
-          mood: "—",
-          characters: [],
-          notes: [],
-        };
-        return { ...act, beats: [...act.beats, newBeat] };
-      }),
-    );
-    selectBeat(newId);
-  }
-
-  function duplicateBeat(beatId: string) {
-    const newId = `beat-${crypto.randomUUID()}`;
-    setActs((prev) =>
-      prev.map((act) => {
-        const idx = act.beats.findIndex((b) => b.id === beatId);
-        if (idx === -1) return act;
-        const copy: Beat = { ...act.beats[idx], id: newId, title: `${act.beats[idx].title} (Copy)` };
-        const beats = [...act.beats];
-        beats.splice(idx + 1, 0, copy);
-        return { ...act, beats };
-      }),
-    );
-    selectBeat(newId);
-  }
-
-  function deleteBeat(beatId: string) {
-    setActs((prev) => prev.map((act) => ({ ...act, beats: act.beats.filter((b) => b.id !== beatId) })));
-    if (selectedId === beatId) setSelectedId("");
-  }
-
-  function toggleAct(actId: string) {
-    setCollapsedActs((prev) => {
+  function toggleChapter(chapterId: string) {
+    setCollapsedChapters((prev) => {
       const next = new Set(prev);
-      if (next.has(actId)) next.delete(actId);
-      else next.add(actId);
+      if (next.has(chapterId)) next.delete(chapterId);
+      else next.add(chapterId);
       return next;
     });
-  }
-
-  function autoArrange() {
-    setActs((prev) => prev.map((act) => ({ ...act, beats: [...act.beats].sort((a, b) => a.number - b.number) })));
   }
 
   return (
@@ -252,19 +192,20 @@ export default function OutlinerPage() {
       <div className="relative flex flex-1 overflow-hidden">
         {navOpen && (
           <OutlineNavSidebar
-            acts={acts}
+            chapters={chapters}
+            beats={beats}
             selectedId={selectedId}
-            onSelect={selectBeat}
-            collapsedActs={collapsedActs}
-            onToggleAct={toggleAct}
-            onAddBeat={() => addBeat(acts[0].id)}
+            onSelect={setSelectedId}
+            collapsedChapters={collapsedChapters}
+            onToggleChapter={toggleChapter}
+            onAddBeat={() => chapters[0] && addBeat(chapters[0].id)}
+            addDisabled={chapters.length === 0 || creatingChapterId !== null}
           />
         )}
         <BoardArea
-          acts={acts}
           columns={columns}
-          allBeatsCount={allBeats.length}
-          completedBeatsCount={allBeats.filter((b) => b.status === "completed").length}
+          allBeatsCount={beats.length}
+          completedBeatsCount={beats.filter((b) => b.status === "completed").length}
           view={view}
           setView={setView}
           groupBy={groupBy}
@@ -272,22 +213,18 @@ export default function OutlinerPage() {
           zoom={zoom}
           setZoom={setZoom}
           selectedId={selectedId}
-          onSelect={selectBeat}
+          onSelect={setSelectedId}
           onAddBeat={addBeat}
+          creatingChapterId={creatingChapterId}
           fullscreen={fullscreen}
           setFullscreen={setFullscreen}
-          onAutoArrange={autoArrange}
           selectedBeat={selectedBeat}
+          selectedBeatChapterLabel={selectedBeat ? chapterLabelFor(chapterById.get(selectedBeat.chapterId)) : ""}
           project={project}
-          rightTab={rightTab}
-          setRightTab={setRightTab}
           onCloseBeat={() => setSelectedId("")}
-          onChangeStatus={(status) =>
-            selectedBeat && patchBeat(selectedBeat.id, { status, color: STATUS_TO_COLOR[status] })
-          }
-          onChangeColor={(color) => selectedBeat && patchBeat(selectedBeat.id, { color })}
-          onDuplicateBeat={() => selectedBeat && duplicateBeat(selectedBeat.id)}
-          onDeleteBeat={() => selectedBeat && deleteBeat(selectedBeat.id)}
+          outlineStatus={outline.status}
+          outlineError={outline.error}
+          hasChapters={chapters.length > 0}
         />
       </div>
     </div>
@@ -367,19 +304,23 @@ function TopBar({
 /* ======================================================================= */
 
 function OutlineNavSidebar({
-  acts,
+  chapters,
+  beats,
   selectedId,
   onSelect,
-  collapsedActs,
-  onToggleAct,
+  collapsedChapters,
+  onToggleChapter,
   onAddBeat,
+  addDisabled,
 }: {
-  acts: Act[];
+  chapters: OutlineChapter[];
+  beats: OutlineBeat[];
   selectedId: string;
   onSelect: (id: string) => void;
-  collapsedActs: Set<string>;
-  onToggleAct: (id: string) => void;
+  collapsedChapters: Set<string>;
+  onToggleChapter: (id: string) => void;
   onAddBeat: () => void;
+  addDisabled: boolean;
 }) {
   return (
     <aside className="scroll-slim hidden w-64 shrink-0 flex-col overflow-y-auto border-r border-line px-3.5 py-5 lg:flex">
@@ -412,31 +353,29 @@ function OutlineNavSidebar({
 
       <div className="mt-6 flex items-center justify-between">
         <h2 className="label-caps text-ink-faint">Outline Structure</h2>
-        <button
-          type="button"
-          aria-label="Add act"
-          className="grid size-6 place-items-center rounded-md text-ink-faint transition-colors hover:text-gold"
-        >
-          <Plus className="size-4" />
-        </button>
       </div>
 
       <div className="mt-3 space-y-4">
-        {acts.map((act) => {
-          const collapsed = collapsedActs.has(act.id);
+        {chapters.length === 0 && <p className="text-sm text-ink-faint">No chapters yet.</p>}
+        {chapters.map((chapter) => {
+          const collapsed = collapsedChapters.has(chapter.id);
+          const chapterBeats = beats.filter((b) => b.chapterId === chapter.id).sort((a, b) => a.orderIndex - b.orderIndex);
           return (
-            <div key={act.id}>
+            <div key={chapter.id}>
               <button
                 type="button"
-                onClick={() => onToggleAct(act.id)}
+                onClick={() => onToggleChapter(chapter.id)}
                 className="flex w-full items-center gap-1.5 text-left text-sm font-medium text-gold"
               >
                 <ChevronDown className={`size-3.5 shrink-0 transition-transform ${collapsed ? "-rotate-90" : ""}`} />
-                <span className="truncate">{act.label}</span>
+                <span className="truncate">{chapterLabelFor(chapter)}</span>
               </button>
               {!collapsed && (
                 <ul className="relative ml-[7px] mt-1 space-y-0.5 border-l border-line-strong pl-4">
-                  {act.beats.map((b) => (
+                  {chapterBeats.length === 0 && (
+                    <li className="py-1.5 text-sm text-ink-faint">No beats yet.</li>
+                  )}
+                  {chapterBeats.map((b, i) => (
                     <li key={b.id} className="relative">
                       <span className="absolute -left-[17px] top-1/2 size-1.5 -translate-y-1/2 rounded-full bg-line-strong" />
                       <button
@@ -446,7 +385,7 @@ function OutlineNavSidebar({
                           selectedId === b.id ? "bg-surface-2 text-ink" : "text-ink-muted hover:text-ink"
                         }`}
                       >
-                        {b.number}. {b.title}
+                        {i + 1}. {b.title}
                       </button>
                     </li>
                   ))}
@@ -457,22 +396,15 @@ function OutlineNavSidebar({
         })}
       </div>
 
-      <div className="mt-6 flex items-center gap-2">
+      <div className="mt-6">
         <button
           type="button"
           onClick={onAddBeat}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-line-strong py-2.5 text-sm text-gold transition-colors hover:bg-surface-2"
+          disabled={addDisabled}
+          className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-line-strong py-2.5 text-sm text-gold transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Plus className="size-4" />
-          Add Beat / Scene
-        </button>
-        <button
-          type="button"
-          aria-label="Auto-arrange structure"
-          title="Auto-arrange"
-          className="grid size-10 shrink-0 place-items-center rounded-xl border border-line-strong text-ink-faint transition-colors hover:text-gold"
-        >
-          <Shuffle className="size-4" />
+          Add Beat
         </button>
       </div>
     </aside>
@@ -496,53 +428,45 @@ function BoardArea({
   selectedId,
   onSelect,
   onAddBeat,
+  creatingChapterId,
   fullscreen,
   setFullscreen,
-  onAutoArrange,
   selectedBeat,
+  selectedBeatChapterLabel,
   project,
-  rightTab,
-  setRightTab,
   onCloseBeat,
-  onChangeStatus,
-  onChangeColor,
-  onDuplicateBeat,
-  onDeleteBeat,
+  outlineStatus,
+  outlineError,
+  hasChapters,
 }: {
-  acts: Act[];
   columns: Column[];
   allBeatsCount: number;
   completedBeatsCount: number;
   view: ViewMode;
   setView: (v: ViewMode) => void;
-  groupBy: "Acts" | "Status";
-  setGroupBy: (v: "Acts" | "Status") => void;
+  groupBy: "Chapters" | "Status";
+  setGroupBy: (v: "Chapters" | "Status") => void;
   zoom: number;
   setZoom: (fn: (z: number) => number) => void;
   selectedId: string;
   onSelect: (id: string) => void;
-  onAddBeat: (actId: string) => void;
+  onAddBeat: (chapterId: string) => void;
+  creatingChapterId: string | null;
   fullscreen: boolean;
   setFullscreen: (fn: (f: boolean) => boolean) => void;
-  onAutoArrange: () => void;
-  selectedBeat: Beat | undefined;
+  selectedBeat: OutlineBeat | undefined;
+  selectedBeatChapterLabel: string;
   project: Project;
-  rightTab: RightTab;
-  setRightTab: (t: RightTab) => void;
   onCloseBeat: () => void;
-  onChangeStatus: (s: BeatStatus) => void;
-  onChangeColor: (c: BeatColor) => void;
-  onDuplicateBeat: () => void;
-  onDeleteBeat: () => void;
+  outlineStatus: "idle" | "loading" | "loaded" | "error";
+  outlineError: string | null;
+  hasChapters: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const panState = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
   const [panning, setPanning] = useState(false);
 
-  // Click-drag-to-pan, canvas-style — only starts when the pointer comes
-  // down on the scroll area's own background or the grid's gutter (not a
-  // beat card or button), so it never fights normal card clicks.
   function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
     if (e.target !== scrollRef.current && e.target !== gridRef.current) return;
     const el = scrollRef.current;
@@ -563,6 +487,8 @@ function BoardArea({
     setPanning(false);
   }
 
+  const progress = allBeatsCount > 0 ? Math.round((completedBeatsCount / allBeatsCount) * 100) : 0;
+
   return (
     <main className="scroll-slim flex min-w-0 flex-1 flex-col overflow-hidden">
       <div className="border-b border-line px-6 py-5">
@@ -573,13 +499,13 @@ function BoardArea({
               <Info className="size-4 text-ink-faint" />
             </h1>
             <p className="mt-1.5 text-sm text-ink-muted">
-              The classic 3-act structure is a timeless framework that builds a compelling story through
-              setup, confrontation, and resolution.
+              Beats are grouped by real chapter — the classic Act I/II/III framing is a planning lens you apply
+              yourself, not a stored structure.
             </p>
           </div>
           <Ring
-            value={allBeatsCount > 0 ? Math.round((completedBeatsCount / allBeatsCount) * 100) : 0}
-            label={`${allBeatsCount > 0 ? Math.round((completedBeatsCount / allBeatsCount) * 100) : 0}%`}
+            value={progress}
+            label={`${progress}%`}
             sublabel={
               <span className="text-xs leading-snug text-ink-faint">
                 Outline Progress
@@ -622,8 +548,8 @@ function BoardArea({
             <span>Group:</span>
             <DropdownSelect
               value={groupBy}
-              onChange={(v) => setGroupBy(v as "Acts" | "Status")}
-              options={["Acts", "Status"]}
+              onChange={(v) => setGroupBy(v as "Chapters" | "Status")}
+              options={["Chapters", "Status"]}
               placeholder="Group"
               className="w-28"
               triggerClassName="py-1.5"
@@ -661,125 +587,134 @@ function BoardArea({
         </div>
       </div>
 
-      {/* Everything below the toolbar shares one relative wrapper, so the
-          detail panel (absolutely positioned within it) only ever overlays
-          the board/list/legend area — never the header stat ring or the
-          toolbar's view tabs, group/zoom/fullscreen controls above it. */}
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-      {view === "board" && (
-        <div
-          ref={scrollRef}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
-          className={`scroll-slim flex-1 overflow-auto px-6 py-6 ${panning ? "cursor-grabbing" : "cursor-grab"}`}
-        >
-          <div
-            ref={gridRef}
-            className={`grid gap-5 pb-[320px] ${panning ? "select-none" : ""}`}
-            style={{
-              gridTemplateColumns: `repeat(${columns.length}, minmax(232px, 1fr))`,
-              transform: `scale(${zoom / 100})`,
-              transformOrigin: "top left",
-              // The extra +320px (beyond the zoom-compensated 100%) is dead
-              // space past the last column/row — scroll room so a beat card
-              // near the far edge can be dragged clear of the detail panel
-              // overlay (which covers the board's right ~300px) instead of
-              // being permanently stuck underneath it.
-              width: `calc(${10000 / zoom}% + 320px)`,
-            }}
-          >
-            {columns.map((col) => (
-              <BoardColumn
-                key={col.id}
-                column={col}
-                selectedId={selectedId}
-                onSelect={onSelect}
-                onAddBeat={groupBy === "Acts" ? () => onAddBeat(col.id) : undefined}
-              />
-            ))}
+        {outlineStatus === "loading" && (
+          <div className="grid flex-1 place-items-center">
+            <Loader2 className="size-6 animate-spin text-ink-faint" />
           </div>
-        </div>
-      )}
+        )}
 
-      {view === "list" && (
-        <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6">
-          {columns.map((col) => (
-            <div key={col.id}>
-              <h3 className="label-caps text-ink-faint">{col.label}</h3>
-              <div className="card-2 mt-2 divide-y divide-line overflow-hidden">
-                {col.beats.length === 0 && <p className="p-3 text-sm text-ink-faint">No beats yet.</p>}
-                {col.beats.map((b) => (
-                  <button
-                    key={b.id}
-                    type="button"
-                    onClick={() => onSelect(b.id)}
-                    className={`flex w-full items-center gap-3 p-3 text-left transition-colors ${
-                      selectedId === b.id ? "bg-surface-2" : "hover:bg-surface-2/60"
-                    }`}
-                  >
-                    <StatusIcon beat={b} />
-                    <span className="min-w-0 flex-1 truncate text-sm text-ink">
-                      {b.number}. {b.title}
-                    </span>
-                    <span className="hidden shrink-0 rounded-md border border-line-strong px-2 py-0.5 text-xs text-gold sm:inline">
-                      {b.chapterLabel}
-                    </span>
-                    <span className="w-16 shrink-0 text-right text-xs text-ink-faint">
-                      {b.sceneCount} Scene{b.sceneCount === 1 ? "" : "s"}
-                    </span>
-                  </button>
+        {outlineStatus === "error" && (
+          <div className="grid flex-1 place-items-center px-6 text-center">
+            <div>
+              <p className="font-display text-lg text-ink">Couldn&apos;t load the outline</p>
+              <p className="mt-1 text-sm text-ink-muted">{outlineError}</p>
+            </div>
+          </div>
+        )}
+
+        {outlineStatus !== "error" && outlineStatus !== "loading" && !hasChapters && (
+          <div className="grid flex-1 place-items-center px-6 text-center">
+            <div>
+              <BookOpen className="mx-auto size-8 text-ink-faint" />
+              <p className="mt-3 font-display text-lg text-ink">No chapters yet</p>
+              <p className="mt-1 text-sm text-ink-muted">Create a chapter in the manuscript editor before adding beats.</p>
+              <Link
+                href={`/projects/${project.id}/chapters`}
+                className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-gold px-4 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
+              >
+                Go to Chapters
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {outlineStatus !== "error" && hasChapters && (
+          <>
+            {view === "board" && (
+              <div
+                ref={scrollRef}
+                onPointerDown={onPointerDown}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+                onPointerCancel={onPointerUp}
+                className={`scroll-slim flex-1 overflow-auto px-6 py-6 ${panning ? "cursor-grabbing" : "cursor-grab"}`}
+              >
+                <div
+                  ref={gridRef}
+                  className={`grid gap-5 pb-[320px] ${panning ? "select-none" : ""}`}
+                  style={{
+                    gridTemplateColumns: `repeat(${columns.length}, minmax(232px, 1fr))`,
+                    transform: `scale(${zoom / 100})`,
+                    transformOrigin: "top left",
+                    width: `calc(${10000 / zoom}% + 320px)`,
+                  }}
+                >
+                  {columns.map((col) => (
+                    <BoardColumn
+                      key={col.id}
+                      column={col}
+                      selectedId={selectedId}
+                      onSelect={onSelect}
+                      onAddBeat={groupBy === "Chapters" && col.chapterId ? () => onAddBeat(col.chapterId!) : undefined}
+                      adding={col.chapterId !== null && col.chapterId === creatingChapterId}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {view === "list" && (
+              <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6">
+                {columns.map((col) => (
+                  <div key={col.id}>
+                    <h3 className="label-caps text-ink-faint">{col.label}</h3>
+                    <div className="card-2 mt-2 divide-y divide-line overflow-hidden">
+                      {col.beats.length === 0 && <p className="p-3 text-sm text-ink-faint">No beats yet.</p>}
+                      {col.beats.map((b) => (
+                        <button
+                          key={b.id}
+                          type="button"
+                          onClick={() => onSelect(b.id)}
+                          className={`flex w-full items-center gap-3 p-3 text-left transition-colors ${
+                            selectedId === b.id ? "bg-surface-2" : "hover:bg-surface-2/60"
+                          }`}
+                        >
+                          <StatusIcon status={b.status} />
+                          <span className="min-w-0 flex-1 truncate text-sm text-ink">{b.title}</span>
+                          {b.linkedToManuscript && <Link2 className="size-3.5 shrink-0 text-gold" />}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
-            </div>
-          ))}
-        </div>
-      )}
+            )}
 
-      {view === "timeline" && (
-        <div className="grid flex-1 place-items-center px-6 text-center">
-          <div>
-            <GanttChartSquare className="mx-auto size-8 text-ink-faint" />
-            <p className="mt-3 font-display text-lg text-ink">Timeline view is coming soon</p>
-            <p className="mt-1 text-sm text-ink-muted">Switch back to Board to keep editing beats.</p>
-          </div>
-        </div>
-      )}
+            {view === "timeline" && (
+              <div className="grid flex-1 place-items-center px-6 text-center">
+                <div>
+                  <GanttChartSquare className="mx-auto size-8 text-ink-faint" />
+                  <p className="mt-3 font-display text-lg text-ink">Timeline view is coming soon</p>
+                  <p className="mt-1 text-sm text-ink-muted">Switch back to Board to keep editing beats.</p>
+                </div>
+              </div>
+            )}
 
-      {view === "board" && (
-        <div className="flex flex-wrap items-center gap-5 border-t border-line px-6 py-3 text-xs text-ink-muted">
-          <LegendDot color={COLOR_HEX.green} label="Completed" />
-          <LegendDot color={COLOR_HEX.gold} label="In Progress" />
-          <LegendDot color={COLOR_HEX.purple} label="Planned" />
-          <LegendDot color={COLOR_HEX.gray} label="Not Started" />
-          <span className="flex items-center gap-1.5">
-            <Link2 className="size-3.5" />
-            Linked to Manuscript
-          </span>
-          <button
-            type="button"
-            onClick={onAutoArrange}
-            className="ml-auto flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-gold transition-colors hover:bg-surface-2"
-          >
-            <Sparkles className="size-3.5" />
-            Auto Arrange
-          </button>
-        </div>
-      )}
-      {selectedBeat && (
-        <DetailPanel
-          beat={selectedBeat}
-          project={project}
-          tab={rightTab}
-          setTab={setRightTab}
-          onClose={onCloseBeat}
-          onChangeStatus={onChangeStatus}
-          onChangeColor={onChangeColor}
-          onDuplicate={onDuplicateBeat}
-          onDelete={onDeleteBeat}
-        />
-      )}
+            {view === "board" && (
+              <div className="flex flex-wrap items-center gap-5 border-t border-line px-6 py-3 text-xs text-ink-muted">
+                <LegendDot color={STATUS_COLOR.completed} label="Completed" />
+                <LegendDot color={STATUS_COLOR.in_progress} label="In Progress" />
+                <LegendDot color={STATUS_COLOR.planned} label="Planned" />
+                <LegendDot color={STATUS_COLOR.not_started} label="Not Started" />
+                <span className="flex items-center gap-1.5">
+                  <Link2 className="size-3.5" />
+                  Linked to Manuscript
+                </span>
+              </div>
+            )}
+          </>
+        )}
+
+        {selectedBeat && (
+          <DetailPanel
+            key={selectedBeat.id}
+            beat={selectedBeat}
+            chapterLabel={selectedBeatChapterLabel}
+            project={project}
+            onClose={onCloseBeat}
+          />
+        )}
       </div>
       <span className="sr-only">{allBeatsCount} beats total</span>
     </main>
@@ -800,11 +735,13 @@ function BoardColumn({
   selectedId,
   onSelect,
   onAddBeat,
+  adding,
 }: {
   column: Column;
   selectedId: string;
   onSelect: (id: string) => void;
   onAddBeat?: () => void;
+  adding: boolean;
 }) {
   return (
     <div className="card flex min-h-[240px] flex-col p-4">
@@ -826,19 +763,20 @@ function BoardColumn({
         <button
           type="button"
           onClick={onAddBeat}
-          className="mt-3 flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-dashed border-line-strong py-2.5 text-sm text-gold transition-colors hover:bg-surface-2"
+          disabled={adding}
+          className="mt-3 flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-dashed border-line-strong py-2.5 text-sm text-gold transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          <Plus className="size-4" />
-          Add Beat
+          {adding ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+          {adding ? "Adding…" : "Add Beat"}
         </button>
       )}
     </div>
   );
 }
 
-function BeatCard({ beat, selected, onSelect }: { beat: Beat; selected: boolean; onSelect: () => void }) {
-  const highlight = selected || beat.status === "inProgress";
-  const color = COLOR_HEX[beat.color];
+function BeatCard({ beat, selected, onSelect }: { beat: OutlineBeat; selected: boolean; onSelect: () => void }) {
+  const highlight = selected || beat.status === "in_progress";
+  const color = STATUS_COLOR[beat.status];
   return (
     <button
       type="button"
@@ -847,37 +785,32 @@ function BeatCard({ beat, selected, onSelect }: { beat: Beat; selected: boolean;
       style={highlight ? { borderColor: color } : undefined}
     >
       <div className="flex items-start justify-between gap-2">
-        <h4 className="text-sm font-medium text-ink">
-          {beat.number}. {beat.title}
-        </h4>
-        <StatusIcon beat={beat} />
+        <h4 className="text-sm font-medium text-ink">{beat.title}</h4>
+        <StatusIcon status={beat.status} />
       </div>
-      <p className="mt-1.5 text-xs leading-relaxed text-ink-muted">{beat.purpose}</p>
-      <div className="mt-3 flex items-center gap-2 text-xs">
-        <span
-          className="rounded-md border px-2 py-0.5 text-gold"
-          style={{ borderColor: "var(--line-strong)" }}
-        >
-          {beat.chapterLabel}
-        </span>
-        <span className="text-ink-faint">
-          {beat.sceneCount} Scene{beat.sceneCount === 1 ? "" : "s"}
-        </span>
-      </div>
+      <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-ink-muted">
+        {beat.outlineText || "No outline text yet."}
+      </p>
+      {beat.linkedToManuscript && (
+        <div className="mt-3 flex items-center gap-1.5 text-xs text-gold">
+          <Link2 className="size-3.5" />
+          Linked to Manuscript
+        </div>
+      )}
     </button>
   );
 }
 
-function StatusIcon({ beat }: { beat: Beat }) {
-  const color = COLOR_HEX[beat.color];
-  if (beat.status === "completed") {
+function StatusIcon({ status }: { status: BeatStatus }) {
+  const color = STATUS_COLOR[status];
+  if (status === "completed") {
     return (
       <span className="grid size-5 shrink-0 place-items-center rounded-full" style={{ background: color }}>
         <Check className="size-3 text-white" strokeWidth={3} />
       </span>
     );
   }
-  if (beat.status === "inProgress") {
+  if (status === "in_progress") {
     return (
       <span
         className="grid size-5 shrink-0 place-items-center rounded-full border-[1.5px]"
@@ -896,291 +829,150 @@ function StatusIcon({ beat }: { beat: Beat }) {
 
 function DetailPanel({
   beat,
+  chapterLabel,
   project,
-  tab,
-  setTab,
   onClose,
-  onChangeStatus,
-  onChangeColor,
-  onDuplicate,
-  onDelete,
 }: {
-  beat: Beat;
+  beat: OutlineBeat;
+  chapterLabel: string;
   project: Project;
-  tab: RightTab;
-  setTab: (t: RightTab) => void;
   onClose: () => void;
-  onChangeStatus: (s: BeatStatus) => void;
-  onChangeColor: (c: BeatColor) => void;
-  onDuplicate: () => void;
-  onDelete: () => void;
 }) {
-  const color = COLOR_HEX[beat.color];
+  const [title, setTitle] = useState(beat.title);
+  const [outlineText, setOutlineText] = useState(beat.outlineText);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  async function saveField(patch: { title?: string; outlineText?: string }) {
+    setSaveState("saving");
+    try {
+      await updateBeat(beat.id, patch);
+      setSaveState("saved");
+    } catch {
+      setSaveState("error");
+    }
+  }
+
+  async function handleStatusChange(status: BeatStatus) {
+    setSaveState("saving");
+    try {
+      await updateBeat(beat.id, { status });
+      setSaveState("saved");
+    } catch {
+      setSaveState("error");
+    }
+  }
+
+  const color = STATUS_COLOR[beat.status];
+
   return (
     <aside className="scroll-slim absolute inset-y-0 right-0 z-30 hidden w-[300px] animate-[wa-slide-in-right_180ms_ease-out] overflow-y-auto border-l border-line bg-canvas p-4 shadow-2xl lg:block">
       <div className="flex items-start justify-between gap-2">
-        <h2 className="min-w-0 font-display text-lg leading-snug text-ink">
-          {beat.number}. {beat.title}
-        </h2>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <span
-            className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs"
-            style={{ borderColor: color, color }}
-          >
-            {beat.status === "completed" && <Check className="size-3" />}
-            {STATUS_LABEL[beat.status]}
-          </span>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close beat details"
-            className="grid size-6 shrink-0 place-items-center rounded-md text-ink-faint transition-colors hover:text-ink"
-          >
-            <X className="size-3.5" />
-          </button>
-        </div>
-      </div>
-
-      <div className="mt-4 flex items-center gap-5 border-b border-line text-sm">
-        {(["Details", "Scenes", "Notes", "Links"] as const).map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => setTab(t)}
-            className={`relative pb-3 transition-colors ${tab === t ? "text-gold" : "text-ink-muted hover:text-ink"}`}
-          >
-            {t}
-            {t === "Scenes" ? ` (${beat.sceneCount})` : ""}
-            {tab === t && <span className="absolute inset-x-0 -bottom-px h-[2px] rounded-full bg-gold" />}
-          </button>
-        ))}
-      </div>
-
-      {tab === "Details" && (
-        <DetailsTab
-          beat={beat}
-          project={project}
-          onChangeStatus={onChangeStatus}
-          onChangeColor={onChangeColor}
-          onDuplicate={onDuplicate}
-          onDelete={onDelete}
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          onBlur={() => {
+            const trimmed = title.trim();
+            if (!trimmed) {
+              setTitle(beat.title);
+              return;
+            }
+            if (trimmed !== beat.title) void saveField({ title: trimmed });
+          }}
+          className="min-w-0 flex-1 bg-transparent font-display text-lg leading-snug text-ink focus:outline-none"
         />
-      )}
-      {tab === "Scenes" && <ScenesTab beat={beat} />}
-      {tab === "Notes" && <NotesTab beat={beat} />}
-      {tab === "Links" && <LinksTab beat={beat} project={project} />}
-    </aside>
-  );
-}
-
-function DetailsTab({
-  beat,
-  project,
-  onChangeStatus,
-  onChangeColor,
-  onDuplicate,
-  onDelete,
-}: {
-  beat: Beat;
-  project: Project;
-  onChangeStatus: (s: BeatStatus) => void;
-  onChangeColor: (c: BeatColor) => void;
-  onDuplicate: () => void;
-  onDelete: () => void;
-}) {
-  return (
-    <div className="mt-5 space-y-5 text-sm">
-      <div className="grid grid-cols-[84px_1fr] gap-3 border-b border-line pb-5">
-        <dt className="text-ink-muted">Purpose</dt>
-        <dd className="leading-relaxed text-ink-muted">{beat.purpose}</dd>
-      </div>
-      <div className="grid grid-cols-[84px_1fr] gap-3 border-b border-line pb-5">
-        <dt className="text-ink-muted">Description</dt>
-        <dd className="leading-relaxed text-ink-muted">{beat.description || "—"}</dd>
-      </div>
-
-      <div>
-        <h3 className="text-ink">Linked Chapter</h3>
-        <Link
-          href={`/projects/${project.id}/chapters`}
-          className="card-2 mt-2 flex items-center justify-between gap-2 p-3 text-sm transition-colors hover:bg-surface-2"
-        >
-          <span className="flex items-center gap-2 text-ink">
-            <BookOpen className="size-4 text-gold" />
-            {beat.chapterLabel}
-          </span>
-          <span className="flex shrink-0 items-center gap-1 text-gold">
-            Go to Chapter
-            <ExternalLink className="size-3.5" />
-          </span>
-        </Link>
-      </div>
-
-      <div>
-        <h3 className="text-ink">Key Elements</h3>
-        <dl className="card-2 mt-2 divide-y divide-line overflow-hidden">
-          <KeyRow label="POV" value={beat.pov} />
-          <KeyRow label="Location" value={beat.location} />
-          <KeyRow label="Time" value={beat.time} />
-          <KeyRow label="Mood" value={beat.mood} />
-          <div className="grid grid-cols-[84px_1fr] items-center gap-3 p-3">
-            <dt className="text-gold">Characters</dt>
-            <dd className="flex items-center gap-1.5">
-              {beat.characters.slice(0, 3).map((name) => (
-                <InitialsAvatar key={name} name={name} />
-              ))}
-              {beat.characters.length > 3 && (
-                <span className="grid size-7 shrink-0 place-items-center rounded-full border border-line-strong text-[0.6rem] text-ink-muted">
-                  +{beat.characters.length - 3}
-                </span>
-              )}
-              {beat.characters.length === 0 && <span className="text-ink-faint">—</span>}
-            </dd>
-          </div>
-        </dl>
-      </div>
-
-      <div className="card-2 p-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm text-ink">Notes</h3>
-          <PenLine className="size-3.5 text-gold" />
-        </div>
-        <div className="mt-2 space-y-2 text-ink-muted">
-          {beat.notes.length > 0 ? (
-            beat.notes.map((n, i) => <p key={i}>{n}</p>)
-          ) : (
-            <p className="text-ink-faint">No notes yet.</p>
-          )}
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-ink">Status</h3>
-        <DropdownSelect
-          value={STATUS_LABEL[beat.status]}
-          onChange={(label) => onChangeStatus(STATUS_BY_LABEL[label])}
-          options={STATUS_ORDER.map((s) => STATUS_LABEL[s])}
-          placeholder="Status"
-          className="w-40"
-        />
-      </div>
-
-      <div>
-        <h3 className="text-ink">Color Label</h3>
-        <div className="mt-2 flex items-center gap-2.5">
-          {COLOR_ORDER.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => onChangeColor(c)}
-              aria-label={`${c} label`}
-              className="size-7 shrink-0 rounded-full transition-transform hover:scale-105"
-              style={{
-                background: COLOR_HEX[c],
-                boxShadow: beat.color === c ? `0 0 0 2px var(--canvas), 0 0 0 4px ${COLOR_HEX[c]}` : undefined,
-              }}
-            />
-          ))}
-        </div>
-      </div>
-
-      <div className="flex items-center gap-2 pt-1">
-        <div className="card-2 flex flex-1 items-center justify-center gap-3 py-2.5 text-ink-muted">
-          <button type="button" aria-label="Copy link to beat" className="transition-colors hover:text-ink">
-            <Link2 className="size-4" />
-          </button>
-          <span className="h-4 w-px bg-line-strong" />
-          <button type="button" onClick={onDuplicate} aria-label="Duplicate beat" className="transition-colors hover:text-ink">
-            <Copy className="size-4" />
-          </button>
-        </div>
         <button
           type="button"
-          onClick={onDelete}
-          className="card-2 flex flex-1 items-center justify-center gap-2 py-2.5 text-danger transition-colors hover:bg-danger/10"
+          onClick={onClose}
+          aria-label="Close beat details"
+          className="grid size-6 shrink-0 place-items-center rounded-md text-ink-faint transition-colors hover:text-ink"
+        >
+          <X className="size-3.5" />
+        </button>
+      </div>
+
+      <div className="mt-1 flex items-center gap-2">
+        <span className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs" style={{ borderColor: color, color }}>
+          {beat.status === "completed" && <Check className="size-3" />}
+          {STATUS_LABEL[beat.status]}
+        </span>
+        {saveState === "saving" && <span className="text-xs text-ink-faint">Saving…</span>}
+        {saveState === "saved" && <span className="text-xs text-ink-faint">Saved</span>}
+        {saveState === "error" && <span className="text-xs text-danger">Couldn&apos;t save</span>}
+      </div>
+
+      <div className="mt-5 space-y-5 text-sm">
+        <div>
+          <h3 className="text-ink">Outline</h3>
+          <textarea
+            value={outlineText}
+            onChange={(e) => setOutlineText(e.target.value)}
+            onBlur={() => {
+              if (outlineText !== beat.outlineText) void saveField({ outlineText });
+            }}
+            placeholder="Describe what happens in this beat…"
+            rows={6}
+            className="card-2 mt-2 w-full resize-none p-3 text-sm text-ink placeholder:text-ink-faint focus:outline-none"
+          />
+        </div>
+
+        <div>
+          <h3 className="text-ink">Linked Chapter</h3>
+          <Link
+            href={`/projects/${project.id}/chapters`}
+            className="card-2 mt-2 flex items-center justify-between gap-2 p-3 text-sm transition-colors hover:bg-surface-2"
+          >
+            <span className="flex items-center gap-2 truncate text-ink">
+              <BookOpen className="size-4 shrink-0 text-gold" />
+              <span className="truncate">{chapterLabel}</span>
+            </span>
+            <span className="flex shrink-0 items-center gap-1 text-gold">
+              Go to Chapter
+              <ExternalLink className="size-3.5" />
+            </span>
+          </Link>
+        </div>
+
+        {beat.linkedToManuscript && (
+          <div className="card-2 flex items-center gap-2 p-3 text-xs text-gold">
+            <Link2 className="size-3.5 shrink-0" />
+            This beat&apos;s outline has been generated into the manuscript.
+          </div>
+        )}
+
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-ink">Status</h3>
+          <DropdownSelect
+            value={STATUS_LABEL[beat.status]}
+            onChange={(label) => void handleStatusChange(STATUS_BY_LABEL[label])}
+            options={VALID_BEAT_STATUSES.map((s) => STATUS_LABEL[s])}
+            placeholder="Status"
+            className="w-40"
+          />
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setConfirmingDelete(true)}
+          className="card-2 flex w-full items-center justify-center gap-2 py-2.5 text-danger transition-colors hover:bg-danger/10"
         >
           <Trash2 className="size-4" />
           Delete Beat
         </button>
       </div>
-    </div>
-  );
-}
 
-function KeyRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid grid-cols-[84px_1fr] gap-3 p-3">
-      <dt className="text-gold">{label}</dt>
-      <dd className="truncate text-ink-muted">{value}</dd>
-    </div>
-  );
-}
-
-function hashHue(str: string): number {
-  let h = 0;
-  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) % 360;
-  return h;
-}
-
-function InitialsAvatar({ name }: { name: string }) {
-  const initials = name
-    .split(" ")
-    .map((w) => w[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-  return (
-    <span
-      className="grid size-7 shrink-0 place-items-center rounded-full border border-line-strong text-[0.6rem] font-medium text-white"
-      style={{ background: `hsl(${hashHue(name)} 40% 38%)` }}
-      title={name}
-    >
-      {initials}
-    </span>
-  );
-}
-
-function ScenesTab({ beat }: { beat: Beat }) {
-  const scenes = Array.from({ length: beat.sceneCount }, (_, i) => i + 1);
-  return (
-    <div className="mt-5 space-y-2 text-sm">
-      {scenes.length === 0 && <p className="text-ink-faint">No scenes yet.</p>}
-      {scenes.map((n) => (
-        <div key={n} className="card-2 flex items-center justify-between p-3">
-          <span className="text-ink">Scene {n}</span>
-          <span className="text-xs text-ink-faint">{beat.chapterLabel}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function NotesTab({ beat }: { beat: Beat }) {
-  return (
-    <div className="mt-5 space-y-2 text-sm text-ink-muted">
-      {beat.notes.length > 0 ? (
-        beat.notes.map((n, i) => (
-          <p key={i} className="card-2 p-3">
-            {n}
-          </p>
-        ))
-      ) : (
-        <p className="text-ink-faint">No notes yet.</p>
+      {confirmingDelete && (
+        <ConfirmDialog
+          title="Delete this beat?"
+          description={`"${beat.title}" will be permanently removed.`}
+          onCancel={() => setConfirmingDelete(false)}
+          onConfirm={async () => {
+            await deleteBeat(beat.id);
+            setConfirmingDelete(false);
+            onClose();
+          }}
+        />
       )}
-    </div>
-  );
-}
-
-function LinksTab({ beat, project }: { beat: Beat; project: Project }) {
-  return (
-    <div className="mt-5 space-y-2 text-sm">
-      <Link
-        href={`/projects/${project.id}/chapters`}
-        className="card-2 flex items-center gap-2 p-3 text-ink transition-colors hover:bg-surface-2"
-      >
-        <BookOpen className="size-4 text-gold" />
-        {beat.chapterLabel}
-      </Link>
-    </div>
+    </aside>
   );
 }
