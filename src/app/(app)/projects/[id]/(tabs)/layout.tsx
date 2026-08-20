@@ -14,6 +14,7 @@ import {
   PenLine,
   Plus,
   Settings as SettingsIcon,
+  Sparkles,
   Trash2,
   Users,
   X,
@@ -38,6 +39,7 @@ const TABS = [
   { key: "world", label: "World", icon: Globe2 },
   { key: "outlines", label: "Outlines", icon: ListTree },
   { key: "notes", label: "Notes", icon: FileText },
+  { key: "assistant", label: "Assistant", icon: Sparkles },
   { key: "analytics", label: "Analytics", icon: BarChart3 },
   { key: "settings", label: "Settings", icon: SettingsIcon },
 ];

@@ -61,6 +61,7 @@ import {
   useManuscript,
 } from "@/lib/manuscript-store";
 import { Progress } from "@/components/ui/progress";
+import { ChatPanel } from "@/components/chat-panel";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EditWritingGoalModal } from "@/components/edit-writing-goal-modal";
 import {
@@ -2176,11 +2177,12 @@ function CommentsPanel({
         </>
       ) : tab === "Ban" ? (
         <BannedWordsTab terms={bannedTerms} />
+      ) : tab === "AI" ? (
+        <ChatPanel bookId={bookId} layout="compact" />
       ) : (
         <div className="flex flex-1 items-center justify-center p-8 text-center text-sm text-ink-faint">
           {tab === "Versions" && "Version history isn't wired up yet."}
           {tab === "Outline" && "A live outline of this chapter's beats will live here."}
-          {tab === "AI" && "Ask the AI Assistant about this chapter here."}
         </div>
       )}
     </aside>

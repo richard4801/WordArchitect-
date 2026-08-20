@@ -82,7 +82,7 @@ more problems surfaced after the first fix:
    Characters/World Entries stat tiles' fake "3 this week"/"7 this week"
    captions were removed (those tiles' totals were already live; only the
    trend caption was fabricated, so it's gone rather than faked). None of
-   this data has a real backend resource yet (see §4.8) — it now reads as
+   this data has a real backend resource yet (see §4.9) — it now reads as
    an honest empty state instead of a populated demo.
 
 **Third post-purge pass — full-app audit for crashes and fabricated data
@@ -199,7 +199,7 @@ placeholder.
 - **Daily Goal (editor) and Today's Progress (Dashboard) now share one
   real source:** new `src/lib/daily-progress-store.ts`, same
   localStorage-backed-per-browser tradeoff as `writing-goal-store.ts` (no
-  writing-session backend resource exists — see §4.8). Every autosave
+  writing-session backend resource exists — see §4.9). Every autosave
   reports its chapter's post-save word count via
   `recordChapterWordCount(chapterId, words)`; only the *positive* delta
   versus that chapter's last-known count credits "today" (deleting text
@@ -226,7 +226,7 @@ placeholder.
   Daily Goal sidebar widget.
 - **Real Dashboard activity feed:** new `src/lib/activity-log-store.ts`,
   same per-browser localStorage tradeoff — there's no activity-log backend
-  resource (§4.8). `logActivity(kind, text)` is called at the moment a
+  resource (§4.9). `logActivity(kind, text)` is called at the moment a
   real action actually succeeds: `createProject` (project-store.ts),
   `createCharacter` (character-store.ts), `createNote` (notes-store.ts),
   `createWorldCategory` (worldbuilding-store.ts), and a chapter autosave
@@ -294,11 +294,13 @@ writer's side). Tagline: **"Write. Craft. Conquer."**
 - Live on Vercel: **word-architect-three.vercel.app** (auto-deploys on every
   push to the working branch).
 - Built and polished: Dashboard, Projects, New Project, Project Overview tab,
-  and five full workspaces — Writing (manuscript editor), Outliner,
-  Characters, Worldbuilding, Notes.
+  and six full workspaces — Writing (manuscript editor), Outliner,
+  Characters, Worldbuilding, Notes, AI Assistant (chat — see §4.7).
 - Still stubbed (`<ComingSoon>`, no data model at all yet): Project
-  Analytics tab, Project Settings tab, and the top-level Timeline/AI
-  Assistant/Templates/Goals/Help nav destinations.
+  Analytics tab, Project Settings tab, and the top-level Timeline/
+  Templates/Goals/Help nav destinations. (The top-level "AI Assistant" nav
+  destination is real now — it redirects to the book-scoped assistant,
+  same pattern as Writing/Characters/etc.)
 - **Formerly the single most important gap, now closed:** the manuscript
   editor's prose is a `contentEditable` DOM region — it now has real
   chapter-body save/load (debounced autosave, lazy load-on-open) backed by
@@ -407,8 +409,9 @@ backend during backend-side development.
 | Notes | **Live** — `/notes` | `notes-store.ts` |
 | Manuscript/Chapters | **Live** — `/manuscript/chapters` | `manuscript-store.ts` |
 | Banned Terms | **Live** — `/banned-terms` | `banned-terms-store.ts` |
-| Outliner | Mock, deferred | none yet (backend has no Outliner endpoints — confirmed low priority) |
-| Dashboard-only stats | Mock, deferred | `dashboard-data.ts` (no backend resource exists for these — see §4.8) |
+| AI Assistant Chat | **Live** — `/chat` + `/chat/sessions` | `chat-store.ts` |
+| Outliner | Mock, deferred (backend is real, not yet wired here) | `/outline/beats` + `/manuscript/chapters/:id/beats` exist on the backend (`claude/ai-fiction-platform-backend-qnvkm5`, confirmed by reading `src/routes/outline.ts`) — next domain in line per the frontend handoff brief's suggested build order, not started yet |
+| Dashboard-only stats | Mock, deferred | `dashboard-data.ts` (no backend resource exists for these — see §4.9) |
 
 ### Project (live)
 
@@ -814,7 +817,7 @@ module-level array to default to.
 **Still mock, no backend resource for these at all**: `WORLD_TIMELINE`,
 `WORLD_OVERVIEW`, and `PINNED_WORLD_ITEMS` remain static, empty exports —
 same "decision on record, wire up in a later pass once the resource
-exists" treatment as the Dashboard-only stats in §4.8. Nothing in this
+exists" treatment as the Dashboard-only stats in §4.9. Nothing in this
 pass invented a backend shape for a world timeline, an editable world
 overview, or pinned-item notes, since none of those exist as tables today.
 
@@ -1413,12 +1416,140 @@ word in different casing three times still lists only one panel entry;
 unbanning removes it from the panel and drops the badge count. Zero
 console errors across the full pass.
 
-### 4.7 Outliner (beats)
+### 4.7 AI Assistant Chat
+
+**Live — backed by the real backend's `/chat` (+ session management) on
+`claude/ai-fiction-platform-backend-qnvkm5` (see the backend repo's
+`src/routes/chat.ts` and `src/services/chatAssistant.ts`).** A
+persona-based discussion/brainstorming assistant with real read-only
+access to a book's Codex, manuscript, worldbuilding, and notes via tool
+calls — separate from Hanami prose generation (`/generate-prose`) and
+explicitly **not** for writing manuscript prose. Not streamed: a turn can
+involve several tool round-trips before Claude produces a final answer,
+so the frontend shows a typing indicator, not partial tokens.
+
+```ts
+export type ChatPersona =
+  "general" | "story_assistant" | "character_coach" |
+  "worldbuilding_guide" | "writing_editor" | "brainstormer";
+
+// chat_sessions row
+export type ChatSessionRow = {
+  id: string; user_id: string; book_id: string; persona: ChatPersona;
+  title: string | null; created_at: string; updated_at: string;
+};
+
+// chat_messages row
+export type ChatMessage = {
+  id: string; session_id: string; role: "user" | "assistant"; content: string;
+  tool_calls: { tool: string; input: Record<string, unknown> }[] | null;
+  created_at: string;
+};
+```
+
+**A conversation is locked to the persona it was created with — enforced
+server-side, not just a frontend convention.** Confirmed by reading
+`chat.ts` directly: `POST /chat` only reads `persona` from the request
+body when `sessionId` is omitted; resuming an existing session always
+uses that session's own stored `persona`, silently ignoring anything else
+sent. `src/lib/chat-store.ts` never offers a "change persona" affordance
+once a session actually exists (`ChatPanel`'s "Change persona" link only
+shows pre-send, before the backend has created a session row at all).
+
+**Response shapes, confirmed by reading the route source (not just the
+handoff brief) before wiring this domain — continuing the discipline this
+file has followed since the Projects integration bug:** `POST /chat` →
+`{ sessionId, message }`, where `message` is the flat `chat_messages` row
+(no further envelope). `GET /chat/sessions?bookId=&userId=` →
+`{ sessions: [...] }` (envelope, server-sorted by `updated_at` descending).
+`GET /chat/sessions/:id` → `{ session, messages }`. `PATCH
+/chat/sessions/:id` → `{ session: {...} }` — an envelope, unlike `POST
+/chat`'s flat `message` — worth remembering that this domain has *two*
+different response shapes for its own two endpoints, not one consistent
+convention. `DELETE /chat/sessions/:id` → `204`, cascades to messages
+server-side.
+
+**Store shape** (`chat-store.ts`): same `bookId`-scoped single-current-book
+pattern as `notes-store.ts`/`character-store.ts`/`banned-terms-store.ts`
+for the Recent Conversations *list* (`useChatSessions(bookId)`) — only one
+project's conversations are ever shown at once. The currently *open*
+conversation's message thread is separate, smaller state
+(`useActiveChat()`), same split `manuscript-store.ts` already uses between
+the chapter list and whichever single chapter body is open.
+`sendChatMessage(bookId, text, persona?)` optimistically appends the
+user's own message immediately (a temporary `pending-` id, replaced once
+the real save-id comes back), and folds the resolved session into the
+Recent Conversations cache in place — bumped to the front — rather than
+re-fetching the whole list after every message.
+
+**UI** (`src/components/chat-panel.tsx`, one component, two layouts
+sharing the same store calls):
+- **`layout="full"`** — the dedicated `/projects/[id]/assistant` workspace:
+  a permanent Recent Conversations rail beside the thread. Built as a
+  standalone full-bleed route (`assistant/page.tsx`), a sibling of
+  `chapters`/`characters`/`world`/`notes`, **not** a page inside
+  `(tabs)/layout.tsx` — those routes each render their own header and
+  don't share that layout's chrome either (its `TABS` array is a
+  cross-navigation list, not a live tab strip every project page renders);
+  `(tabs)/layout.tsx`'s `TABS` gained an `"assistant"` entry so its own tab
+  bar (visible on Overview/Analytics/Settings) can jump here.
+- **`layout="compact"`** — the manuscript editor's existing "AI" side-panel
+  tab (previously an honest placeholder, "Ask the AI Assistant about this
+  chapter here" — now real). The Recent Conversations rail collapses into
+  a dropdown behind a header button to fit the ~360px panel width, reusing
+  the exact same `ConversationRow` component as the full layout.
+- **Persona picker**: shown whenever no persona is chosen yet and no
+  session is open — six cards (icon + label + focus line from the brief's
+  own table), plus "Talk through your story — for writing actual prose,
+  use Generate," matching the brief's explicit empty-state note.
+- **Tool-call transparency**: `ToolCallSummary` collapses read tool calls
+  into one line ("Looked up: 2 Codex entries, manuscript search" — counted
+  and pluralized by tool name), expandable to raw `tool(input)` per call.
+  `propose_*` tool calls (write proposals — see the brief's Confirm/Reject
+  section, not yet built) render distinctly with a "not actionable from
+  here yet" note rather than silently doing nothing or crashing on an
+  unrecognized shape — this phase only had to not break when a proposal
+  shows up, not act on it.
+- **Markdown**: `src/lib/simple-markdown.tsx`, a small dependency-free
+  renderer (bold/italic/inline code/links, bulleted/numbered lists,
+  headers) — this app has no markdown library installed
+  (`package.json` is deliberately minimal); assistant replies only ever
+  need this common subset. Renders to real React elements, never
+  `dangerouslySetInnerHTML`.
+- **Nav**: the top-level `/assistant` nav destination redirects to the
+  most-recently-active project's `/projects/[id]/assistant`, same
+  "lowest `updatedRank` wins" convention as `/writing`/`/characters`/etc.
+
+**Verified working** (same local-mock-server approach as every other
+domain, extended with `/chat` + `/chat/sessions` handlers matching the
+real envelope/flat-body shapes, including a simulated tool-call reply for
+messages mentioning "character"/"world"/"note"/"manuscript"/"chapter"):
+full layout — persona picker on a fresh visit, picking a persona shows the
+empty-thread hint, sending a message shows the typing indicator then the
+reply with a tool-call summary, the conversation appears in the rail,
+starting a new conversation returns to the picker, resuming an old one
+from the rail restores its messages, rename and delete (with confirm
+dialog) both work. Compact layout — same picker/send/reply flow inside
+the chapter editor's AI tab, plus the dropdown toggle showing the same
+conversation. `/assistant` correctly redirects to the active project's
+assistant page. Zero console errors across the full pass.
+
+### 4.8 Outliner (beats)
 
 Source: `src/lib/outline-data.ts`. **No store, no creation UI, seed-only,**
 one hardcoded structure (Three Act) for `shadows-of-elarion`; other
 outline modes shown in mockups (Hero's Journey, Save the Cat) are not
-built as distinct data structures yet.
+built as distinct data structures yet. **The backend side is real and
+live** — `GET /outline/beats?bookId=` (flat `parts`/`chapters`/`beats`,
+group client-side), per-chapter `GET /manuscript/chapters/:id/beats`,
+full beat CRUD, and `beatId`/`userSceneBeat` wiring into
+`/generate-prose` — confirmed by reading `src/routes/outline.ts` on
+`claude/ai-fiction-platform-backend-qnvkm5`. Frontend integration is next
+in line per the handoff brief's suggested build order but hasn't started;
+the type shapes below are still the old mock's, not yet reconciled with
+the real `Beat` row shape (`chapter_id`, `order_index`, `outline_text`,
+`status: BeatStatus`, `linked_to_manuscript` — four fixed statuses, not
+this mock's `BeatStatus`/`BeatColor` union).
 
 ```ts
 export type BeatStatus = "completed" | "inProgress" | "planned" | "notStarted";
@@ -1457,7 +1588,7 @@ string array of names, not `Character.id` references, and
 reference. If the backend introduces real relational IDs here, the
 frontend will need updating to resolve them, not just to fetch them.
 
-### 4.8 Dashboard-only data — mostly real now, via localStorage, not a backend resource
+### 4.9 Dashboard-only data — mostly real now, via localStorage, not a backend resource
 
 Source: `src/lib/dashboard-data.ts` re-exports `projects`/`Project` from
 `projects-data.ts` (so "Your Projects" is real Project data) and still
@@ -1716,7 +1847,7 @@ be removed is not a child of this node.` The CSS-only `min-h` fix touches
 no DOM children at all, so it carries none of that reconciliation risk.
 
 **Writing goals are deliberately NOT backed by the real backend** — there
-is no writing-session/goal-tracking table (see §4.8), so a new
+is no writing-session/goal-tracking table (see §4.9), so a new
 `src/lib/writing-goal-store.ts` persists `dailyTarget`/`monthlyTarget` to
 `localStorage` instead: a real, user-settable value (the actual
 complaint — the old `todaysProgress.target: 2000` / `writingGoal.target:
@@ -1800,15 +1931,16 @@ export interface AiProvider {
 ## 7. Route map (what page needs what data)
 
 ```
-/                                            Dashboard — Project[] (live) + dashboard-data.ts mock (§4.8)
+/                                            Dashboard — Project[] (live) + dashboard-data.ts mock (§4.9)
 /projects                                    Project[] (live)
 /projects/new                                submits NewProjectInput
-/projects/[id]                               Project detail chrome (8-tab nav), Edit Project modal (updateProject)
+/projects/[id]                               Project detail chrome (9-tab nav), Edit Project modal (updateProject)
 /projects/[id]                (Overview tab) Project + real ManuscriptPart[]/word counts (§5.6) + deriveRecentActivity
 /projects/[id]/analytics                     stub — <ComingSoon>, no data model
 /projects/[id]/settings                      stub — <ComingSoon>, no data model
-/projects/[id]/chapters                      ManuscriptPart[] (live) + ChapterBody (live) + CommentThread[] (mock) (§4.5/§5) + BannedTermRow[] (live, §4.6)
-/projects/[id]/outlines                      Act[] / Beat[] (§4.7 — seed-only, no store)
+/projects/[id]/chapters                      ManuscriptPart[] (live) + ChapterBody (live) + CommentThread[] (mock) (§4.5/§5) + BannedTermRow[] (live, §4.6) + ChatSessionRow[]/ChatMessage[] (live, AI tab, §4.7)
+/projects/[id]/outlines                      Act[] / Beat[] (§4.8 — seed-only, no store)
+/projects/[id]/assistant                     ChatSessionRow[]/ChatMessage[] (live, §4.7) — full-page AI Assistant workspace
 /projects/[id]/characters                    Character[] (live) + selected Character detail, Edit/Delete via options menu
 /projects/[id]/characters/all                Character[] (live), grid+pagination, Edit/Delete via options menu
 /projects/[id]/characters/new                submits NewCharacterInput (shared CharacterForm, see §5.5)
@@ -1816,8 +1948,8 @@ export interface AiProvider {
 /projects/[id]/world                         WorldCategoryMeta[] (live) + WorldEntry[] (live read, no in-app create — §3.5/§4.3) + WORLD_TIMELINE/WORLD_OVERVIEW/PINNED_WORLD_ITEMS (mock)
 /projects/[id]/world/new-category            submits NewCategoryInput
 /projects/[id]/notes                         Note[] (live)
-/writing /outlines /characters /worldbuilding /notes   redirect-only pages → most-recently-active project's real workspace, no data of their own
-/assistant /goals /analytics /settings /timeline /templates /help   stubs — <ComingSoon>, no data model
+/writing /outlines /characters /worldbuilding /notes /assistant   redirect-only pages → most-recently-active project's real workspace, no data of their own
+/goals /analytics /settings /timeline /templates /help   stubs — <ComingSoon>, no data model
 /api/ai                                      POST — see §6
 ```
 
