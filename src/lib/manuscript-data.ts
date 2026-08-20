@@ -21,6 +21,8 @@ export type ManuscriptChapter = {
   scenes?: Scene[];
   /** ISO timestamp of the last successful sync-to-memory, or null if never synced — see manuscript-store.ts's syncChapterToMemory(). */
   syncedToMemoryAt: string | null;
+  /** ISO timestamp of the last edit that actually changed paragraph text (not title/heading/complete) — null only if the backend's content_updated_at migration hasn't backfilled this row yet; treat null as "needs sync." */
+  contentUpdatedAt: string | null;
 };
 
 export type ManuscriptPart = {

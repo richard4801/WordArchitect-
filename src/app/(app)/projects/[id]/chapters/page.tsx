@@ -477,6 +477,7 @@ export default function ChaptersPage() {
                 makeRoomForExitButton={hidePanels}
                 saveStatus={saveStatus}
                 chapter={activeChapter}
+                hasContent={stats.words > 0}
               />
             )}
             <div className="grid flex-1 place-items-center">
@@ -494,6 +495,7 @@ export default function ChaptersPage() {
                 makeRoomForExitButton={hidePanels}
                 saveStatus={saveStatus}
                 chapter={activeChapter}
+                hasContent={stats.words > 0}
               />
             )}
             {!hideChrome && <FormattingToolbar withSelection={withSelection} />}
@@ -966,12 +968,14 @@ function TopBar({
   makeRoomForExitButton = false,
   saveStatus,
   chapter,
+  hasContent,
 }: {
   project: { id: string; title: string };
   chapterTitle: string;
   makeRoomForExitButton?: boolean;
   saveStatus?: SaveStatus;
   chapter?: ManuscriptChapter;
+  hasContent?: boolean;
 }) {
   return (
     <header
@@ -1051,7 +1055,7 @@ function TopBar({
           would just duplicate one or the other in every reachable state. */}
       <div className="flex shrink-0 items-center gap-1">
         <ShareButton />
-        <MoreMenu projectId={project.id} chapter={chapter} />
+        <MoreMenu projectId={project.id} chapter={chapter} hasContent={hasContent ?? false} />
       </div>
     </header>
   );
@@ -1099,19 +1103,62 @@ function ShareButton() {
   );
 }
 
-type SyncState = { kind: "idle" } | { kind: "syncing" } | { kind: "done"; chunkCount: number } | { kind: "error"; message: string };
+type SyncState =
+  | { kind: "idle" }
+  | { kind: "syncing" }
+  | { kind: "done"; chunkCount: number }
+  | { kind: "already-synced" }
+  | { kind: "error"; message: string };
 
-function MoreMenu({ projectId, chapter }: { projectId: string; chapter?: ManuscriptChapter }) {
+/**
+ * Whether this chapter needs a (re)sync, mirroring the backend's own
+ * `content_updated_at <= synced_to_memory_at` guard (`manuscriptChapters.ts`
+ * on the backend) so the button's disabled/pulse state matches what a
+ * click would actually do rather than just hoping it lines up:
+ * - never synced (`syncedToMemoryAt` null) → active, no pulse (nothing to
+ *   compare against yet).
+ * - `contentUpdatedAt` missing (only possible if migration 021 hasn't
+ *   backfilled this row) → treat as needing sync rather than assuming
+ *   it's up to date.
+ * - `contentUpdatedAt` after `syncedToMemoryAt` → a real edit landed
+ *   since the last sync → active, pulse.
+ * - otherwise → already up to date → disabled.
+ */
+type SyncNeed = "never-synced" | "needs-sync" | "up-to-date";
+
+function syncNeedFor(chapter: ManuscriptChapter | undefined): SyncNeed {
+  if (!chapter?.syncedToMemoryAt) return "never-synced";
+  if (!chapter.contentUpdatedAt) return "needs-sync";
+  return new Date(chapter.contentUpdatedAt) > new Date(chapter.syncedToMemoryAt) ? "needs-sync" : "up-to-date";
+}
+
+function MoreMenu({
+  projectId,
+  chapter,
+  hasContent,
+}: {
+  projectId: string;
+  chapter?: ManuscriptChapter;
+  hasContent: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [syncState, setSyncState] = useState<SyncState>({ kind: "idle" });
+
+  const syncNeed = syncNeedFor(chapter);
+  const canSync = !!chapter && hasContent && syncNeed !== "up-to-date";
+  const pulseSync = canSync && syncNeed === "needs-sync";
 
   async function handleSync() {
     if (!chapter) return;
     setSyncState({ kind: "syncing" });
     try {
       const result = await syncChapterToMemory(chapter.id);
-      setSyncState({ kind: "done", chunkCount: result.chunkCount });
-      logActivity("wrote", `Synced Chapter ${chapter.number} to AI memory`);
+      if (result.alreadySynced) {
+        setSyncState({ kind: "already-synced" });
+      } else {
+        setSyncState({ kind: "done", chunkCount: result.chunkCount });
+        logActivity("wrote", `Synced Chapter ${chapter.number} to AI memory`);
+      }
     } catch (err) {
       setSyncState({ kind: "error", message: err instanceof Error ? err.message : "Couldn't sync this chapter." });
     }
@@ -1156,17 +1203,25 @@ function MoreMenu({ projectId, chapter }: { projectId: string; chapter?: Manuscr
               <button
                 type="button"
                 onClick={handleSync}
-                disabled={!chapter || syncState.kind === "syncing"}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={!canSync || syncState.kind === "syncing"}
+                title="Syncing doesn't retroactively affect anything already generated — it only changes what future generations can recall."
+                className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors disabled:cursor-not-allowed ${
+                  pulseSync
+                    ? "animate-pulse text-gold hover:bg-gold/10"
+                    : "text-ink-muted hover:bg-surface-2 hover:text-ink disabled:opacity-50"
+                }`}
               >
                 {syncState.kind === "syncing" ? (
                   <Loader2 className="size-3.5 shrink-0 animate-spin" />
                 ) : (
                   <BrainCircuit className="size-3.5 shrink-0" />
                 )}
-                {chapter?.syncedToMemoryAt ? "Re-sync to AI Memory" : "Sync to AI Memory"}
+                Sync to AI Memory
               </button>
-              {chapter?.syncedToMemoryAt && syncState.kind === "idle" && (
+              {!hasContent && syncState.kind === "idle" && (
+                <p className="px-3 pb-1 text-xs text-ink-faint">Nothing to sync yet.</p>
+              )}
+              {hasContent && chapter?.syncedToMemoryAt && syncState.kind === "idle" && (
                 <p className="px-3 pb-1 text-xs text-ink-faint">
                   Last synced {formatRelativeTime(new Date(chapter.syncedToMemoryAt).getTime())}
                 </p>
@@ -1176,6 +1231,9 @@ function MoreMenu({ projectId, chapter }: { projectId: string; chapter?: Manuscr
                   <Check className="size-3 shrink-0" />
                   Synced ({syncState.chunkCount} chunk{syncState.chunkCount === 1 ? "" : "s"})
                 </p>
+              )}
+              {syncState.kind === "already-synced" && (
+                <p className="px-3 pb-1 text-xs text-ink-faint">Already up to date.</p>
               )}
               {syncState.kind === "error" && (
                 <p className="px-3 pb-1 text-xs text-danger">{syncState.message}</p>

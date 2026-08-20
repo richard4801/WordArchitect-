@@ -1287,28 +1287,72 @@ unbuilt, precisely:
 4. **Version history** — explicitly an honest placeholder in the UI
    ("Version history isn't wired up yet.") — no data shape exists to design
    against yet; would need requirements gathering before schema design.
-5. **`sync-to-memory` — now wired to a real "Sync to AI Memory" button.**
-   `syncChapterToMemory(chapterId)` (`manuscript-store.ts`) calls
-   `POST /manuscript/chapters/:id/sync-to-memory` for real; the response
-   is a flat, non-enveloped `{chunks, syncedAt}` (confirmed by reading the
-   route directly) rather than the usual `{chapter: {...}}` wrapping — a
-   second exception to that convention, alongside Banned Terms' flat
-   `POST` response (§4.6). The button lives in the editor's existing
+5. **`sync-to-memory` — a real, disabled-until-edited "Sync to AI Memory"
+   button, not a plain always-clickable "Resync."** `syncChapterToMemory(
+   chapterId)` (`manuscript-store.ts`) calls `POST /manuscript/chapters/
+   :id/sync-to-memory` for real. The backend added its own guard against
+   redundant resyncs (`021_chapter_content_updated_at.sql` +
+   `manuscriptChapters.ts`): a new `content_updated_at` column that bumps
+   *only* when a `PATCH` actually includes `paragraphs` (a plain title/
+   heading/complete/part edit does not move it — that distinction is
+   exactly why this can't just reuse `updated_at`), compared against
+   `synced_to_memory_at` to decide whether a resync would do anything.
+   Calling it when nothing's changed responds `200 {alreadySynced: true,
+   syncedAt}` — a real no-op, not a fresh 201 re-embed — while an actual
+   sync still responds `201 {chunks, syncedAt}` (both flat, non-enveloped
+   — a second exception to the usual `{chapter: {...}}` wrapping,
+   alongside Banned Terms' flat `POST` response in §4.6). The frontend
+   mirrors this guard client-side (`syncNeedFor()` in `chapters/page.tsx`)
+   rather than leaning on the backend's safety net alone, so the button's
+   own state always matches what a click would actually do:
+   - `chapter.syncedToMemoryAt` is `null` (never synced) → active, plain
+     styling, no pulse — nothing to compare against yet.
+   - `chapter.contentUpdatedAt` is missing (only possible if migration 021
+     hasn't backfilled a given row) → treated as needing sync rather than
+     assumed up to date, per the same defensive fallback the backend team
+     called out.
+   - `contentUpdatedAt` after `syncedToMemoryAt` → a real edit landed
+     since the last sync → active, with an `animate-pulse` gold treatment
+     as the visual nudge.
+   - otherwise → already up to date → **disabled**, not just discouraged.
+   A separate `hasContent` check (the editor's own live word count > 0,
+   already computed for the status bar) disables the button and shows
+   "Nothing to sync yet." for an empty chapter, so the UI never has to
+   round-trip a 400 just to learn that. The button's label is a constant
+   "Sync to AI Memory" throughout — state is communicated via disabled/
+   pulse, not by swapping the text to "Re-sync." A `title` tooltip notes
+   that syncing doesn't retroactively touch anything already generated,
+   only what future generations can recall. Lives in the editor's existing
    per-chapter "..." menu (`MoreMenu` in the TopBar) rather than adding new
-   chrome, labeled "Sync to AI Memory" (or "Re-sync to AI Memory" plus a
-   real "Last synced Xh ago" caption once `chapter.syncedToMemoryAt` is
-   set) — a deliberate, explicit writer action distinct from autosave,
-   never fired automatically. `ManuscriptChapter.syncedToMemoryAt` (new
-   field, mapped from `synced_to_memory_at`) is what drives that label;
-   confirming updates the chapter-list cache in place (a new row object,
-   not a mutation, to satisfy `useSyncExternalStore`'s reference-equality
-   contract) so the caption/label update live without a refetch. Shows a
-   real inline result — "Synced (N chunks)" or the backend's actual error
-   (e.g. "This chapter has no paragraph text to sync.") — never a silent
-   no-op; logs a `"wrote"` activity entry on success, same as every other
-   real action in this file.
+   chrome; a real "Last synced Xh ago" caption shows once
+   `chapter.syncedToMemoryAt` is set. `ManuscriptChapter` gained both
+   `syncedToMemoryAt` and `contentUpdatedAt` (mapped from
+   `synced_to_memory_at`/`content_updated_at`); confirming updates the
+   chapter-list cache in place with a new row object (not a mutation, to
+   satisfy `useSyncExternalStore`'s reference-equality contract) so the
+   button/caption update live without a refetch. Shows a real inline
+   result for every outcome — "Synced (N chunks)" on a real sync, "Already
+   up to date." on the (normally unreachable, since the button's already
+   disabled by then) `alreadySynced` case, or the backend's actual error —
+   never a silent no-op; logs a `"wrote"` activity entry only on a real
+   sync, not on the no-op.
 6. Collaborators/presence and Share are fully decorative/static — not a
    near-term backend priority per the current build.
+
+**Verified working** (Sync to AI Memory, against a local mock backend
+extended to replicate the real guard logic exactly — `content_updated_at`
+bumping only on a `paragraphs` PATCH, `sync-to-memory` responding
+`200 {alreadySynced: true}` when nothing changed since the last sync):
+an empty chapter shows the button disabled with "Nothing to sync yet.";
+typing real content and letting autosave land enables it (no pulse — never
+synced before); a real sync shows "Synced (N chunks)" and the button
+correctly goes back to disabled with a "Last synced…" caption; editing the
+chapter again re-enables the button with the pulse/glow treatment; a
+second real sync succeeds the same way; and, confirmed directly against
+the mock's guard logic (not reachable through the UI once the button's
+properly disabled), calling `sync-to-memory` again with no further edit
+returns the real `200 {alreadySynced: true}` no-op rather than a fresh
+201. Zero console errors across the full pass.
 
 ### 4.6 Banned Terms
 

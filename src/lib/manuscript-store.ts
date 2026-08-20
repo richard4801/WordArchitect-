@@ -55,6 +55,8 @@ type ManuscriptChapterRow = {
   heading: string | null;
   complete: boolean;
   synced_to_memory_at: string | null;
+  /** Bumps only when a PATCH actually includes `paragraphs` — not on a title/heading/complete/part edit. Backfilled + NOT NULL by migration 021, but typed nullable defensively (see mapRowToChapter). */
+  content_updated_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -72,6 +74,7 @@ function mapRowToChapter(row: ManuscriptChapterRow): ManuscriptChapter {
     title: row.title?.trim() || `Chapter ${row.number}`,
     complete: row.complete,
     syncedToMemoryAt: row.synced_to_memory_at,
+    contentUpdatedAt: row.content_updated_at,
   };
 }
 
@@ -137,7 +140,9 @@ export function refreshManuscript(bookId: string): void {
   void loadChapters(bookId);
 }
 
-export type SyncToMemoryResult = { chunkCount: number; syncedAt: string };
+export type SyncToMemoryResult =
+  | { alreadySynced: false; chunkCount: number; syncedAt: string }
+  | { alreadySynced: true; syncedAt: string };
 
 /**
  * Push a chapter's current paragraphs into permanent, AI-searchable
@@ -147,9 +152,16 @@ export type SyncToMemoryResult = { chunkCount: number; syncedAt: string };
  * `paragraphs`, never touches embeddings/`manuscript_chunks`). Replaces
  * any of this chapter's previous chunks rather than appending, so
  * re-syncing an edited chapter can't leave stale duplicates behind.
+ *
+ * The backend itself now guards against a redundant resync: if nothing's
+ * changed since the last sync (`content_updated_at <= synced_to_memory_at`),
+ * it responds 200 `{ alreadySynced: true, syncedAt }` instead of
+ * re-embedding — a quiet success, not an error, even though the UI should
+ * normally never let this fire (see the disabled-button logic in
+ * `chapters/page.tsx`'s `MoreMenu`).
  */
 export async function syncChapterToMemory(chapterId: string): Promise<SyncToMemoryResult> {
-  const res = await apiFetch<{ chunks: unknown[]; syncedAt: string }>(
+  const res = await apiFetch<{ chunks?: unknown[]; syncedAt: string; alreadySynced?: true }>(
     `/manuscript/chapters/${chapterId}/sync-to-memory`,
     { method: "POST" },
   );
@@ -161,7 +173,8 @@ export async function syncChapterToMemory(chapterId: string): Promise<SyncToMemo
     listCache.set(bookId, { ...entry, rows });
   }
   emit();
-  return { chunkCount: res.chunks.length, syncedAt: res.syncedAt };
+  if (res.alreadySynced) return { alreadySynced: true, syncedAt: res.syncedAt };
+  return { alreadySynced: false, chunkCount: (res.chunks ?? []).length, syncedAt: res.syncedAt };
 }
 
 /**
