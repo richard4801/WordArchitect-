@@ -3,6 +3,7 @@
 import {
   Ban,
   Bold,
+  BrainCircuit,
   Check,
   ChevronDown,
   ChevronRight,
@@ -21,6 +22,7 @@ import {
   List as ListIcon,
   ListTree,
   LockOpen,
+  Loader2,
   Maximize2,
   MessageSquare,
   Minus,
@@ -56,6 +58,7 @@ import {
   createChapter,
   saveChapterBody,
   type SaveStatus,
+  syncChapterToMemory,
   useChapterBody,
   useChapterSaveStatus,
   useManuscript,
@@ -71,7 +74,7 @@ import {
   useBannedTerms,
   useBannedTermsLoadStatus,
 } from "@/lib/banned-terms-store";
-import { logActivity } from "@/lib/activity-log-store";
+import { formatRelativeTime, logActivity } from "@/lib/activity-log-store";
 import { useChapterBeats, type BeatStatus } from "@/lib/outline-store";
 import {
   recordChapterWordCount,
@@ -473,6 +476,7 @@ export default function ChaptersPage() {
                 chapterTitle={activeChapter ? `Chapter ${activeChapter.number} – ${activeChapter.title}` : "Loading…"}
                 makeRoomForExitButton={hidePanels}
                 saveStatus={saveStatus}
+                chapter={activeChapter}
               />
             )}
             <div className="grid flex-1 place-items-center">
@@ -489,6 +493,7 @@ export default function ChaptersPage() {
                 chapterTitle={`Chapter ${activeChapter.number} – ${body.title}`}
                 makeRoomForExitButton={hidePanels}
                 saveStatus={saveStatus}
+                chapter={activeChapter}
               />
             )}
             {!hideChrome && <FormattingToolbar withSelection={withSelection} />}
@@ -960,11 +965,13 @@ function TopBar({
   chapterTitle,
   makeRoomForExitButton = false,
   saveStatus,
+  chapter,
 }: {
   project: { id: string; title: string };
   chapterTitle: string;
   makeRoomForExitButton?: boolean;
   saveStatus?: SaveStatus;
+  chapter?: ManuscriptChapter;
 }) {
   return (
     <header
@@ -1044,7 +1051,7 @@ function TopBar({
           would just duplicate one or the other in every reachable state. */}
       <div className="flex shrink-0 items-center gap-1">
         <ShareButton />
-        <MoreMenu projectId={project.id} />
+        <MoreMenu projectId={project.id} chapter={chapter} />
       </div>
     </header>
   );
@@ -1092,14 +1099,33 @@ function ShareButton() {
   );
 }
 
-function MoreMenu({ projectId }: { projectId: string }) {
+type SyncState = { kind: "idle" } | { kind: "syncing" } | { kind: "done"; chunkCount: number } | { kind: "error"; message: string };
+
+function MoreMenu({ projectId, chapter }: { projectId: string; chapter?: ManuscriptChapter }) {
   const [open, setOpen] = useState(false);
+  const [syncState, setSyncState] = useState<SyncState>({ kind: "idle" });
+
+  async function handleSync() {
+    if (!chapter) return;
+    setSyncState({ kind: "syncing" });
+    try {
+      const result = await syncChapterToMemory(chapter.id);
+      setSyncState({ kind: "done", chunkCount: result.chunkCount });
+      logActivity("wrote", `Synced Chapter ${chapter.number} to AI memory`);
+    } catch (err) {
+      setSyncState({ kind: "error", message: err instanceof Error ? err.message : "Couldn't sync this chapter." });
+    }
+  }
+
   return (
     <div className="relative">
       <button
         type="button"
         aria-label="More"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          setOpen((o) => !o);
+          setSyncState({ kind: "idle" });
+        }}
         className="grid size-8 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
       >
         <MoreVertical className="size-4" />
@@ -1112,7 +1138,7 @@ function MoreMenu({ projectId }: { projectId: string }) {
             className="fixed inset-0 z-10 cursor-default"
             onClick={() => setOpen(false)}
           />
-          <div className="absolute right-0 top-full z-20 mt-2 w-48">
+          <div className="absolute right-0 top-full z-20 mt-2 w-60">
             <div className="card-2 p-1.5">
               <Link
                 href={`/projects/${projectId}/settings`}
@@ -1126,6 +1152,34 @@ function MoreMenu({ projectId }: { projectId: string }) {
               >
                 Export chapter
               </Link>
+              <div className="my-1 h-px bg-line" />
+              <button
+                type="button"
+                onClick={handleSync}
+                disabled={!chapter || syncState.kind === "syncing"}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {syncState.kind === "syncing" ? (
+                  <Loader2 className="size-3.5 shrink-0 animate-spin" />
+                ) : (
+                  <BrainCircuit className="size-3.5 shrink-0" />
+                )}
+                {chapter?.syncedToMemoryAt ? "Re-sync to AI Memory" : "Sync to AI Memory"}
+              </button>
+              {chapter?.syncedToMemoryAt && syncState.kind === "idle" && (
+                <p className="px-3 pb-1 text-xs text-ink-faint">
+                  Last synced {formatRelativeTime(new Date(chapter.syncedToMemoryAt).getTime())}
+                </p>
+              )}
+              {syncState.kind === "done" && (
+                <p className="flex items-center gap-1.5 px-3 pb-1 text-xs text-success">
+                  <Check className="size-3 shrink-0" />
+                  Synced ({syncState.chunkCount} chunk{syncState.chunkCount === 1 ? "" : "s"})
+                </p>
+              )}
+              {syncState.kind === "error" && (
+                <p className="px-3 pb-1 text-xs text-danger">{syncState.message}</p>
+              )}
             </div>
           </div>
         </>

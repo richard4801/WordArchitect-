@@ -71,6 +71,7 @@ function mapRowToChapter(row: ManuscriptChapterRow): ManuscriptChapter {
     number: row.number,
     title: row.title?.trim() || `Chapter ${row.number}`,
     complete: row.complete,
+    syncedToMemoryAt: row.synced_to_memory_at,
   };
 }
 
@@ -134,6 +135,33 @@ async function loadChapters(bookId: string): Promise<void> {
 
 export function refreshManuscript(bookId: string): void {
   void loadChapters(bookId);
+}
+
+export type SyncToMemoryResult = { chunkCount: number; syncedAt: string };
+
+/**
+ * Push a chapter's current paragraphs into permanent, AI-searchable
+ * manuscript memory (`POST /manuscript/chapters/:id/sync-to-memory`) —
+ * a deliberate, writer-triggered action distinct from autosave (see the
+ * backend's own migration comment: autosave only ever updates this row's
+ * `paragraphs`, never touches embeddings/`manuscript_chunks`). Replaces
+ * any of this chapter's previous chunks rather than appending, so
+ * re-syncing an edited chapter can't leave stale duplicates behind.
+ */
+export async function syncChapterToMemory(chapterId: string): Promise<SyncToMemoryResult> {
+  const res = await apiFetch<{ chunks: unknown[]; syncedAt: string }>(
+    `/manuscript/chapters/${chapterId}/sync-to-memory`,
+    { method: "POST" },
+  );
+  for (const [bookId, entry] of listCache) {
+    const idx = entry.rows.findIndex((r) => r.id === chapterId);
+    if (idx === -1) continue;
+    const rows = [...entry.rows];
+    rows[idx] = { ...rows[idx], synced_to_memory_at: res.syncedAt };
+    listCache.set(bookId, { ...entry, rows });
+  }
+  emit();
+  return { chunkCount: res.chunks.length, syncedAt: res.syncedAt };
 }
 
 /**

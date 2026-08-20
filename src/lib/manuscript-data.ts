@@ -19,6 +19,8 @@ export type ManuscriptChapter = {
   title: string;
   complete: boolean;
   scenes?: Scene[];
+  /** ISO timestamp of the last successful sync-to-memory, or null if never synced — see manuscript-store.ts's syncChapterToMemory(). */
+  syncedToMemoryAt: string | null;
 };
 
 export type ManuscriptPart = {

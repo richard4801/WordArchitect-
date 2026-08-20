@@ -600,10 +600,9 @@ endpoint) accepts any subset of `partId`/`number`/`title`/`heading`/
 `complete`/`paragraphs` and is cheap on the backend — it only ever writes
 this one row, never touches embeddings/`manuscript_chunks`. A separate,
 explicit `POST .../sync-to-memory` action exists for pushing a chapter into
-AI-searchable memory but is **not wired to any UI yet** — deliberately out
-of scope here, since "accept into manuscript memory" reads as a distinct
-writer action from autosave-while-typing, not something to fire on every
-debounced save.
+AI-searchable memory — **now wired to a real "Sync to AI Memory" button**,
+see the writeup below — deliberately kept a distinct writer action from
+autosave-while-typing, not something that fires on every debounced save.
 
 **Chapter creation** (`createChapter(bookId)`, called from the editor's
 "Create First Chapter" / "Add chapter" `+` button — previously *both* had
@@ -1288,10 +1287,26 @@ unbuilt, precisely:
 4. **Version history** — explicitly an honest placeholder in the UI
    ("Version history isn't wired up yet.") — no data shape exists to design
    against yet; would need requirements gathering before schema design.
-5. **`sync-to-memory`** — the backend has a real, separate
-   `POST /manuscript/chapters/:id/sync-to-memory` endpoint for pushing a
-   chapter into AI-searchable memory; not wired to any UI action yet
-   (deliberately kept distinct from autosave — see §3.5).
+5. **`sync-to-memory` — now wired to a real "Sync to AI Memory" button.**
+   `syncChapterToMemory(chapterId)` (`manuscript-store.ts`) calls
+   `POST /manuscript/chapters/:id/sync-to-memory` for real; the response
+   is a flat, non-enveloped `{chunks, syncedAt}` (confirmed by reading the
+   route directly) rather than the usual `{chapter: {...}}` wrapping — a
+   second exception to that convention, alongside Banned Terms' flat
+   `POST` response (§4.6). The button lives in the editor's existing
+   per-chapter "..." menu (`MoreMenu` in the TopBar) rather than adding new
+   chrome, labeled "Sync to AI Memory" (or "Re-sync to AI Memory" plus a
+   real "Last synced Xh ago" caption once `chapter.syncedToMemoryAt` is
+   set) — a deliberate, explicit writer action distinct from autosave,
+   never fired automatically. `ManuscriptChapter.syncedToMemoryAt` (new
+   field, mapped from `synced_to_memory_at`) is what drives that label;
+   confirming updates the chapter-list cache in place (a new row object,
+   not a mutation, to satisfy `useSyncExternalStore`'s reference-equality
+   contract) so the caption/label update live without a refetch. Shows a
+   real inline result — "Synced (N chunks)" or the backend's actual error
+   (e.g. "This chapter has no paragraph text to sync.") — never a silent
+   no-op; logs a `"wrote"` activity entry on success, same as every other
+   real action in this file.
 6. Collaborators/presence and Share are fully decorative/static — not a
    near-term backend priority per the current build.
 
@@ -1761,12 +1776,15 @@ summary the backend team asked for.)
 | Word/character counts | Computed client-side from the open chapter's real persisted body text |
 | "All changes saved" indicator | Real — reflects live `SaveStatus` ("Saving…" / "All changes saved" / "Couldn't save") |
 | Comments (add/resolve/filter) | Real local state, seeded (now empty), resets on remount, author hardcoded to "Jessica" — not part of this integration pass |
-| Versions / Outline / AI side-panel tabs | Explicit honest placeholders — no fake data |
+| Versions side-panel tab | Explicit honest placeholder — no fake data |
+| Outline side-panel tab | **Live** — read-only list of the open chapter's real beats via `/manuscript/chapters/:id/beats`, links to the full Outliner board (§4.8) |
+| AI side-panel tab | **Live** — the AI Assistant chat panel, compact layout (§4.7), including real Confirm/Reject proposal cards |
 | Manuscript structure (Chapters) | **Live** — flat chapter list/body persisted; Parts/Scenes have real backend endpoints but no UI yet (see §4.5) |
 | Active Collaborators | Fully static, not real presence |
 | Share | Decorative, its own copy says there's no backend |
 | Focus Mode (Normal/Typewriter/Zen) | Real, fully working client-only UI state — nothing to persist |
 | Ban this selection (Ghost Editor) | **Live** — highlight text, ban it for the book via `/banned-terms`; enforced automatically server-side on every future generation (see §4.6) |
+| Sync to AI Memory | **Live** — "..." menu action in the editor's TopBar, `POST /manuscript/chapters/:id/sync-to-memory` (§4.5) |
 
 ---
 
