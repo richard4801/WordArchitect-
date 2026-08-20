@@ -439,16 +439,23 @@ const ACTIVITY_TONE: Record<ActivityKind, string> = {
 
 function ActivityCard() {
   const log = useActivityLog();
+  // A card is a fixed-size preview, not a scroll container — same
+  // slice-to-a-handful-and-let-"View All"-cover-the-rest convention as
+  // ProjectsGrid/deriveRecentChapters/pinnedNotes/recentNotes elsewhere in
+  // this app. Without it, this card would keep growing taller as real
+  // activity accumulates (up to activity-log-store's own 30-entry cap)
+  // instead of staying the same size like every other card on the page.
+  const preview = log.slice(0, 5);
   return (
     <section className="card card-hover p-6">
       <SectionHeading title="Recent Activity" actionLabel="View All" actionHref="/timeline" />
-      {log.length === 0 && (
+      {preview.length === 0 && (
         <p className="py-3 text-sm text-ink-muted">
           No activity yet — start writing to see it appear here.
         </p>
       )}
       <ul className="divide-y divide-line">
-        {log.map((item) => {
+        {preview.map((item) => {
           const Icon = ACTIVITY_ICON[item.kind];
           return (
             <li key={item.id} className="flex items-center gap-3 py-3">
