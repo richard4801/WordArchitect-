@@ -2,11 +2,13 @@
 
 import {
   BookOpen,
+  Check,
   ChevronDown,
   ChevronRight,
   Compass,
   Globe2,
   Lightbulb,
+  Loader2,
   type LucideIcon,
   MessageSquare,
   Pencil,
@@ -17,12 +19,14 @@ import {
   Sparkles,
   Trash2,
   Users,
+  X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { OptionsMenu } from "@/components/ui/options-menu";
 import { formatRelativeTime } from "@/lib/activity-log-store";
+import { confirmProposal, ProposalError } from "@/lib/chat-proposals";
 import {
   CHAT_PERSONAS,
   type ChatMessage,
@@ -163,7 +167,7 @@ export function ChatPanel({ bookId, layout = "full" }: { bookId: string; layout?
               ) : (
                 <div className="flex flex-col gap-4">
                   {active.messages.map((m) => (
-                    <MessageBubble key={m.id} message={m} />
+                    <MessageBubble key={m.id} message={m} bookId={bookId} />
                   ))}
                   {sending && <TypingIndicator />}
                 </div>
@@ -436,7 +440,7 @@ function CompactHeader({
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({ message, bookId }: { message: ChatMessage; bookId: string }) {
   const isUser = message.role === "user";
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
@@ -447,7 +451,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           <div className="text-ink">{renderMarkdown(message.content)}</div>
         )}
         {!isUser && message.tool_calls && message.tool_calls.length > 0 && (
-          <ToolCallSummary calls={message.tool_calls} />
+          <ToolCallSummary calls={message.tool_calls} bookId={bookId} />
         )}
       </div>
     </div>
@@ -465,7 +469,7 @@ function summarizeReads(reads: ChatToolCall[]): string {
   return `Looked up: ${parts.join(", ")}`;
 }
 
-function ToolCallSummary({ calls }: { calls: ChatToolCall[] }) {
+function ToolCallSummary({ calls, bookId }: { calls: ChatToolCall[]; bookId: string }) {
   const [expanded, setExpanded] = useState(false);
   const reads = calls.filter((c) => !c.tool.startsWith("propose_"));
   const proposals = calls.filter((c) => c.tool.startsWith("propose_"));
@@ -473,33 +477,139 @@ function ToolCallSummary({ calls }: { calls: ChatToolCall[] }) {
 
   return (
     <div className="mt-2.5 border-t border-line/60 pt-2">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex items-center gap-1.5 text-xs text-ink-faint transition-colors hover:text-ink"
-      >
-        {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-        <Search className="size-3" />
-        {readSummary || "Looked something up"}
-      </button>
-      {proposals.length > 0 && (
-        <p className="mt-1.5 flex items-start gap-1.5 text-xs text-warn">
-          <Lightbulb className="mt-0.5 size-3 shrink-0" />
-          <span>
-            Proposed {proposals.map((p) => PROPOSE_LABELS[p.tool] ?? p.tool).join(", ")} — not actionable from here
-            yet.
-          </span>
-        </p>
+      {reads.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex items-center gap-1.5 text-xs text-ink-faint transition-colors hover:text-ink"
+        >
+          {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+          <Search className="size-3" />
+          {readSummary || "Looked something up"}
+        </button>
       )}
-      {expanded && (
+      {expanded && reads.length > 0 && (
         <ul className="mt-1.5 space-y-1 text-[0.68rem] text-ink-faint">
-          {calls.map((c, i) => (
+          {reads.map((c, i) => (
             <li key={i} className="break-all font-mono">
               {c.tool}({JSON.stringify(c.input)})
             </li>
           ))}
         </ul>
       )}
+      {proposals.length > 0 && (
+        <div className={`space-y-2 ${reads.length > 0 ? "mt-2.5" : ""}`}>
+          {proposals.map((p, i) => (
+            <ProposalCard key={i} tool={p.tool} input={p.input} bookId={bookId} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function describeProposal(tool: string, input: Record<string, unknown>): string {
+  switch (tool) {
+    case "propose_create_codex_entry":
+      return `${String(input.name ?? "Untitled")} — ${String(input.entryType ?? "?")}\n${String(input.description ?? "")}`;
+    case "propose_update_codex_entry": {
+      const fields = { ...(typeof input.fields === "object" && input.fields ? input.fields : {}) } as Record<string, unknown>;
+      if (input.description !== undefined) fields.description = input.description;
+      const keys = Object.keys(fields);
+      return `Update ${keys.length > 0 ? keys.join(", ") : "this entry"}`;
+    }
+    case "propose_create_world_category":
+      return String(input.name ?? "Untitled category");
+    case "propose_create_note":
+      return `${String(input.title ?? "Untitled note")} (${String(input.category ?? "?")})\n${String(input.excerpt ?? "")}`;
+    case "propose_save_manuscript_scene": {
+      const text = String(input.rawText ?? "");
+      const preview = text.length > 140 ? `${text.slice(0, 140)}…` : text;
+      return `Chapter ${String(input.chapterNumber ?? "?")}\n${preview}`;
+    }
+    default:
+      return JSON.stringify(input);
+  }
+}
+
+type ProposalState = { kind: "pending" } | { kind: "confirming" } | { kind: "confirmed"; summary: string } | { kind: "rejected" } | { kind: "error"; message: string };
+
+/**
+ * A real Confirm/Reject card for one `propose_*` tool call — see
+ * `chat-proposals.ts` for what Confirm actually does. Reject is purely a
+ * local state change: since the proposal never wrote anything, there's
+ * nothing on the backend to undo. State resets whenever this component
+ * remounts (e.g. switching conversations), matching the rest of this
+ * panel's "no persisted confirm/reject state" scope — the underlying
+ * message's tool_calls log is the permanent record of what was proposed.
+ */
+function ProposalCard({ tool, input, bookId }: { tool: string; input: Record<string, unknown>; bookId: string }) {
+  const [state, setState] = useState<ProposalState>({ kind: "pending" });
+  const label = PROPOSE_LABELS[tool] ?? tool;
+  const [title, ...rest] = describeProposal(tool, input).split("\n");
+  const detail = rest.join("\n").trim();
+
+  async function handleConfirm() {
+    setState({ kind: "confirming" });
+    try {
+      const summary = await confirmProposal(tool, bookId, input);
+      setState({ kind: "confirmed", summary });
+    } catch (err) {
+      setState({
+        kind: "error",
+        message: err instanceof ProposalError ? err.message : err instanceof Error ? err.message : "Couldn't save this.",
+      });
+    }
+  }
+
+  if (state.kind === "confirmed") {
+    return (
+      <p className="flex items-start gap-1.5 text-xs text-success">
+        <Check className="mt-0.5 size-3 shrink-0" />
+        <span>{state.summary}</span>
+      </p>
+    );
+  }
+  if (state.kind === "rejected") {
+    return (
+      <p className="flex items-start gap-1.5 text-xs text-ink-faint">
+        <X className="mt-0.5 size-3 shrink-0" />
+        <span>Rejected — nothing was saved.</span>
+      </p>
+    );
+  }
+
+  return (
+    <div className="card-2 space-y-2 p-3">
+      <p className="flex items-start gap-1.5 text-xs font-medium text-warn">
+        <Lightbulb className="mt-0.5 size-3 shrink-0" />
+        <span>Proposed {label}</span>
+      </p>
+      <div className="text-xs text-ink">
+        <p className="font-medium">{title}</p>
+        {detail && <p className="mt-1 whitespace-pre-wrap text-ink-muted">{detail}</p>}
+      </div>
+      {state.kind === "error" && <p className="text-xs text-danger">{state.message}</p>}
+      <div className="flex items-center gap-2 pt-0.5">
+        <button
+          type="button"
+          onClick={handleConfirm}
+          disabled={state.kind === "confirming"}
+          className="flex items-center gap-1.5 rounded-lg bg-gold px-3 py-1.5 text-xs font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-60"
+        >
+          {state.kind === "confirming" ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
+          {state.kind === "confirming" ? "Saving…" : "Confirm"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setState({ kind: "rejected" })}
+          disabled={state.kind === "confirming"}
+          className="flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-xs text-ink-muted transition-colors hover:text-ink disabled:opacity-60"
+        >
+          <X className="size-3" />
+          Reject
+        </button>
+      </div>
     </div>
   );
 }

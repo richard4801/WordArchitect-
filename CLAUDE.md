@@ -1502,11 +1502,8 @@ sharing the same store calls):
 - **Tool-call transparency**: `ToolCallSummary` collapses read tool calls
   into one line ("Looked up: 2 Codex entries, manuscript search" — counted
   and pluralized by tool name), expandable to raw `tool(input)` per call.
-  `propose_*` tool calls (write proposals — see the brief's Confirm/Reject
-  section, not yet built) render distinctly with a "not actionable from
-  here yet" note rather than silently doing nothing or crashing on an
-  unrecognized shape — this phase only had to not break when a proposal
-  shows up, not act on it.
+  `propose_*` tool calls render as a real `ProposalCard` — see "Confirm/
+  Reject cards" below.
 - **Markdown**: `src/lib/simple-markdown.tsx`, a small dependency-free
   renderer (bold/italic/inline code/links, bulleted/numbered lists,
   headers) — this app has no markdown library installed
@@ -1530,6 +1527,86 @@ dialog) both work. Compact layout — same picker/send/reply flow inside
 the chapter editor's AI tab, plus the dropdown toggle showing the same
 conversation. `/assistant` correctly redirects to the active project's
 assistant page. Zero console errors across the full pass.
+
+**Confirm/Reject cards — `propose_*` proposals are now real, not inert.**
+Backed by the backend's "Add confirm-gated write tools to the Chat
+Assistant" pass (`claude/ai-fiction-platform-backend-qnvkm5`): five
+`propose_*` tools (`propose_create_codex_entry`,
+`propose_update_codex_entry`, `propose_create_world_category`,
+`propose_create_note`, `propose_save_manuscript_scene`) mirror the MCP
+server's write-tool set but never touch Supabase when Claude calls them —
+each one just validates its shape and logs an acknowledgment into
+`chat_messages.tool_calls`, the same transparency record every tool call
+already gets (confirmed by reading `chatAssistant.ts`'s `proposalAck()`
+directly). **The tool call's `input` *is* the exact request body the
+corresponding real CRUD endpoint accepts** — confirmed by reading
+`codex.ts`/`worldCategories.ts`/`notes.ts`/the new `POST /manuscript/
+save-scene` route directly, not just the tool schemas — so nothing needed
+mapping field-by-field; a confirm just forwards `input` (plus `userId`/
+`bookId`) straight to that endpoint.
+
+`src/lib/chat-proposals.ts` (new) — `confirmProposal(tool, bookId, input)`
+dispatches by tool name:
+- `propose_create_codex_entry` / `propose_update_codex_entry` → raw
+  `apiFetch` to `POST`/`PATCH /api/v1/codex(/:id)` (the `fields` passthrough
+  object is spread directly into the body — same "don't duplicate Codex's
+  field list" reasoning the backend's own comment gives for keeping that
+  schema loose). Refreshes `character-store.ts` (`refreshCharacters`, an
+  existing export) if `entryType === "character"`, otherwise
+  `worldbuilding-store.ts` (`refreshWorld`, added by this pass — that
+  store previously had no way to invalidate its cache from outside itself)
+  — an update doesn't know which it is without a lookup, so it refreshes
+  both, harmless either way.
+- `propose_create_world_category` → calls `createWorldCategory()`
+  directly (existing store function, same shape) — `NewCategoryInput.color`
+  had to be widened from required to optional first, since the proposal
+  schema doesn't require a color and the backend already accepts a missing
+  one (defaults to `FALLBACK_COLOR` on read).
+- `propose_create_note` → calls `createNote()` directly (existing store
+  function, same shape), then `togglePinned()` if the proposal set
+  `pinned: true` (creation itself has no `pinned` field on the backend).
+- `propose_save_manuscript_scene` → raw `apiFetch` to the new `POST
+  /api/v1/manuscript/save-scene` (no existing store wraps this endpoint —
+  it's not the same as autosave). Calls `refreshManuscript()` after, so a
+  brand-new chapter it created shows up in the chapter list; the *body*
+  cache for an already-open chapter isn't invalidated (no cross-store hook
+  for that today), so the confirmed summary says "Reopen the chapter in
+  the editor to see it" rather than implying it updates live.
+Every branch also calls `logActivity()` (`"character"`, `"world"`, or
+`"wrote"`) so a confirmed proposal shows up in the Dashboard's real
+activity feed exactly like the same action taken through its own form
+would.
+
+**UI** (`chat-panel.tsx`): `ProposalCard` replaces the old inert "not
+actionable from here yet" note. Per-card local state
+(`pending`/`confirming`/`confirmed`/`rejected`/`error`) — Reject is purely
+a client-side transition (nothing was ever written, so there's nothing to
+undo); Confirm calls `confirmProposal()` and shows a short real summary
+("Created \"Kestrel Vane\".") on success or an inline error on failure,
+never a silent no-op. `describeProposal()` renders the proposal's key
+fields (name/entryType/description for a Codex entry, a 140-char preview
+for a manuscript scene, etc.) rather than raw JSON, so the writer can
+actually read what they're confirming — the full raw call is still
+available via the existing expandable tool-call log for anyone who wants
+it. State is local to the card and resets on remount (switching
+conversations) — same "no persisted confirm/reject state" scope as the
+rest of this panel; the message's own `tool_calls` log stays the
+permanent record of what was proposed.
+
+**Verified working** (same local-mock-server approach, extended with
+`POST /codex`, `PATCH /codex/:id`, `POST /world-categories`, `POST`/
+`PATCH /notes`, and `POST /manuscript/save-scene` handlers matching the
+real shapes, plus trigger phrases in the simulated chat reply for each
+proposal type): all four proposal types render a real Confirm/Reject
+card with the correct preview text; confirming each one calls the real
+endpoint and the created row is independently verifiable via a direct API
+call (a codex entry, a world category, a note, and a chapter's paragraphs
+via `GET /manuscript/chapters/:id` — the list endpoint's own
+paragraphs-stripped response confirms the "no envelope leakage" shape
+along the way); confirming shows the real success summary, not a
+canned string; rejecting a proposal shows "Rejected — nothing was saved"
+and confirmed independently that no row was created for it. Zero console
+errors across the full pass.
 
 ### 4.8 Outliner (beats)
 

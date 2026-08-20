@@ -145,6 +145,11 @@ function useEnsureLoaded(bookId: string | undefined) {
   }, [bookId]);
 }
 
+/** Force a re-fetch of this book's categories/entries — e.g. after a codex row was created/updated by something other than this store's own functions (a confirmed Chat Assistant proposal). */
+export function refreshWorld(bookId: string): void {
+  void loadWorld(bookId);
+}
+
 /** Live category list for one project — fixed 8-category base merged with real backend categories. */
 export function useWorldCategories(bookId: string | undefined): WorldCategoryMeta[] {
   useEnsureLoaded(bookId);
@@ -174,7 +179,8 @@ export function useWorldError(): string | null {
 export type NewCategoryInput = {
   name: string;
   description?: string;
-  color: string;
+  /** Optional — the backend defaults an unset color to null, mapped to FALLBACK_COLOR on read. */
+  color?: string;
   /** Icon library name, e.g. "Castle" — see WORLD_ICON_REGISTRY in worldbuilding-data.ts. */
   iconKey?: string;
 };
