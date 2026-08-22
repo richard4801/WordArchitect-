@@ -1451,6 +1451,41 @@ Escape closes the dialog for real; and the actual renumber still executes
 correctly end-to-end afterward, independently verified via the API to
 have produced a fully sequential 1-N numbering. Zero console errors.
 
+**Real-world case that came back the same day: a ~400-chapter book where
+325 of the 326 chapters that would need to move were already synced to
+AI memory — the safety guard correctly refused the renumber entirely,
+exactly as designed.** This isn't a bug: fixing it for real needs
+`manuscript_chunks.chapter_number` updated in lockstep with the chapter
+renumber, which requires direct database access this integration pass
+doesn't have (no backend push access, no Supabase credentials) — flagged
+to the user as a real limitation, with the concrete fix (a one-time SQL
+script realigning `manuscript_chunks`, using the exact same
+collision-safe ascending-order logic already used for the chapter
+`number` shifts) offered but not built, since the user chose to leave
+that book's gap alone rather than have it fixed at the database level.
+
+That case *did* surface a real UX problem worth fixing on its own,
+though: with a gap this large, the persistent gap-detected banner would
+otherwise show a loud warning box on every single visit to a book whose
+gap the writer has already decided to live with, and the blocked-state
+message listed all 325 blocking chapters with no cap — a long, low-value
+scroll of near-identical "Chapter N – Chapter N" lines (itself just
+reflecting that none of those chapters had a real title set yet — see the
+editable-title fix above). Fixed by making the *idle* gap notice a plain,
+low-key single-line text row (an icon + one sentence + "Renumber", no
+colored box) rather than a standing alert, and capping the blocked list
+to the first 6 chapters plus a "…and N more" line, with a "Dismiss"
+action on both the blocked and error states so a result the writer has
+already read doesn't have to keep occupying sidebar space.
+
+**Verified working** (against a local mock backend with 24 of 29
+chapters synced, mirroring the "almost everything is blocked" shape):
+the idle notice renders as a short single-line row (confirmed under 40px
+tall, not the original alert box); triggering the renumber against this
+data shows the blocked message with exactly 6 listed chapters and an
+"…and N more" line for the rest; Dismiss returns the sidebar to the
+compact one-line notice. Zero console errors.
+
 ### 4.6 Banned Terms
 
 **Live — backed by the real backend's `/banned-terms` (see the backend

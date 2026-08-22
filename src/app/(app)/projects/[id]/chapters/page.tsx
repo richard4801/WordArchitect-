@@ -885,50 +885,73 @@ function ManuscriptPanel({
         </div>
       </div>
 
-      {renumberMoves.length > 0 && renumberState.kind !== "done" && (
-        <div className="mx-5 mb-3 rounded-xl border border-warn/40 bg-warn/10 p-3 text-xs">
-          <p className="flex items-center gap-1.5 text-warn">
-            <AlertTriangle className="size-3.5 shrink-0" />
-            Chapter numbers have a gap ({renumberMoves.length} chapter{renumberMoves.length === 1 ? "" : "s"} out of
-            sequence).
-          </p>
-          {renumberState.kind === "idle" && (
-            <button
-              type="button"
-              onClick={() => setRenumberState({ kind: "confirming" })}
-              className="mt-2 rounded-lg border border-warn/50 px-2.5 py-1.5 text-warn transition-colors hover:bg-warn/10"
-            >
-              Renumber to close the gap
-            </button>
-          )}
-          {renumberState.kind === "running" && (
-            <p className="mt-2 flex items-center gap-1.5 text-ink-muted">
-              <Loader2 className="size-3 animate-spin" />
-              Renumbering…
-            </p>
-          )}
-          {renumberState.kind === "blocked" && (
-            <div className="mt-2 text-ink-muted">
-              <p>
-                Can&apos;t renumber automatically — {renumberState.blocking.length} of the chapters that would need
-                to move {renumberState.blocking.length === 1 ? "has" : "have"} already been synced to AI memory, and
-                this app has no way to update its memory record to match a new chapter number:
-              </p>
-              <ul className="mt-1.5 list-disc space-y-0.5 pl-4">
-                {renumberState.blocking.map((m) => (
-                  <li key={m.chapterId}>
-                    Chapter {m.from} – {m.title}
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-1.5">Ask the backend team to fix these chapters&apos; AI-memory records directly.</p>
-            </div>
-          )}
-          {renumberState.kind === "error" && (
-            <p className="mt-2 text-danger">{renumberState.message}</p>
-          )}
-        </div>
+      {renumberMoves.length > 0 && renumberState.kind === "idle" && (
+        // Deliberately low-key — a plain text row, not a colored alert box.
+        // A book whose gap can't actually be closed (every affected chapter
+        // already synced to AI memory, a real case with a large manuscript)
+        // would otherwise show a loud warning on every single visit to the
+        // editor for a condition the writer has already decided to live
+        // with; this stays out of the way until they actually click it.
+        <button
+          type="button"
+          onClick={() => setRenumberState({ kind: "confirming" })}
+          className="mx-5 mb-3 flex items-center gap-1.5 text-left text-xs text-ink-faint transition-colors hover:text-ink"
+        >
+          <AlertTriangle className="size-3 shrink-0" />
+          Chapter numbers have a gap ({renumberMoves.length} out of sequence) — Renumber
+        </button>
       )}
+      {renumberMoves.length > 0 &&
+        (renumberState.kind === "running" || renumberState.kind === "blocked" || renumberState.kind === "error") && (
+          <div className="mx-5 mb-3 rounded-xl border border-warn/40 bg-warn/10 p-3 text-xs">
+            {renumberState.kind === "running" && (
+              <p className="flex items-center gap-1.5 text-ink-muted">
+                <Loader2 className="size-3 animate-spin" />
+                Renumbering…
+              </p>
+            )}
+            {renumberState.kind === "blocked" && (
+              <div className="text-ink-muted">
+                <p>
+                  Can&apos;t renumber automatically — {renumberState.blocking.length} of the chapters that would need
+                  to move {renumberState.blocking.length === 1 ? "has" : "have"} already been synced to AI memory,
+                  and this app has no way to update its memory record to match a new chapter number
+                  {renumberState.blocking.length > 6 ? " (showing the first 6)" : ""}:
+                </p>
+                <ul className="mt-1.5 list-disc space-y-0.5 pl-4">
+                  {renumberState.blocking.slice(0, 6).map((m) => (
+                    <li key={m.chapterId}>
+                      Chapter {m.from} – {m.title}
+                    </li>
+                  ))}
+                </ul>
+                {renumberState.blocking.length > 6 && (
+                  <p className="mt-1.5">…and {renumberState.blocking.length - 6} more.</p>
+                )}
+                <p className="mt-1.5">Ask the backend team to fix these chapters&apos; AI-memory records directly.</p>
+                <button
+                  type="button"
+                  onClick={() => setRenumberState({ kind: "idle" })}
+                  className="mt-2 text-ink-faint underline transition-colors hover:text-ink"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+            {renumberState.kind === "error" && (
+              <>
+                <p className="text-danger">{renumberState.message}</p>
+                <button
+                  type="button"
+                  onClick={() => setRenumberState({ kind: "idle" })}
+                  className="mt-2 text-ink-faint underline transition-colors hover:text-ink"
+                >
+                  Dismiss
+                </button>
+              </>
+            )}
+          </div>
+        )}
       {renumberState.kind === "done" && (
         <p className="mx-5 mb-3 flex items-center gap-1.5 rounded-xl border border-success/40 bg-success/10 p-3 text-xs text-success">
           <Check className="size-3.5 shrink-0" />
