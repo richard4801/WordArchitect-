@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AlertTriangle,
   Ban,
   Bold,
   BrainCircuit,
@@ -56,9 +57,13 @@ import {
 } from "@/lib/manuscript-data";
 import {
   createChapter,
+  planChapterRenumber,
+  renumberChaptersToCloseGaps,
   saveChapterBody,
+  type RenumberMove,
   type SaveStatus,
   syncChapterToMemory,
+  updateChapterTitle,
   useChapterBody,
   useChapterSaveStatus,
   useManuscript,
@@ -455,6 +460,7 @@ export default function ChaptersPage() {
     <div className="flex h-dvh min-w-0">
       {!hidePanels && (
         <ManuscriptPanel
+          bookId={project.id}
           manuscript={manuscript}
           activeChapterId={activeChapter?.id ?? null}
           activeSceneId={selectedSceneId}
@@ -501,6 +507,7 @@ export default function ChaptersPage() {
             {!hideChrome && <FormattingToolbar withSelection={withSelection} />}
             <EditorBody
               key={activeChapter.id}
+              chapterId={activeChapter.id}
               body={body}
               editableRef={editableRef}
               onSelect={saveSelection}
@@ -730,7 +737,16 @@ function FocusModePickerModal({
 /*  Left — manuscript outline                                              */
 /* ======================================================================= */
 
+type RenumberBannerState =
+  | { kind: "idle" }
+  | { kind: "confirming" }
+  | { kind: "running" }
+  | { kind: "done"; count: number }
+  | { kind: "blocked"; blocking: RenumberMove[] }
+  | { kind: "error"; message: string };
+
 function ManuscriptPanel({
+  bookId,
   manuscript,
   activeChapterId,
   activeSceneId,
@@ -739,6 +755,7 @@ function ManuscriptPanel({
   onAddChapter,
   addingChapter,
 }: {
+  bookId: string;
   manuscript: ManuscriptPart[];
   activeChapterId: string | null;
   activeSceneId: string | null;
@@ -751,6 +768,33 @@ function ManuscriptPanel({
     () => new Set(manuscript.map((p) => p.id).concat(activeChapterId ?? [])),
   );
   const [query, setQuery] = useState("");
+
+  // Detects gaps in chapter numbering (e.g. chapters created directly
+  // against the backend outside this app's own "Add Chapter" auto-
+  // increment flow can leave 412, 416, 417… with 413-415 missing) and
+  // offers a real, confirm-gated fix — see planChapterRenumber() /
+  // renumberChaptersToCloseGaps() in manuscript-store.ts for exactly what
+  // it does and why it refuses to move any chapter already synced to AI
+  // memory.
+  // planChapterRenumber() reads the store's own cache directly rather than
+  // `manuscript` itself, so it isn't a real dependency by reference — but
+  // it's exactly what should trigger a recompute whenever the underlying
+  // chapter list changes, so it's kept in the dep array deliberately.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const renumberMoves = useMemo(() => planChapterRenumber(bookId), [bookId, manuscript]);
+  const [renumberState, setRenumberState] = useState<RenumberBannerState>({ kind: "idle" });
+
+  async function handleRenumber() {
+    setRenumberState({ kind: "running" });
+    try {
+      const result = await renumberChaptersToCloseGaps(bookId);
+      if (result.kind === "done") setRenumberState({ kind: "done", count: result.moved.length });
+      else if (result.kind === "blocked") setRenumberState({ kind: "blocked", blocking: result.blocking });
+      else setRenumberState({ kind: "idle" });
+    } catch (err) {
+      setRenumberState({ kind: "error", message: err instanceof Error ? err.message : "Couldn't renumber chapters." });
+    }
+  }
 
   function toggle(id: string) {
     setExpanded((prev) => {
@@ -806,6 +850,58 @@ function ManuscriptPanel({
         </div>
       </div>
 
+      {renumberMoves.length > 0 && renumberState.kind !== "done" && (
+        <div className="mx-5 mb-3 rounded-xl border border-warn/40 bg-warn/10 p-3 text-xs">
+          <p className="flex items-center gap-1.5 text-warn">
+            <AlertTriangle className="size-3.5 shrink-0" />
+            Chapter numbers have a gap ({renumberMoves.length} chapter{renumberMoves.length === 1 ? "" : "s"} out of
+            sequence).
+          </p>
+          {renumberState.kind === "idle" && (
+            <button
+              type="button"
+              onClick={() => setRenumberState({ kind: "confirming" })}
+              className="mt-2 rounded-lg border border-warn/50 px-2.5 py-1.5 text-warn transition-colors hover:bg-warn/10"
+            >
+              Renumber to close the gap
+            </button>
+          )}
+          {renumberState.kind === "running" && (
+            <p className="mt-2 flex items-center gap-1.5 text-ink-muted">
+              <Loader2 className="size-3 animate-spin" />
+              Renumbering…
+            </p>
+          )}
+          {renumberState.kind === "blocked" && (
+            <div className="mt-2 text-ink-muted">
+              <p>
+                Can&apos;t renumber automatically — {renumberState.blocking.length} of the chapters that would need
+                to move {renumberState.blocking.length === 1 ? "has" : "have"} already been synced to AI memory, and
+                this app has no way to update its memory record to match a new chapter number:
+              </p>
+              <ul className="mt-1.5 list-disc space-y-0.5 pl-4">
+                {renumberState.blocking.map((m) => (
+                  <li key={m.chapterId}>
+                    Chapter {m.from} – {m.title}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1.5">Ask the backend team to fix these chapters&apos; AI-memory records directly.</p>
+            </div>
+          )}
+          {renumberState.kind === "error" && (
+            <p className="mt-2 text-danger">{renumberState.message}</p>
+          )}
+        </div>
+      )}
+      {renumberState.kind === "done" && (
+        <p className="mx-5 mb-3 flex items-center gap-1.5 rounded-xl border border-success/40 bg-success/10 p-3 text-xs text-success">
+          <Check className="size-3.5 shrink-0" />
+          Renumbered {renumberState.count} chapter{renumberState.count === 1 ? "" : "s"} — numbering is sequential
+          again.
+        </p>
+      )}
+
       <div className="px-5 pb-2">
         <input
           value={query}
@@ -814,6 +910,16 @@ function ManuscriptPanel({
           className="w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs text-ink placeholder:text-ink-faint focus:border-line-strong focus:outline-none"
         />
       </div>
+
+      {renumberState.kind === "confirming" && (
+        <ConfirmDialog
+          title="Renumber chapters?"
+          description={`This will shift ${renumberMoves.length} chapter${renumberMoves.length === 1 ? "" : "s"} to close the gap: ${renumberMoves.map((m) => `${m.from}→${m.to}`).join(", ")}. This can't be undone automatically.`}
+          confirmLabel="Renumber"
+          onCancel={() => setRenumberState({ kind: "idle" })}
+          onConfirm={handleRenumber}
+        />
+      )}
 
       <nav className="scroll-slim flex-1 overflow-y-auto px-3 pb-3">
         {manuscript.length === 0 && (
@@ -1652,6 +1758,7 @@ function ColorPickerButton({
 }
 
 function EditorBody({
+  chapterId,
   body,
   editableRef,
   onSelect,
@@ -1661,6 +1768,7 @@ function EditorBody({
   centered = false,
   zoomPercent = 100,
 }: {
+  chapterId: string;
   body: { heading: string; title: string; paragraphs: ChapterParagraph[] };
   editableRef: React.RefObject<HTMLDivElement | null>;
   onSelect: () => void;
@@ -1692,6 +1800,29 @@ function EditorBody({
   // whenever the open chapter actually changes, and nothing else in this
   // single-user editor ever mutates a chapter's content except this DOM.
   const [initialParagraphs] = useState(() => body.paragraphs);
+  // Editable title — the human label after the fixed "Chapter N" number
+  // (e.g. "A Man"), distinct from `body.heading` ("CHAPTER 18") which
+  // stays static. Same uncontrolled-after-mount pattern as
+  // initialParagraphs above: local state, saved on blur, not resynced from
+  // the `body` prop afterward (nothing else changes this chapter's title
+  // out from under the writer while this component is mounted).
+  const [titleDraft, setTitleDraft] = useState(() => body.title);
+  const [titleSaveError, setTitleSaveError] = useState<string | null>(null);
+
+  async function commitTitle() {
+    const trimmed = titleDraft.trim();
+    if (!trimmed) {
+      setTitleDraft(body.title);
+      return;
+    }
+    if (trimmed === body.title.trim()) return;
+    try {
+      await updateChapterTitle(chapterId, trimmed);
+      setTitleSaveError(null);
+    } catch (err) {
+      setTitleSaveError(err instanceof Error ? err.message : "Couldn't save the title.");
+    }
+  }
   // Top/bottom padding for typewriter mode, computed from the scroll
   // container's own measured height (see the effect below) rather than a
   // static vh value. A static value can't work: with box-sizing:border-box
@@ -1852,7 +1983,17 @@ function EditorBody({
     >
       <div className={`mx-auto max-w-[680px] ${centered ? "pt-[8vh]" : ""}`}>
         <p className="label-caps text-purple text-[0.68rem]">{body.heading}</p>
-        <h1 className="mt-2 font-display text-4xl text-ink">{body.title}</h1>
+        <input
+          value={titleDraft}
+          onChange={(e) => setTitleDraft(e.target.value)}
+          onBlur={commitTitle}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+          }}
+          aria-label="Chapter title"
+          className="mt-2 w-full rounded-lg bg-transparent font-display text-4xl text-ink transition-colors focus:outline-none focus:ring-2 focus:ring-gold/40"
+        />
+        {titleSaveError && <p className="mt-1 text-xs text-danger">{titleSaveError}</p>}
 
         <div
           ref={editableRef}

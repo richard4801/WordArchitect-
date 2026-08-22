@@ -1354,6 +1354,70 @@ properly disabled), calling `sync-to-memory` again with no further edit
 returns the real `200 {alreadySynced: true}` no-op rather than a fresh
 201. Zero console errors across the full pass.
 
+**Editable chapter title, and a real "renumber to close gaps" fix.** Two
+issues reported once a real ~400-chapter manuscript was in the app: every
+chapter nav row and the editor's own heading read "Chapter N – Chapter N"
+(the title had never been editable anywhere, so `mapRowToChapter()`'s own
+`Chapter N` fallback was all that ever showed), and the chapter list
+skipped several numbers (409, 410, 411, 412, then straight to 416) —
+confirmed to be real, pre-existing gaps in `manuscript_chapters.number`
+for that book, not a frontend rendering bug (there is no chapter-delete
+feature anywhere in this app, so nothing here could have created them —
+most likely from however that book's 400+ chapters were first created,
+e.g. a bulk import or the MCP tool surface setting explicit numbers).
+
+- **Editable title**: the editor's `<h1>{body.title}</h1>` (previously
+  static) is now a real inline `<input>`, saved on blur via the new
+  `updateChapterTitle(chapterId, title)` (`manuscript-store.ts`) — a plain
+  `PATCH /manuscript/chapters/:id` with just `{title}`. Deliberately does
+  **not** touch `content_updated_at` (only a `paragraphs` PATCH does),
+  so renaming a chapter never falsely flags it as needing an AI-memory
+  resync. This is the *same* title shown in the left-rail chapter list
+  (`ChapterRow`'s "Chapter N – {title}") — one field, edited from the
+  editor's own heading, not a second copy in the nav row; confirming a
+  save updates the shared chapter-list cache in place so the nav row
+  updates live with no separate edit affordance needed there.
+- **Renumber to close gaps**: `ManuscriptPanel` (the left rail) computes
+  `planChapterRenumber(bookId)` (`manuscript-store.ts`) on every render of
+  the chapter list and shows a real warning banner ("Chapter numbers have
+  a gap") whenever any chapter's number isn't exactly one more than the
+  previous chapter's. Clicking "Renumber to close the gap" shows a
+  `ConfirmDialog` naming the *exact* plan (e.g. "416→413, 417→414, …") —
+  no vague "this will renumber things" — before `renumberChaptersToCloseGaps()`
+  executes it as a sequence of plain `PATCH .../number` calls (an
+  already-supported field), processed in ascending order of each
+  chapter's *old* number so every target number is either a genuine gap
+  or was just vacated one step earlier in the same pass — this can never
+  collide with the backend's `UNIQUE(book_id, number)` constraint.
+  **Refuses to move any chapter that's ever been synced to AI memory**
+  (`syncedToMemoryAt` set): that chapter's `manuscript_chunks` rows are
+  keyed by its *current* number, and this app has no coordinated way to
+  update those chunks' `chapter_number` alongside a renumber — no backend
+  endpoint for it, and no direct database access from this integration
+  pass. If even one move in the computed plan involves a synced chapter,
+  the *entire* renumber is refused (not just that one chapter) — the
+  banner instead lists exactly which chapter(s) are blocking it by number
+  and title, and says to ask the backend team to fix those specific
+  chapters' AI-memory records directly, rather than silently leaving a
+  synced chapter's embedded memory pointing at the wrong chapter number.
+  A failure partway through the sequence (network error mid-loop, no
+  transactional guarantee possible from the frontend alone) reports
+  exactly how many of the planned moves actually completed before it
+  throws, rather than leaving the writer guessing at partial state.
+
+**Verified working** (against a local mock backend replicating the real
+number-collision (`409`) and sync-guard behavior): a book with chapters
+1,2,3,4,6,7 shows the gap banner; editing chapter 1's title in the editor
+saves for real and the nav row updates live from "Chapter 1 – Chapter 1"
+to "Chapter 1 – A Man" with no separate edit action needed in the list;
+confirming the renumber plan actually shifts 6→5 and 7→6, the banner
+disappears, and the real chapter numbers are independently verified
+sequential via the API afterward; a second book with chapters 1,2,4 where
+chapter 4 has already been synced to AI memory correctly refuses to
+renumber, names chapter 4 specifically in the blocked message, and leaves
+all three chapters' numbers untouched. Zero console errors across the
+full pass.
+
 ### 4.6 Banned Terms
 
 **Live — backed by the real backend's `/banned-terms` (see the backend

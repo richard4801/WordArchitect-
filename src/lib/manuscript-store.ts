@@ -350,6 +350,123 @@ export async function saveChapterBody(chapterId: string, paragraphs: ChapterPara
   emit();
 }
 
+/**
+ * Rename a chapter's title (the human label, e.g. "A Man" — distinct from
+ * its fixed `number` and its `heading`, e.g. "CHAPTER 18"). A plain string
+ * PATCH, not part of autosave — deliberately doesn't touch
+ * `content_updated_at` (only a `paragraphs` PATCH does, per the backend's
+ * own guard), so renaming a chapter never falsely flags it as needing a
+ * memory resync. An empty string is valid — `mapRowToChapter()` already
+ * falls back to "Chapter N" display when the stored title is blank, so
+ * clearing it just resets to that default rather than needing special
+ * handling here.
+ */
+export async function updateChapterTitle(chapterId: string, title: string): Promise<void> {
+  const res = await apiFetch<ChapterResponse>(`/manuscript/chapters/${chapterId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title }),
+  });
+  if (bodyForChapterId === chapterId) bodyRow = res.chapter;
+  const entry = listCache.get(res.chapter.book_id);
+  if (entry) entry.rows = entry.rows.map((c) => (c.id === chapterId ? res.chapter : c));
+  emit();
+}
+
+// ---------------------------------------------------------------------
+// Renumbering — closes gaps in a book's chapter numbering (e.g. chapters
+// created directly against the backend, outside this app's own
+// auto-increment "Add Chapter" flow, can leave gaps like 412, 416, 417…).
+// ---------------------------------------------------------------------
+
+export type RenumberMove = { chapterId: string; from: number; to: number; title: string; synced: boolean };
+
+function computeRenumberMoves(rows: ManuscriptChapterRow[]): RenumberMove[] {
+  const sorted = [...rows].sort((a, b) => a.number - b.number);
+  const moves: RenumberMove[] = [];
+  let expected = sorted[0]?.number ?? 1;
+  for (const row of sorted) {
+    if (row.number !== expected) {
+      moves.push({
+        chapterId: row.id,
+        from: row.number,
+        to: expected,
+        title: row.title?.trim() || `Chapter ${row.number}`,
+        synced: !!row.synced_to_memory_at,
+      });
+    }
+    expected += 1;
+  }
+  return moves;
+}
+
+/**
+ * Pure preview of what `renumberChaptersToCloseGaps()` would do — no
+ * network calls. Assumes the chapter list is already loaded (every real
+ * caller renders from `useManuscript()`, which guarantees this). Exposed
+ * so the UI can decide whether to show a "chapters need renumbering"
+ * banner and render the exact plan in a confirm dialog before executing
+ * the same moves for real.
+ */
+export function planChapterRenumber(bookId: string): RenumberMove[] {
+  return computeRenumberMoves(getListEntry(bookId).rows);
+}
+
+export type RenumberResult =
+  | { kind: "no-gaps" }
+  | { kind: "blocked"; blocking: RenumberMove[] }
+  | { kind: "done"; moved: RenumberMove[] };
+
+/**
+ * Shifts every chapter after a gap down to close it, so numbering reads
+ * sequentially again (e.g. 409,410,411,412,416,417… -> 409,410,411,412,
+ * 413,414,415,416…). Each move is a plain `PATCH .../number` (an already-
+ * supported field) processed in ascending order of its *old* number —
+ * every target number is either a genuine gap or was just vacated by the
+ * immediately preceding move in this same pass, so this can never collide
+ * with the book's UNIQUE(book_id, number) constraint.
+ *
+ * Refuses to move any chapter that's ever been synced to AI memory
+ * (`syncedToMemoryAt` set): its `manuscript_chunks` rows are keyed by the
+ * chapter's *current* number, and this app has no coordinated way to
+ * update those chunks' `chapter_number` alongside a renumber (no backend
+ * endpoint for it, no direct database access) — silently moving a synced
+ * chapter would leave its embedded memory permanently pointing at the
+ * wrong chapter. If any move in the plan involves a synced chapter, the
+ * whole renumber is refused (not just that one move) so the result is
+ * always "fully sequential" or "untouched," never a partial state that
+ * could reintroduce different gaps.
+ */
+export async function renumberChaptersToCloseGaps(bookId: string): Promise<RenumberResult> {
+  const moves = planChapterRenumber(bookId);
+  if (moves.length === 0) return { kind: "no-gaps" };
+
+  const blocking = moves.filter((m) => m.synced);
+  if (blocking.length > 0) return { kind: "blocked", blocking };
+
+  const moved: RenumberMove[] = [];
+  try {
+    for (const move of moves) {
+      const res = await apiFetch<ChapterResponse>(`/manuscript/chapters/${move.chapterId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ number: move.to }),
+      });
+      const entry = getListEntry(bookId);
+      entry.rows = entry.rows.map((c) => (c.id === move.chapterId ? res.chapter : c));
+      if (bodyForChapterId === move.chapterId) bodyRow = res.chapter;
+      emit();
+      moved.push(move);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    if (moved.length > 0) {
+      const done = moved.map((m) => `${m.from}→${m.to}`).join(", ");
+      throw new Error(`Renumbered ${moved.length} of ${moves.length} chapters (${done}) before failing: ${message}`);
+    }
+    throw new Error(message);
+  }
+  return { kind: "done", moved };
+}
+
 // ---------------------------------------------------------------------
 // Word counts (per book, lazy — fetches every chapter's body once, in
 // parallel, then sums). Deliberately separate from the chapter-body
