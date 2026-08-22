@@ -1418,6 +1418,39 @@ renumber, names chapter 4 specifically in the blocked message, and leaves
 all three chapters' numbers untouched. Zero console errors across the
 full pass.
 
+**Live production bug, caught the day this shipped: the renumber confirm
+dialog could trap the user with no way to confirm or cancel.** A real
+~400-chapter manuscript's gap generated 326 individual moves; the confirm
+description spelled out every one of them ("92→91, 93→92, 94→93…"), which
+made the dialog's card taller than the viewport. `ConfirmDialog`
+(`src/components/ui/confirm-dialog.tsx`) had no height cap and nothing
+inside it scrolled, so the Cancel/Confirm row was pushed off-screen with
+no way to reach it — not even Escape, which the component didn't handle
+at all at the time. Fixed two ways, deliberately at two different layers
+since either alone would have left the other's failure mode reachable:
+1. **The actual cause**: `describeRenumberPlan()` (`chapters/page.tsx`)
+   now summarizes a large plan into contiguous ranges sharing the same
+   shift amount ("Chapters 93–419 → 92–418") instead of enumerating every
+   move — the common case (a handful of moves) still lists them all
+   explicitly; the threshold is a flat 8.
+2. **The class of bug**: `ConfirmDialog` itself now caps its card at
+   `85vh` with only the description area scrolling (title and the
+   Cancel/Confirm row stay pinned via `flex flex-col` + `shrink-0`), and
+   added Escape-to-cancel as a second way out that doesn't depend on the
+   buttons being reachable at all — so no future caller passing a long
+   description can reproduce the same stuck-modal failure, on this
+   feature or any other one that reuses this shared component.
+
+**Verified working** (against a local mock backend seeded with a 49-
+chapter book with one early gap, closely mirroring the real production
+shape — a gap early in the sequence with dozens of chapters needing to
+shift): the confirm dialog's description reads as a short range summary,
+not an enumerated list; both Cancel and Confirm are confirmed on-screen
+and within the viewport's bounding box (not just present in the DOM);
+Escape closes the dialog for real; and the actual renumber still executes
+correctly end-to-end afterward, independently verified via the API to
+have produced a fully sequential 1-N numbering. Zero console errors.
+
 ### 4.6 Banned Terms
 
 **Live — backed by the real backend's `/banned-terms` (see the backend

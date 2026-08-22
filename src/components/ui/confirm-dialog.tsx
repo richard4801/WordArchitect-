@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 /**
@@ -14,6 +14,17 @@ import { createPortal } from "react-dom";
  * would otherwise have clicks inside this dialog bubble up to that
  * ancestor's own click handler — escaping to body sidesteps that
  * regardless of where this component gets rendered from.
+ *
+ * The card is capped at `85vh` with only the description area scrolling —
+ * title and the Cancel/Confirm row stay pinned in place. A real production
+ * bug caught this: a caller passed a description enumerating hundreds of
+ * items (a large chapter-renumber plan), which grew the card taller than
+ * the viewport with nothing scrollable, pushing both buttons off-screen
+ * with no way to reach them at all (not even Escape, which this component
+ * didn't handle either at the time) — a dialog the user could neither
+ * confirm nor cancel. Escape-to-cancel is now also wired for the same
+ * reason: a second way out that doesn't depend on the buttons being
+ * reachable.
  */
 export function ConfirmDialog({
   title,
@@ -31,6 +42,14 @@ export function ConfirmDialog({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && !submitting) onCancel();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onCancel, submitting]);
+
   async function handleConfirm() {
     setSubmitting(true);
     setError(null);
@@ -47,11 +66,13 @@ export function ConfirmDialog({
       className="fixed inset-0 z-[60] grid place-items-center bg-canvas/70 p-4 backdrop-blur-sm"
       onClick={(e) => e.stopPropagation()}
     >
-      <div className="card w-full max-w-sm p-5">
-        <h2 className="font-display text-lg text-ink">{title}</h2>
-        <p className="mt-2 text-sm text-ink-muted">{description}</p>
-        {error && <p className="mt-2 text-xs text-danger">{error}</p>}
-        <div className="mt-5 flex items-center justify-end gap-3">
+      <div className="card flex max-h-[85vh] w-full max-w-sm flex-col p-5">
+        <h2 className="shrink-0 font-display text-lg text-ink">{title}</h2>
+        <div className="scroll-slim mt-2 min-h-0 flex-1 overflow-y-auto">
+          <p className="whitespace-pre-wrap text-sm text-ink-muted">{description}</p>
+          {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+        </div>
+        <div className="mt-5 flex shrink-0 items-center justify-end gap-3">
           <button
             type="button"
             onClick={onCancel}

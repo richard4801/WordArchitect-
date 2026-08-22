@@ -745,6 +745,41 @@ type RenumberBannerState =
   | { kind: "blocked"; blocking: RenumberMove[] }
   | { kind: "error"; message: string };
 
+/**
+ * Describes a renumber plan for the confirm dialog. Below a small
+ * threshold, lists every move explicitly (the common case — a single
+ * small gap). Above it, groups moves into contiguous ranges sharing the
+ * same shift amount and summarizes each range instead — a real production
+ * case (one gap early in a ~400-chapter book) generated 326 individual
+ * moves, and spelling out "93→92, 94→93, 95→94…" for all of them made the
+ * confirm dialog's description taller than the viewport with nothing
+ * scrollable, pushing its own Cancel/Confirm buttons off-screen (see
+ * ConfirmDialog's own comment on the height/scroll fix that also came out
+ * of this bug — this fixes the actual cause, that fixes the class of bug).
+ */
+function describeRenumberPlan(moves: RenumberMove[]): string {
+  if (moves.length <= 8) {
+    return moves.map((m) => `${m.from}→${m.to}`).join(", ");
+  }
+  const segments: { fromStart: number; fromEnd: number; shift: number }[] = [];
+  for (const m of moves) {
+    const shift = m.from - m.to;
+    const last = segments[segments.length - 1];
+    if (last && last.shift === shift && m.from === last.fromEnd + 1) {
+      last.fromEnd = m.from;
+    } else {
+      segments.push({ fromStart: m.from, fromEnd: m.from, shift });
+    }
+  }
+  return segments
+    .map((s) =>
+      s.fromStart === s.fromEnd
+        ? `Chapter ${s.fromStart} → ${s.fromStart - s.shift}`
+        : `Chapters ${s.fromStart}–${s.fromEnd} → ${s.fromStart - s.shift}–${s.fromEnd - s.shift}`,
+    )
+    .join("; ");
+}
+
 function ManuscriptPanel({
   bookId,
   manuscript,
@@ -914,7 +949,7 @@ function ManuscriptPanel({
       {renumberState.kind === "confirming" && (
         <ConfirmDialog
           title="Renumber chapters?"
-          description={`This will shift ${renumberMoves.length} chapter${renumberMoves.length === 1 ? "" : "s"} to close the gap: ${renumberMoves.map((m) => `${m.from}→${m.to}`).join(", ")}. This can't be undone automatically.`}
+          description={`This will shift ${renumberMoves.length} chapter${renumberMoves.length === 1 ? "" : "s"} to close the gap: ${describeRenumberPlan(renumberMoves)}. This can't be undone automatically.`}
           confirmLabel="Renumber"
           onCancel={() => setRenumberState({ kind: "idle" })}
           onConfirm={handleRenumber}
