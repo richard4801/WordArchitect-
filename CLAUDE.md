@@ -1992,6 +1992,59 @@ call, filtering the deleted row out of the local cache on success:
   the same `/codex/:id` endpoint Character uses, see §3.5's Worldbuilding
   section for why a world entry has no endpoint of its own).
 
+**Chapter delete, added in a later pass** (the one domain this first pass
+didn't cover — no chapter-delete feature existed anywhere in the app
+until a user directly asked for one on a real 400+ chapter manuscript).
+`deleteChapter(chapterId)` (`manuscript-store.ts`) calls the real `DELETE
+/manuscript/chapters/:id` — confirmed by reading the route directly: it
+cascades on the backend to that chapter's scene markers and Outliner
+beats, but **deliberately does not touch `manuscript_chunks`** — a
+chapter already synced to AI memory stays retrievable there even after
+its editor row is gone, the same one-directional-memory behavior
+`sync-to-memory` itself already has. Two entry points, both going through
+the same function: a hover-revealed `OptionsMenu` on each `ChapterRow` in
+the left-rail chapter list (delete any chapter without opening it first —
+the case that actually matters on a long manuscript), and a "Delete
+Chapter" item in the editor's own per-chapter "..." menu (`MoreMenu`,
+alongside Sync to AI Memory) for the currently-open chapter. Both route
+through the same `ConfirmDialog`, whose description changes based on
+`chapter.syncedToMemoryAt`: a plain "will be permanently deleted" for a
+never-synced chapter, versus an explicit note that deleting does **not**
+remove it from AI memory for one that has been — so a writer deleting a
+synced chapter is never left assuming that also erases what the AI can
+still recall. Deleting the currently-open chapter clears the pending
+autosave timeout rather than flushing it (flushing would PATCH a chapter
+that's about to not exist) and clears the editor's selection so it falls
+back to whatever chapter is now first, same as the existing "just
+deleted the active item" pattern every other domain's delete already
+uses.
+
+**A second, unrelated bug found while testing chapter delete on a cold
+page load**: the manuscript nav's "Manuscript" part rendered permanently
+collapsed on a fresh navigation straight to `/chapters` (not a warm SPA
+transition from another page where the chapter list was already cached).
+Root cause: `ManuscriptPanel`'s `expanded` state was a `useState` lazy
+initializer computed once from the `manuscript` prop — which is still
+`[]` at the very first render, before the async chapter-list fetch has
+resolved, since a lazy initializer only ever runs on mount and never
+re-evaluates once real data arrives. Fixed with a `useEffect` (guarded by
+an `autoExpandedRef` set of part ids already auto-expanded once) that
+expands each part exactly once the first time it actually appears in
+`manuscript`, without re-forcing a part back open if the writer
+deliberately collapses it afterward.
+
+**Verified working** (against a local mock backend with `DELETE
+/manuscript/chapters/:id`, extended to match the real cascade/response
+shape): a fresh page load auto-expands the chapter list for real (the
+cold-load bug, confirmed fixed); deleting a never-synced chapter via the
+nav row's hover options menu shows the plain confirm copy, and the
+chapter is gone from both the UI and a direct API check afterward;
+deleting the now-open chapter (which had been synced) via the editor's
+own "..." menu shows the AI-memory caveat in the confirm dialog; and
+deleting the last remaining chapter correctly falls back to the existing
+"Start your manuscript" empty state. Zero console errors across the full
+pass.
+
 **One real layout bug found and fixed while wiring this up**:
 `OptionsMenu`'s first draft wrapped its trigger button in its own
 `position: relative` div for measurement purposes. Several call sites

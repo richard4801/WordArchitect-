@@ -269,6 +269,31 @@ export async function createChapter(bookId: string, input: { title?: string } = 
   return mapRowToChapter(res.chapter);
 }
 
+/**
+ * Delete a chapter for real (`DELETE /manuscript/chapters/:id`). Cascades
+ * on the backend to that chapter's scene markers and Outliner beats, but
+ * deliberately does **not** touch `manuscript_chunks` — a chapter already
+ * synced into AI memory stays retrievable there even after its editor row
+ * is gone (same "memory is one-directional, not automatically cleaned up"
+ * behavior `sync-to-memory` itself already has). Callers should show that
+ * distinction in their confirm copy for a chapter that's been synced,
+ * rather than implying delete removes it from AI memory too.
+ */
+export async function deleteChapter(chapterId: string): Promise<void> {
+  await apiFetch<void>(`/manuscript/chapters/${chapterId}`, { method: "DELETE" });
+  for (const [bookId, entry] of listCache) {
+    if (!entry.rows.some((r) => r.id === chapterId)) continue;
+    listCache.set(bookId, { ...entry, rows: entry.rows.filter((r) => r.id !== chapterId) });
+    wordCountCache.delete(bookId);
+  }
+  if (bodyForChapterId === chapterId) {
+    bodyForChapterId = null;
+    bodyRow = null;
+    bodyStatus = "idle";
+  }
+  emit();
+}
+
 // ---------------------------------------------------------------------
 // Chapter body (lazy, one chapter at a time — a true singleton, see
 // module comment above)

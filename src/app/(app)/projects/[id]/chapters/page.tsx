@@ -34,6 +34,7 @@ import {
   Sparkles,
   Strikethrough,
   Table2,
+  Trash2,
   Type,
   Underline,
   Undo2,
@@ -57,6 +58,7 @@ import {
 } from "@/lib/manuscript-data";
 import {
   createChapter,
+  deleteChapter,
   planChapterRenumber,
   renumberChaptersToCloseGaps,
   saveChapterBody,
@@ -72,6 +74,7 @@ import { Progress } from "@/components/ui/progress";
 import { ChatPanel } from "@/components/chat-panel";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EditWritingGoalModal } from "@/components/edit-writing-goal-modal";
+import { OptionsMenu } from "@/components/ui/options-menu";
 import {
   banTerm,
   type BannedTermRow,
@@ -435,6 +438,21 @@ export default function ChaptersPage() {
     }
   }
 
+  async function handleDeleteChapter(chapterId: string) {
+    // Drop any pending autosave for the chapter being deleted rather than
+    // flushing it — flushing would PATCH a chapter that's about to be (or
+    // already has been) deleted, either wastefully or into a 404.
+    if (chapterId === activeChapter?.id && saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    await deleteChapter(chapterId);
+    if (chapterId === selectedChapterId || chapterId === activeChapter?.id) {
+      setSelectedChapterId(null);
+      setSelectedSceneId(null);
+    }
+  }
+
   if (!project) {
     return (
       <div className="grid h-dvh place-items-center text-center">
@@ -468,6 +486,7 @@ export default function ChaptersPage() {
           onSelectScene={setSelectedSceneId}
           onAddChapter={handleCreateChapter}
           addingChapter={creatingChapter}
+          onDeleteChapter={handleDeleteChapter}
         />
       )}
 
@@ -484,6 +503,7 @@ export default function ChaptersPage() {
                 saveStatus={saveStatus}
                 chapter={activeChapter}
                 hasContent={stats.words > 0}
+                onDeleteChapter={handleDeleteChapter}
               />
             )}
             <div className="grid flex-1 place-items-center">
@@ -502,6 +522,7 @@ export default function ChaptersPage() {
                 saveStatus={saveStatus}
                 chapter={activeChapter}
                 hasContent={stats.words > 0}
+                onDeleteChapter={handleDeleteChapter}
               />
             )}
             {!hideChrome && <FormattingToolbar withSelection={withSelection} />}
@@ -789,6 +810,7 @@ function ManuscriptPanel({
   onSelectScene,
   onAddChapter,
   addingChapter,
+  onDeleteChapter,
 }: {
   bookId: string;
   manuscript: ManuscriptPart[];
@@ -798,10 +820,27 @@ function ManuscriptPanel({
   onSelectScene: (id: string) => void;
   onAddChapter: () => void;
   addingChapter: boolean;
+  onDeleteChapter: (chapterId: string) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(
     () => new Set(manuscript.map((p) => p.id).concat(activeChapterId ?? [])),
   );
+  // A cold page load renders this panel before the chapter list has
+  // actually fetched — `manuscript` is still `[]` at the lazy initializer
+  // above, so the part starts collapsed and (since that initializer only
+  // ever runs once) stays that way forever once data arrives, with no
+  // visible chapters and only a small chevron hinting anything's there.
+  // Auto-expands each part exactly once, the first render after it
+  // actually shows up — autoExpandedRef tracks which ids already got that
+  // one-time nudge, so a part the writer deliberately collapses afterward
+  // doesn't get silently re-forced open on the next render.
+  const autoExpandedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const newIds = manuscript.map((p) => p.id).filter((id) => !autoExpandedRef.current.has(id));
+    if (newIds.length === 0) return;
+    for (const id of newIds) autoExpandedRef.current.add(id);
+    setExpanded((prev) => new Set([...prev, ...newIds]));
+  }, [manuscript]);
   const [query, setQuery] = useState("");
 
   // Detects gaps in chapter numbering (e.g. chapters created directly
@@ -1011,6 +1050,7 @@ function ManuscriptPanel({
                       onToggle={() => toggle(chapter.id)}
                       onSelect={() => onSelectChapter(chapter.id)}
                       onSelectScene={onSelectScene}
+                      onDelete={() => onDeleteChapter(chapter.id)}
                     />
                   ))}
                 </ul>
@@ -1058,6 +1098,7 @@ function ChapterRow({
   onToggle,
   onSelect,
   onSelectScene,
+  onDelete,
 }: {
   chapter: ManuscriptChapter;
   active: boolean;
@@ -1066,8 +1107,10 @@ function ChapterRow({
   onToggle: () => void;
   onSelect: () => void;
   onSelectScene: (id: string) => void;
+  onDelete: () => Promise<void>;
 }) {
   const hasScenes = !!chapter.scenes?.length;
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   return (
     <li>
       <div
@@ -1095,7 +1138,31 @@ function ChapterRow({
         ) : active ? (
           <span className="size-1.5 shrink-0 rounded-full bg-gold" />
         ) : null}
+        <span className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100">
+          <OptionsMenu
+            ariaLabel={`More options for Chapter ${chapter.number}`}
+            buttonClassName="grid size-6 place-items-center rounded-md text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink"
+            iconClassName="size-3.5"
+            items={[{ label: "Delete Chapter", Icon: Trash2, danger: true, onClick: () => setConfirmingDelete(true) }]}
+          />
+        </span>
       </div>
+
+      {confirmingDelete && (
+        <ConfirmDialog
+          title="Delete this chapter?"
+          description={
+            chapter.syncedToMemoryAt
+              ? `"Chapter ${chapter.number} – ${chapter.title}" will be permanently deleted. This can't be undone. It's already been synced to AI memory — deleting it here does not remove that memory, so the AI may still recall it in future generations.`
+              : `"Chapter ${chapter.number} – ${chapter.title}" will be permanently deleted. This can't be undone.`
+          }
+          onCancel={() => setConfirmingDelete(false)}
+          onConfirm={async () => {
+            await onDelete();
+            setConfirmingDelete(false);
+          }}
+        />
+      )}
 
       {hasScenes && expanded && (
         <ul className="flex flex-col gap-0.5">
@@ -1133,6 +1200,7 @@ function TopBar({
   saveStatus,
   chapter,
   hasContent,
+  onDeleteChapter,
 }: {
   project: { id: string; title: string };
   chapterTitle: string;
@@ -1140,6 +1208,7 @@ function TopBar({
   saveStatus?: SaveStatus;
   chapter?: ManuscriptChapter;
   hasContent?: boolean;
+  onDeleteChapter: (chapterId: string) => Promise<void>;
 }) {
   return (
     <header
@@ -1219,7 +1288,12 @@ function TopBar({
           would just duplicate one or the other in every reachable state. */}
       <div className="flex shrink-0 items-center gap-1">
         <ShareButton />
-        <MoreMenu projectId={project.id} chapter={chapter} hasContent={hasContent ?? false} />
+        <MoreMenu
+          projectId={project.id}
+          chapter={chapter}
+          hasContent={hasContent ?? false}
+          onDeleteChapter={onDeleteChapter}
+        />
       </div>
     </header>
   );
@@ -1300,13 +1374,16 @@ function MoreMenu({
   projectId,
   chapter,
   hasContent,
+  onDeleteChapter,
 }: {
   projectId: string;
   chapter?: ManuscriptChapter;
   hasContent: boolean;
+  onDeleteChapter: (chapterId: string) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [syncState, setSyncState] = useState<SyncState>({ kind: "idle" });
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const syncNeed = syncNeedFor(chapter);
   const canSync = !!chapter && hasContent && syncNeed !== "up-to-date";
@@ -1402,9 +1479,35 @@ function MoreMenu({
               {syncState.kind === "error" && (
                 <p className="px-3 pb-1 text-xs text-danger">{syncState.message}</p>
               )}
+              <div className="my-1 h-px bg-line" />
+              <button
+                type="button"
+                onClick={() => setConfirmingDelete(true)}
+                disabled={!chapter}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-danger transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Trash2 className="size-3.5 shrink-0" />
+                Delete Chapter
+              </button>
             </div>
           </div>
         </>
+      )}
+      {confirmingDelete && chapter && (
+        <ConfirmDialog
+          title="Delete this chapter?"
+          description={
+            chapter.syncedToMemoryAt
+              ? `"Chapter ${chapter.number} – ${chapter.title}" will be permanently deleted. This can't be undone. It's already been synced to AI memory — deleting it here does not remove that memory, so the AI may still recall it in future generations.`
+              : `"Chapter ${chapter.number} – ${chapter.title}" will be permanently deleted. This can't be undone.`
+          }
+          onCancel={() => setConfirmingDelete(false)}
+          onConfirm={async () => {
+            await onDeleteChapter(chapter.id);
+            setConfirmingDelete(false);
+            setOpen(false);
+          }}
+        />
       )}
     </div>
   );
