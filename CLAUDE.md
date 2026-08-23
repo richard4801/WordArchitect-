@@ -1996,28 +1996,45 @@ call, filtering the deleted row out of the local cache on success:
 didn't cover — no chapter-delete feature existed anywhere in the app
 until a user directly asked for one on a real 400+ chapter manuscript).
 `deleteChapter(chapterId)` (`manuscript-store.ts`) calls the real `DELETE
-/manuscript/chapters/:id` — confirmed by reading the route directly: it
-cascades on the backend to that chapter's scene markers and Outliner
-beats, but **deliberately does not touch `manuscript_chunks`** — a
-chapter already synced to AI memory stays retrievable there even after
-its editor row is gone, the same one-directional-memory behavior
-`sync-to-memory` itself already has. Two entry points, both going through
-the same function: a hover-revealed `OptionsMenu` on each `ChapterRow` in
-the left-rail chapter list (delete any chapter without opening it first —
-the case that actually matters on a long manuscript), and a "Delete
-Chapter" item in the editor's own per-chapter "..." menu (`MoreMenu`,
-alongside Sync to AI Memory) for the currently-open chapter. Both route
-through the same `ConfirmDialog`, whose description changes based on
-`chapter.syncedToMemoryAt`: a plain "will be permanently deleted" for a
-never-synced chapter, versus an explicit note that deleting does **not**
-remove it from AI memory for one that has been — so a writer deleting a
-synced chapter is never left assuming that also erases what the AI can
-still recall. Deleting the currently-open chapter clears the pending
-autosave timeout rather than flushing it (flushing would PATCH a chapter
-that's about to not exist) and clears the editor's selection so it falls
-back to whatever chapter is now first, same as the existing "just
-deleted the active item" pattern every other domain's delete already
-uses.
+/manuscript/chapters/:id`, which cascades on the backend to that
+chapter's scene markers and Outliner beats. **Originally shipped without
+touching `manuscript_chunks`** (a chapter already synced to AI memory
+stayed retrievable there even after its editor row was gone) — the
+backend team closed that gap in a follow-up (`4dc1d41`, backend repo):
+the route now captures the deleted row's `book_id`/`number` off the same
+`DELETE ... RETURNING` it already did, then deletes matching
+`manuscript_chunks` rows (the table has no `chapter_id` column — it's
+keyed by `book_id` + `chapter_number`, same pairing `sync-to-memory`
+already uses to find a chapter's chunks). A chunk-delete failure doesn't
+fail silently either: the chapter row is already gone by that point, so
+the route returns a real 502 saying memory couldn't be fully cleared,
+rather than a generic success. The frontend's delete confirm copy
+(`ChapterRow`'s and `MoreMenu`'s `ConfirmDialog`) originally branched on
+`chapter.syncedToMemoryAt` to warn that AI memory would survive the
+delete — removed once the backend fix shipped, since that warning would
+now be actively wrong; both call sites show the same plain "will be
+permanently deleted" copy regardless of sync state. Two entry points,
+both going through the same `deleteChapter()`: a hover-revealed
+`OptionsMenu` on each `ChapterRow` in the left-rail chapter list (delete
+any chapter without opening it first — the case that actually matters on
+a long manuscript), and a "Delete Chapter" item in the editor's own
+per-chapter "..." menu (`MoreMenu`, alongside Sync to AI Memory) for the
+currently-open chapter. Deleting the currently-open chapter clears the
+pending autosave timeout rather than flushing it (flushing would PATCH a
+chapter that's about to not exist) and clears the editor's selection so
+it falls back to whatever chapter is now first, same as the existing
+"just deleted the active item" pattern every other domain's delete
+already uses.
+
+**Known edge case, not yet handled**: if the backend's chunk cleanup
+fails (that 502), the chapter row is genuinely already deleted, but the
+frontend's `deleteChapter()` throws on any non-2xx response and never
+updates the local chapter-list cache — so the deleted chapter would keep
+showing in the UI until the next real refetch, even though it's actually
+gone. Not fixed here since it depends on a rare, hard-to-provoke
+partial-failure path; worth a real fix (e.g. distinguishing this specific
+502 from a genuine delete failure and still clearing the cache) if it
+ever shows up in practice.
 
 **A second, unrelated bug found while testing chapter delete on a cold
 page load**: the manuscript nav's "Manuscript" part rendered permanently
@@ -2035,15 +2052,18 @@ deliberately collapses it afterward.
 
 **Verified working** (against a local mock backend with `DELETE
 /manuscript/chapters/:id`, extended to match the real cascade/response
-shape): a fresh page load auto-expands the chapter list for real (the
-cold-load bug, confirmed fixed); deleting a never-synced chapter via the
-nav row's hover options menu shows the plain confirm copy, and the
-chapter is gone from both the UI and a direct API check afterward;
-deleting the now-open chapter (which had been synced) via the editor's
-own "..." menu shows the AI-memory caveat in the confirm dialog; and
-deleting the last remaining chapter correctly falls back to the existing
-"Start your manuscript" empty state. Zero console errors across the full
-pass.
+shape at the time): a fresh page load auto-expands the chapter list for
+real (the cold-load bug, confirmed fixed); deleting a never-synced
+chapter via the nav row's hover options menu shows the confirm copy, and
+the chapter is gone from both the UI and a direct API check afterward;
+deleting the now-open chapter via the editor's own "..." menu works the
+same way; and deleting the last remaining chapter correctly falls back to
+the existing "Start your manuscript" empty state. Zero console errors
+across the full pass. (This pass predates the backend's `manuscript_chunks`
+cleanup fix above and the resulting removal of the AI-memory caveat
+copy — that later change was a straightforward text-only edit on the two
+`ConfirmDialog` call sites, not independently re-verified end-to-end
+against the new backend behavior.)
 
 **One real layout bug found and fixed while wiring this up**:
 `OptionsMenu`'s first draft wrapped its trigger button in its own

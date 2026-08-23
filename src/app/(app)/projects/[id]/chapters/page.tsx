@@ -1151,11 +1151,7 @@ function ChapterRow({
       {confirmingDelete && (
         <ConfirmDialog
           title="Delete this chapter?"
-          description={
-            chapter.syncedToMemoryAt
-              ? `"Chapter ${chapter.number} – ${chapter.title}" will be permanently deleted. This can't be undone. It's already been synced to AI memory — deleting it here does not remove that memory, so the AI may still recall it in future generations.`
-              : `"Chapter ${chapter.number} – ${chapter.title}" will be permanently deleted. This can't be undone.`
-          }
+          description={`"Chapter ${chapter.number} – ${chapter.title}" will be permanently deleted. This can't be undone.`}
           onCancel={() => setConfirmingDelete(false)}
           onConfirm={async () => {
             await onDelete();
@@ -1496,11 +1492,7 @@ function MoreMenu({
       {confirmingDelete && chapter && (
         <ConfirmDialog
           title="Delete this chapter?"
-          description={
-            chapter.syncedToMemoryAt
-              ? `"Chapter ${chapter.number} – ${chapter.title}" will be permanently deleted. This can't be undone. It's already been synced to AI memory — deleting it here does not remove that memory, so the AI may still recall it in future generations.`
-              : `"Chapter ${chapter.number} – ${chapter.title}" will be permanently deleted. This can't be undone.`
-          }
+          description={`"Chapter ${chapter.number} – ${chapter.title}" will be permanently deleted. This can't be undone.`}
           onCancel={() => setConfirmingDelete(false)}
           onConfirm={async () => {
             await onDeleteChapter(chapter.id);
