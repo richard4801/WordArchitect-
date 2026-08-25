@@ -366,6 +366,17 @@ body {
   }
 }
 
+/* Manuscript search — briefly highlights the paragraph a search result jumped to, so landing on the right line is obvious even once the modal's gone */
+@keyframes wa-search-flash {
+  0%,
+  100% {
+    background-color: transparent;
+  }
+  20% {
+    background-color: color-mix(in srgb, var(--gold) 30%, transparent);
+  }
+}
+
 @layer utilities {
   .wa-fill {
     position: relative;
@@ -388,9 +399,14 @@ body {
   .wa-ring-spin {
     animation: wa-spin 2.6s linear infinite;
   }
+  .wa-search-flash {
+    animation: wa-search-flash 1.6s ease-out;
+    border-radius: 0.25rem;
+  }
   @media (prefers-reduced-motion: reduce) {
     .wa-shimmer,
-    .wa-ring-spin {
+    .wa-ring-spin,
+    .wa-search-flash {
       animation: none;
     }
   }

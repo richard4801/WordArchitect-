@@ -271,13 +271,17 @@ export async function createChapter(bookId: string, input: { title?: string } = 
 
 /**
  * Delete a chapter for real (`DELETE /manuscript/chapters/:id`). Cascades
- * on the backend to that chapter's scene markers and Outliner beats, but
- * deliberately does **not** touch `manuscript_chunks` — a chapter already
- * synced into AI memory stays retrievable there even after its editor row
- * is gone (same "memory is one-directional, not automatically cleaned up"
- * behavior `sync-to-memory` itself already has). Callers should show that
- * distinction in their confirm copy for a chapter that's been synced,
- * rather than implying delete removes it from AI memory too.
+ * on the backend to that chapter's scene markers and Outliner beats, and
+ * (as of the backend's own follow-up fix) also deletes that chapter's
+ * `manuscript_chunks` rows (matched by `book_id` + the deleted chapter's
+ * `number`, captured off the same `DELETE ... RETURNING` before the row is
+ * gone) so AI memory doesn't outlive the chapter it came from. A failure
+ * to clear those chunks surfaces as a real 502 from the backend even
+ * though the chapter row itself is already deleted by that point — see
+ * CLAUDE.md's "Known edge case" note: this function still throws on any
+ * non-2xx response and doesn't update the local cache in that case, so a
+ * chapter that's actually gone server-side could keep showing here until
+ * a real refetch.
  */
 export async function deleteChapter(chapterId: string): Promise<void> {
   await apiFetch<void>(`/manuscript/chapters/${chapterId}`, { method: "DELETE" });
@@ -499,13 +503,21 @@ export async function renumberChaptersToCloseGaps(bookId: string): Promise<Renum
 // chapter is actually open in the editor.
 // ---------------------------------------------------------------------
 
-type WordCountEntry = { perChapter: Record<string, number>; total: number; status: LoadStatus };
+/** One chapter's full text, kept alongside its word count so the same all-bodies fetch can also back full-manuscript search — see useManuscriptSearchIndex(). */
+export type IndexedChapterBody = { id: string; number: number; title: string; paragraphs: ChapterParagraph[] };
+
+type WordCountEntry = {
+  perChapter: Record<string, number>;
+  total: number;
+  status: LoadStatus;
+  bodies: IndexedChapterBody[];
+};
 const wordCountCache = new Map<string, WordCountEntry>();
 
 function getWordCountEntry(bookId: string): WordCountEntry {
   let entry = wordCountCache.get(bookId);
   if (!entry) {
-    entry = { perChapter: {}, total: 0, status: "idle" };
+    entry = { perChapter: {}, total: 0, status: "idle", bodies: [] };
     wordCountCache.set(bookId, entry);
   }
   return entry;
@@ -535,20 +547,27 @@ async function loadWordCount(bookId: string): Promise<void> {
       listEntry.rows.map((row) => apiFetch<ChapterDetailResponse>(`/manuscript/chapters/${row.id}`)),
     );
     const perChapter: Record<string, number> = {};
+    const indexedBodies: IndexedChapterBody[] = [];
     let total = 0;
     for (const body of bodies) {
       const words = body.chapter.paragraphs.reduce((sum, p) => sum + countWords(p.text), 0);
       perChapter[body.chapter.id] = words;
       total += words;
+      indexedBodies.push({
+        id: body.chapter.id,
+        number: body.chapter.number,
+        title: body.chapter.title?.trim() || `Chapter ${body.chapter.number}`,
+        paragraphs: body.chapter.paragraphs,
+      });
     }
-    setWordCountEntry(bookId, { perChapter, total, status: "loaded" });
+    setWordCountEntry(bookId, { perChapter, total, status: "loaded", bodies: indexedBodies });
   } catch {
     setWordCountEntry(bookId, { ...getWordCountEntry(bookId), status: "error" });
   }
   emit();
 }
 
-const EMPTY_WORD_COUNT: WordCountEntry = { perChapter: {}, total: 0, status: "idle" };
+const EMPTY_WORD_COUNT: WordCountEntry = { perChapter: {}, total: 0, status: "idle", bodies: [] };
 
 /** Live total word count for one book, computed from every chapter's real body text — fetched lazily, once per book. */
 export function useManuscriptWordCount(bookId: string | undefined): WordCountEntry {
@@ -589,4 +608,37 @@ export function useTotalWordCount(bookIds: string[]): { total: number; status: L
     return { total, status };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, storeVersion]);
+}
+
+// ---------------------------------------------------------------------
+// Full-manuscript search — reuses the same all-chapter-bodies fetch
+// useManuscriptWordCount() already does (real cost, already accepted at
+// this app's target scale — see CLAUDE.md §5.6), rather than issuing a
+// second round of per-chapter requests just to search. `enabled` gates
+// the fetch on this being the search panel actually being open (or the
+// word count cache already being warm from elsewhere, e.g. /projects or
+// the Overview tab), so opening the editor alone never triggers it.
+// ---------------------------------------------------------------------
+
+const EMPTY_SEARCH_ROWS: IndexedChapterBody[] = [];
+
+export function useManuscriptSearchIndex(
+  bookId: string | undefined,
+  enabled: boolean,
+): { rows: IndexedChapterBody[]; status: LoadStatus } {
+  useEffect(() => {
+    if (bookId && enabled && getWordCountEntry(bookId).status === "idle") void loadWordCount(bookId);
+  }, [bookId, enabled]);
+  const entry = useSyncExternalStore(
+    subscribe,
+    () => (bookId ? getWordCountEntry(bookId) : EMPTY_WORD_COUNT),
+    () => (bookId ? getWordCountEntry(bookId) : EMPTY_WORD_COUNT),
+  );
+  return useMemo(
+    () => ({
+      rows: entry.bodies.length ? [...entry.bodies].sort((a, b) => a.number - b.number) : EMPTY_SEARCH_ROWS,
+      status: entry.status,
+    }),
+    [entry],
+  );
 }

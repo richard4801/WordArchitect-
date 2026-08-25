@@ -1354,6 +1354,68 @@ properly disabled), calling `sync-to-memory` again with no further edit
 returns the real `200 {alreadySynced: true}` no-op rather than a fresh
 201. Zero console errors across the full pass.
 
+**Search this manuscript — the sidebar's search icon, previously dead,
+now a real full-text search over every chapter's actual saved content.**
+User report: the highlighted search icon at the top of the left-rail
+chapter nav had no `onClick` at all — the only search-shaped control in
+the editor was the always-visible "Filter chapters…" input directly below
+it, which only matches a chapter's `number`/`title` client-side, not its
+prose. On a real ~400-chapter manuscript, finding "which chapter has the
+line about the phoenix" meant opening chapters one at a time.
+
+**No new backend endpoint was needed, or added.** The backend has no
+`/search` route of any kind — confirmed by reading every file in
+`src/routes/` on `claude/ai-fiction-platform-backend-qnvkm5` directly, not
+inferred. What it does have (`src/services/rag.ts`) is a vector-embedding
+similarity search over `manuscript_chunks`, but that's Hanami's own
+internal "Deep Past" context-retrieval layer for prose *generation* — it's
+scoped to whatever the current scene beat's embeddings are nearest to,
+throws away anything below a similarity threshold, and is never exposed as
+a general "find this exact phrase" tool. Building a real backend
+full-text-search endpoint (and this app has no push access to that repo
+anyway) would also duplicate a fetch this app already makes: **this
+manuscript search is 100% client-side**, and deliberately reuses the exact
+same all-chapters-bodies fetch `useManuscriptWordCount()` already does
+(see §5.6) rather than issuing a second round of per-chapter requests.
+`manuscript-store.ts`'s existing `wordCountCache` entry now also keeps
+each chapter's real `paragraphs` (`IndexedChapterBody`) alongside its word
+count — same fetch, no extra network cost — and a new
+`useManuscriptSearchIndex(bookId, enabled)` reads from that same cache,
+gated by an `enabled` flag so opening the editor alone never triggers the
+fetch; it only fires once the search panel is actually opened (or reuses
+whatever's already warm from `/projects`, the Overview tab, or the
+Dashboard having already loaded this book's word count).
+
+**UI** (`ManuscriptSearchModal` in `chapters/page.tsx`, portaled and
+centered like `ConfirmDialog`): a plain case-insensitive substring search
+(debounced 200ms) across every non-scene-break paragraph's real text,
+returning up to 200 matches (`SEARCH_RESULT_LIMIT`) — each result shows
+its chapter number/title and a ~120-character snippet with the matched
+text `<mark>`-highlighted. Clicking a result calls `selectChapter()` (the
+same function the nav list and "Add Chapter" already use — flushes any
+pending autosave first, same as switching chapters any other way), then
+scrolls the target paragraph into view and briefly flashes it
+(`.wa-search-flash`, a CSS-only keyframe in `globals.css` — no DOM
+mutation, so it carries none of the `removeChild` reconciliation risk the
+"Type / for commands" placeholder fix earlier in this file had to work
+around) once that chapter's body has actually loaded (`useChapterBody` is
+lazy per-chapter, so the jump waits a render pass via `requestAnimationFrame`
+rather than assuming the target paragraph's DOM node already exists).
+Escape and a click on the overlay both close it, same convention as every
+other portaled dialog in this app.
+
+**Verified working** (against a local mock backend, three chapters with
+distinct planted content): opening the panel shows a real "search across
+every chapter's actual text" hint before typing, not an empty list;
+searching a word that appears in two different chapters' prose ("phoenix")
+returns exactly those two chapters' matches with the term highlighted;
+searching a word confined to one chapter ("dragon") returns exactly one
+result; searching a nonsense string shows a real "No matches" message
+rather than an empty silent list; clicking a result closes the modal,
+switches to the correct chapter, scrolls to and visibly flashes the exact
+matched paragraph; Escape and click-outside both close the panel. Zero
+console errors across the full pass.
+
 **Editable chapter title, and a real "renumber to close gaps" fix.** Two
 issues reported once a real ~400-chapter manuscript was in the app: every
 chapter nav row and the editor's own heading read "Chapter N – Chapter N"
@@ -1961,6 +2023,7 @@ summary the backend team asked for.)
 | Focus Mode (Normal/Typewriter/Zen) | Real, fully working client-only UI state — nothing to persist |
 | Ban this selection (Ghost Editor) | **Live** — highlight text, ban it for the book via `/banned-terms`; enforced automatically server-side on every future generation (see §4.6) |
 | Sync to AI Memory | **Live** — "..." menu action in the editor's TopBar, `POST /manuscript/chapters/:id/sync-to-memory` (§4.5) |
+| Search this manuscript (sidebar search icon) | **Live, client-side** — real full-text search across every chapter's actual saved paragraphs, not just chapter titles/numbers (that's the separate, always-visible "Filter chapters…" input, unchanged). No backend search endpoint exists (or is needed) for this — see below. |
 
 ---
 

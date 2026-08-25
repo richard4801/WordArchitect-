@@ -59,6 +59,7 @@ import {
 import {
   createChapter,
   deleteChapter,
+  type IndexedChapterBody,
   planChapterRenumber,
   renumberChaptersToCloseGaps,
   saveChapterBody,
@@ -69,6 +70,7 @@ import {
   useChapterBody,
   useChapterSaveStatus,
   useManuscript,
+  useManuscriptSearchIndex,
 } from "@/lib/manuscript-store";
 import { Progress } from "@/components/ui/progress";
 import { ChatPanel } from "@/components/chat-panel";
@@ -129,6 +131,8 @@ export default function ChaptersPage() {
   const [stats, setStats] = useState({ words: 0, characters: 0 });
   const [zoomPercent, setZoomPercent] = useState(100);
   const [creatingChapter, setCreatingChapter] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [pendingScrollParagraphId, setPendingScrollParagraphId] = useState<string | null>(null);
 
   const editableRef = useRef<HTMLDivElement>(null);
   const savedRangeRef = useRef<Range | null>(null);
@@ -332,6 +336,33 @@ export default function ChaptersPage() {
     return countText(text);
   }, [body]);
 
+  // Jump to a specific paragraph after a search result switches the open
+  // chapter — the new chapter's body loads asynchronously (useChapterBody
+  // is lazy per-chapter, see manuscript-store.ts), so this waits for
+  // `body` to actually reflect the target chapter before it can find the
+  // paragraph's real DOM node. A rAF, not an immediate query, since the
+  // paragraph list itself still needs one render pass to mount.
+  useEffect(() => {
+    if (!pendingScrollParagraphId || !body) return;
+    const targetId = pendingScrollParagraphId;
+    const raf = requestAnimationFrame(() => {
+      const el = editableRef.current?.querySelector(`[data-paragraph-id="${CSS.escape(targetId)}"]`);
+      if (el instanceof HTMLElement) {
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        el.classList.add("wa-search-flash");
+        window.setTimeout(() => el.classList.remove("wa-search-flash"), 1700);
+      }
+      setPendingScrollParagraphId(null);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [pendingScrollParagraphId, body]);
+
+  function jumpToSearchResult(chapterId: string, paragraphId: string) {
+    selectChapter(chapterId);
+    setPendingScrollParagraphId(paragraphId);
+    setShowSearch(false);
+  }
+
   // Reset the displayed `stats` whenever the open chapter changes — React's
   // sanctioned "adjust state during render" pattern (not an effect: setting
   // state here is intentional and synchronous with this render, not a
@@ -487,6 +518,7 @@ export default function ChaptersPage() {
           onAddChapter={handleCreateChapter}
           addingChapter={creatingChapter}
           onDeleteChapter={handleDeleteChapter}
+          onOpenSearch={() => setShowSearch(true)}
         />
       )}
 
@@ -584,6 +616,13 @@ export default function ChaptersPage() {
           status={banStatus}
           errorMessage={banErrorMessage}
           onBan={handleBanClick}
+        />
+      )}
+      {showSearch && (
+        <ManuscriptSearchModal
+          bookId={project.id}
+          onSelectResult={jumpToSearchResult}
+          onClose={() => setShowSearch(false)}
         />
       )}
       {pendingLongBan && (
@@ -811,6 +850,7 @@ function ManuscriptPanel({
   onAddChapter,
   addingChapter,
   onDeleteChapter,
+  onOpenSearch,
 }: {
   bookId: string;
   manuscript: ManuscriptPart[];
@@ -821,6 +861,7 @@ function ManuscriptPanel({
   onAddChapter: () => void;
   addingChapter: boolean;
   onDeleteChapter: (chapterId: string) => Promise<void>;
+  onOpenSearch: () => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(
     () => new Set(manuscript.map((p) => p.id).concat(activeChapterId ?? [])),
@@ -908,6 +949,7 @@ function ManuscriptPanel({
           <button
             type="button"
             aria-label="Search manuscript"
+            onClick={onOpenSearch}
             className="grid size-7 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
           >
             <Search className="size-4" />
@@ -1087,6 +1129,173 @@ function ManuscriptPanel({
 
       {editingGoal && <EditWritingGoalModal onClose={() => setEditingGoal(false)} />}
     </aside>
+  );
+}
+
+type ManuscriptSearchResult = {
+  chapterId: string;
+  paragraphId: string;
+  chapterNumber: number;
+  chapterTitle: string;
+  before: string;
+  match: string;
+  after: string;
+};
+
+const SEARCH_SNIPPET_RADIUS = 60;
+const SEARCH_RESULT_LIMIT = 200;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Case-insensitive substring search across every chapter's real paragraph text — reuses the same all-bodies fetch useManuscriptWordCount() already does, see manuscript-store.ts. Capped at SEARCH_RESULT_LIMIT so a very broad query against a 400+ chapter manuscript can't render an unbounded list. */
+function searchManuscript(rows: IndexedChapterBody[], query: string): ManuscriptSearchResult[] {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+  const pattern = new RegExp(escapeRegExp(trimmed), "i");
+  const results: ManuscriptSearchResult[] = [];
+
+  for (const chapter of rows) {
+    for (const paragraph of chapter.paragraphs) {
+      if (paragraph.break) continue;
+      const match = pattern.exec(paragraph.text);
+      if (!match) continue;
+      const start = match.index;
+      const end = start + match[0].length;
+      results.push({
+        chapterId: chapter.id,
+        paragraphId: paragraph.id,
+        chapterNumber: chapter.number,
+        chapterTitle: chapter.title,
+        before: paragraph.text.slice(Math.max(0, start - SEARCH_SNIPPET_RADIUS), start),
+        match: paragraph.text.slice(start, end),
+        after: paragraph.text.slice(end, end + SEARCH_SNIPPET_RADIUS),
+      });
+      if (results.length >= SEARCH_RESULT_LIMIT) return results;
+    }
+  }
+  return results;
+}
+
+/**
+ * Full-manuscript content search — distinct from the sidebar's own
+ * "Filter chapters…" input, which only matches chapter number/title. This
+ * searches every chapter's actual prose, portaled and centered like
+ * ConfirmDialog. Debounced 200ms since the search itself is a synchronous
+ * regex scan over however much of the manuscript is loaded, and re-running
+ * it on every keystroke against a very large book would be wasted work.
+ */
+function ManuscriptSearchModal({
+  bookId,
+  onSelectResult,
+  onClose,
+}: {
+  bookId: string;
+  onSelectResult: (chapterId: string, paragraphId: string) => void;
+  onClose: () => void;
+}) {
+  const [rawQuery, setRawQuery] = useState("");
+  const [query, setQuery] = useState("");
+  const { rows, status } = useManuscriptSearchIndex(bookId, true);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setQuery(rawQuery), 200);
+    return () => window.clearTimeout(t);
+  }, [rawQuery]);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  const results = useMemo(() => searchManuscript(rows, query), [rows, query]);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[60] grid place-items-start justify-center bg-canvas/70 p-4 pt-[12vh] backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="card flex max-h-[70vh] w-full max-w-lg flex-col overflow-hidden p-0"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 border-b border-line px-4 py-3">
+          <Search className="size-4 shrink-0 text-ink-faint" />
+          <input
+            ref={inputRef}
+            value={rawQuery}
+            onChange={(e) => setRawQuery(e.target.value)}
+            placeholder="Search this manuscript…"
+            className="w-full bg-transparent text-sm text-ink placeholder:text-ink-faint focus:outline-none"
+          />
+          <button
+            type="button"
+            aria-label="Close search"
+            onClick={onClose}
+            className="grid size-6 shrink-0 place-items-center rounded-md text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+
+        <div className="scroll-slim min-h-0 flex-1 overflow-y-auto p-2">
+          {status === "loading" && rows.length === 0 && (
+            <p className="px-3 py-6 text-center text-xs text-ink-muted">Loading manuscript…</p>
+          )}
+          {status === "error" && rows.length === 0 && (
+            <p className="px-3 py-6 text-center text-xs text-danger">Couldn&apos;t load the manuscript to search.</p>
+          )}
+          {status === "loaded" && !query.trim() && (
+            <p className="px-3 py-6 text-center text-xs text-ink-faint">
+              Search across every chapter&apos;s actual text — not just titles.
+            </p>
+          )}
+          {status === "loaded" && query.trim() && results.length === 0 && (
+            <p className="px-3 py-6 text-center text-xs text-ink-faint">No matches for &quot;{query.trim()}&quot;.</p>
+          )}
+          {results.length > 0 && (
+            <>
+              <ul className="flex flex-col gap-0.5">
+                {results.map((r) => (
+                  <li key={r.paragraphId}>
+                    <button
+                      type="button"
+                      aria-label={`Go to Chapter ${r.chapterNumber}: ${r.chapterTitle}`}
+                      onClick={() => onSelectResult(r.chapterId, r.paragraphId)}
+                      className="w-full rounded-lg px-3 py-2 text-left transition-colors hover:bg-surface-2"
+                    >
+                      <p className="text-xs font-medium text-ink-muted">
+                        Chapter {r.chapterNumber} – {r.chapterTitle}
+                      </p>
+                      <p className="mt-0.5 truncate text-sm text-ink">
+                        …{r.before}
+                        <mark className="rounded-sm bg-gold/30 px-0.5 text-ink">{r.match}</mark>
+                        {r.after}…
+                      </p>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {results.length >= SEARCH_RESULT_LIMIT && (
+                <p className="px-3 py-2 text-center text-xs text-ink-faint">
+                  Showing the first {SEARCH_RESULT_LIMIT} matches — narrow your search to see more.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
