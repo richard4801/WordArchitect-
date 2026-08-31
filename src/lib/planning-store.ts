@@ -24,6 +24,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { apiFetch, getUserId } from "@/lib/api-client";
 import type {
   AgentPrompt,
+  AgentPromptAuthor,
   AgentRole,
   EffortLevel,
   ExtractedEntityCandidate,
@@ -50,6 +51,11 @@ type AgentPromptRow = {
   user_prompt_template: string;
   model: string;
   effort: EffortLevel;
+  // Not declared on the backend's own AgentPrompt TypeScript interface as
+  // of this writing, but the underlying column is real and `select("*")`
+  // returns it regardless — optional/nullable here so a row that
+  // genuinely lacks it doesn't break the mapping, just reads as "writer".
+  authored_by?: AgentPromptAuthor | null;
   created_at: string;
 };
 type PromptsListResponse = { prompts: AgentPromptRow[] };
@@ -67,6 +73,7 @@ function mapPromptRow(row: AgentPromptRow): AgentPrompt {
     userPromptTemplate: row.user_prompt_template,
     model: row.model,
     effort: row.effort,
+    authoredBy: row.authored_by ?? "writer",
     createdAt: row.created_at,
   };
 }
@@ -196,12 +203,13 @@ type PlanningRunRow = {
   id: string;
   book_id: string;
   user_id: string;
-  current_stage: Exclude<PlanningStage, "all">;
+  current_stage: Exclude<PlanningStage, "all" | "intake">;
   status: PlanningRunStatus;
-  stage_artifacts: Partial<Record<Exclude<PlanningStage, "all">, string>>;
+  stage_artifacts: Partial<Record<Exclude<PlanningStage, "all" | "intake">, string>>;
   panel_reviews: { logic_critic?: unknown; suspense_critic?: unknown } | null;
   arbitrator_synthesis: unknown;
   chat_history: PlanningChatMessage[];
+  intake_chat_history: PlanningChatMessage[];
   final_delta_directive: string | null;
   extracted_entities: ExtractedEntityCandidate[] | null;
   last_error: string | null;
@@ -221,6 +229,7 @@ function mapRunRow(row: PlanningRunRow): PlanningRun {
     panelReviews: row.panel_reviews,
     arbitratorSynthesis: row.arbitrator_synthesis,
     chatHistory: row.chat_history ?? [],
+    intakeChatHistory: row.intake_chat_history ?? [],
     finalDeltaDirective: row.final_delta_directive,
     extractedEntities: row.extracted_entities,
     lastError: row.last_error,
@@ -279,7 +288,12 @@ export async function loadPlanningRun(runId: string): Promise<void> {
   }
 }
 
-/** Starts a brand-new run at Stage 1 for this book and makes it the active run. */
+/**
+ * Starts a brand-new run for this book and makes it the active run — NOT
+ * Stage 1 yet. A fresh run opens in `intake_active`: a conversation where
+ * the writer describes the book before the Generator ever runs (see
+ * `sendIntakeChatTurn`/`finalizeIntakeConversation` below).
+ */
 export async function startPlanningRun(bookId: string): Promise<PlanningRun> {
   runStatus = "loading";
   runError = null;
@@ -296,6 +310,36 @@ export async function startPlanningRun(bookId: string): Promise<PlanningRun> {
     emitRun();
     throw err;
   }
+}
+
+/**
+ * One turn of the pre-Stage-1 intake conversation. Pasting a URL directly
+ * in `message` is enough — the backend gives Claude a server-side
+ * web_fetch tool that reads the page itself, no client-side fetching
+ * needed. `document`, if given, is read for this one call only and never
+ * persisted — this is a one-shot "attach a reference" input, not a saved
+ * asset, so there's nothing to clean up client-side either.
+ */
+export async function sendIntakeChatTurn(
+  runId: string,
+  message: string,
+  document?: { base64: string; mediaType: string },
+): Promise<PlanningRun> {
+  const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/intake-chat`, {
+    method: "POST",
+    body: JSON.stringify({
+      message,
+      documentBase64: document?.base64,
+      documentMediaType: document?.mediaType,
+    }),
+  });
+  return setActiveRun(res.run);
+}
+
+/** Compiles the intake conversation into the Generator's first directive and opens Stage 1 (status -> generating). */
+export async function finalizeIntakeConversation(runId: string): Promise<PlanningRun> {
+  const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/intake-finalize`, { method: "POST" });
+  return setActiveRun(res.run);
 }
 
 async function callGenerate(runId: string): Promise<PlanningRun> {

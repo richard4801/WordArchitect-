@@ -2016,37 +2016,148 @@ pre-writing/planning phase. Types/metadata in `src/lib/planning-data.ts`;
 `src/lib/planning-store.ts` fetches/writes real data — no mock/seed
 predecessor existed for this domain, it shipped live from the start.
 
-**Every agent's behavior is a database row the writer authors and saves —
+**Every agent's behavior is a database row someone authors and saves —
 the backend contains zero prompt content of its own.** A run can't do
-anything until at least the four Stage 1 prompts (`generator`,
-`logic_critic`, `suspense_critic`, `arbitrator_panel`, all at
-`stage_1_summary`) exist. Seven roles total (`generator`, `logic_critic`,
+anything until at minimum `arbitrator_chat`/`arbitrator_directive` exist
+at stage `intake` (for the pre-Stage-1 conversation, see below) and
+`generator`/`logic_critic`/`suspense_critic`/`arbitrator_panel` exist at
+`stage_1_summary`. Seven roles total (`generator`, `logic_critic`,
 `suspense_critic`, `arbitrator_panel`, `arbitrator_chat`,
-`arbitrator_directive`, `entity_extractor`) × four stages
-(`stage_1_summary`, `stage_2_acts`, `stage_3_beats`, or `all` for a role
-whose behavior doesn't need to vary by stage — `arbitrator_chat`,
-`arbitrator_directive`, `entity_extractor` typically only need one `all`
-version each, a UI hint only, not enforced). `POST /agent-prompts` saves
-a **new version and activates it immediately**, deactivating whatever was
-previously active for that exact role+stage — the only "save" action,
-no separate draft/publish step. `PATCH /agent-prompts/:id` edits a
-version's content in place, or reactivates an older one via
-`isActive: true`. `DELETE` refuses with a real `409` if the version is
-currently active for its role+stage — surfaced in the UI as "activate a
-different one first" rather than a generic error, since `ApiError.status`
-from `api-client.ts` carries the real HTTP status for exactly this kind
-of branch.
+`arbitrator_directive`, `entity_extractor`) × five stages
+(`stage_1_summary`, `stage_2_acts`, `stage_3_beats`, `intake`, or `all`
+for a role whose behavior doesn't need to vary by stage).
+`entity_extractor` is the one role that only ever needs a single `all`
+version — the backend hardcodes stage `"all"` when looking it up (see
+`extractEntities()` in `planningEngine.ts`), never the run's actual
+`current_stage`. `arbitrator_chat`/`arbitrator_directive` are different:
+they're genuinely looked up at **two distinct moments** — stage `intake`
+for the pre-Stage-1 conversation, and the run's real current stage
+(falling back to `all`) for a mid-pipeline rejection interview — confirmed
+by reading `intakeChatTurn()`/`finalizeIntake()` vs.
+`chatTurn()`/`finalizeDirective()` directly, since each moment passes
+different placeholders (see below). `SINGLE_STAGE_ROLES` and
+`DUAL_MOMENT_ROLES` in `planning-data.ts` drive the UI hint text
+(`roleStageGuidance()`) for this — not enforced, since `"all"` is always
+technically a valid stage for any role. `POST /agent-prompts` saves a
+**new version and activates it immediately**, deactivating whatever was
+previously active for that exact role+stage — the only "save" action, no
+separate draft/publish step. `PATCH /agent-prompts/:id` edits a version's
+content in place, or reactivates an older one via `isActive: true`.
+`DELETE` refuses with a real `409` if the version is currently active for
+its role+stage — surfaced in the UI as "activate a different one first"
+rather than a generic error, since `ApiError.status` from `api-client.ts`
+carries the real HTTP status for exactly this kind of branch.
+
+**Authorship tracking (`authored_by: "writer" | "claude"`) is real on the
+database side but not on the backend's own TypeScript layer** — confirmed
+by reading `types/domain.ts`'s `AgentPrompt` interface and both
+`routes/agentPrompts.ts` and `services/agentPrompts.ts` directly: none of
+them declare or touch this field at all. The column exists in Postgres
+(added directly via SQL, not a code change), and `listAgentPrompts()`/
+`getActivePrompt()` both do a plain `select("*")`, so `GET /agent-prompts`
+genuinely returns it in the raw JSON regardless of the TS interface
+missing it — `mapPromptRow()` in `planning-store.ts` reads
+`row.authored_by ?? "writer"` defensively rather than assuming it's
+always present. The frontend **never sends `authoredBy` on a save** — the
+POST route doesn't parse it into the insert payload either, so it would
+be silently ignored anyway; every version the writer saves through this
+UI just gets whatever the column's own DB-level default is (`"writer"`),
+which is exactly the intended behavior with zero code needed for it.
+
+**The edit-over-a-Claude-prompt warning is a real confirm gate, not just
+a badge**, per an explicit request: every prompt this app's book started
+with was authored by an AI session getting the pipeline working, not the
+writer, and the writer wanted a hard stop before accidentally overwriting
+one, not just a color-coded label. `PromptDraftEditor` captures
+`loadedFromClaude = (active?.authoredBy ?? "writer") === "claude"` once,
+at mount (fixed for that keyed instance's lifetime, like every other
+seed-from-`active` field in this component). If true: an inline warning
+renders above the form ("This prompt was written by Claude and tuned to
+work reliably. Editing it may reduce reliability."), and clicking **Save**
+routes through a `ConfirmDialog` ("Overwrite a Claude-authored prompt?")
+before `saveAgentPromptVersion()` is ever called — cancel and nothing is
+sent. A version already marked `"writer"` (the writer's own prompt, or
+their own earlier edit) saves immediately with no confirm, same as before
+this feature existed. Version history rows show a small `AuthorBadge`
+("🤖 Claude" / "✍️ Writer" — `Bot`/`PenLine` icons) so this is visible
+without opening a version at all.
 
 **Response shapes confirmed by reading the route source directly**
 (continuing this repo's established discipline): `GET /agent-prompts` ->
 `{prompts: [...]}`; `POST`/`PATCH` -> `{prompt: {...}}`; `DELETE` -> `204`.
 `POST /planning/runs` -> `{run}` (201); every step endpoint
 (`generate`/`critique`/`arbitrate`/`approve`/`reject`/`chat`/
-`finalize-directive`/`entities/confirm`) -> `{run}` (200) with the run's
-*entire* updated state, not a delta — `planning-store.ts` just replaces
-its single in-memory `activeRun` wholesale on every call rather than
-patching fields, same singleton-replacement pattern `manuscript-store.ts`
-already uses for the one open chapter's body.
+`finalize-directive`/`entities/confirm`/`intake-chat`/`intake-finalize`) ->
+`{run}` (200) with the run's *entire* updated state, not a delta —
+`planning-store.ts` just replaces its single in-memory `activeRun`
+wholesale on every call rather than patching fields, same
+singleton-replacement pattern `manuscript-store.ts` already uses for the
+one open chapter's body.
+
+**A run starts in an intake conversation, not Stage 1** — `POST
+/planning/runs` creates the row at `status: "intake_active"`, confirmed by
+reading `createPlanningRun()` directly (it doesn't touch `current_stage`
+at all on insert). The "Start Planning" entry point (`StartPlanningCard`)
+opens this conversation, not a form and not a Generate button:
+`IntakeChat` is a chat UI over `run.intakeChatHistory` — a genuinely
+separate thread from `run.chatHistory` (rejection interviews), confirmed
+in `domain.ts`'s own comment on why the two are kept apart ("a rejection
+at stage_2_acts shouldn't dredge up the original intake conversation, and
+vice versa"). `sendIntakeChatTurn(runId, message, document?)` posts to
+`/planning/runs/:id/intake-chat`; pasting a URL directly in `message` is
+enough for the backend's own server-side `web_fetch` tool to read it, no
+client-side scraping. An optional attached file is converted to base64
+via `FileReader.readAsDataURL()` (stripping the `data:...;base64,`
+prefix) and sent as `documentBase64`/`documentMediaType` — read for that
+one call only, never persisted, so there's no asset-management UI here,
+just a file picker feeding straight into the next send.
+`finalizeIntakeConversation(runId)` (a "Start Planning" button inside the
+chat, enabled once at least one message exists) posts to
+`/planning/runs/:id/intake-finalize`, which compiles the conversation into
+`final_delta_directive` and flips `status` to `"generating"` — the same
+field a rejection's `finalize-directive` populates, confirmed by reading
+`finalizeIntake()`: the Generator doesn't need to know whether direction
+came from an initial brief or a correction, only that it exists.
+
+**Neither `finalize-directive` nor `intake-finalize` auto-chains into the
+next Generate call** — a deliberate choice, not an oversight. Each of
+Generate/Critique/Arbitrate can individually take 60-180+ seconds
+(adaptive-thinking Claude over a full book's Codex context), so silently
+kicking off a multi-minute Stage 1 (or regeneration) call behind the same
+click that just finished an interview would spring an unrequested wait on
+the writer. Both land back on the plain `"generating"` card with its own
+explicit "Generate"/"Continue" button instead — the same one shown after
+Stage 1/2 approval, so there's exactly one visual pattern for "your next
+click starts a real model call," not two. `runPipelineForward()`'s own
+Generate→Critique→Arbitrate auto-chain is unaffected by this and still
+fires from one click, per the feature doc's explicit recommendation —
+that chain can still take several minutes total, which is what the
+long-running-call UI below is for.
+
+**Every long-running call gets an elapsed-time indicator, not just a
+spinner** — `useElapsedSeconds(active)` in `planning/page.tsx` ticks once
+a second while `active`, rendered via a shared `LongRunningNote`
+("Working…" under 8s, then "Still working — Ns so far. This step can take
+a couple of minutes; that's normal, not stuck."). Wired to every one of
+these: the Generate/Critique/Arbitrate auto-chain, a rejection-interview
+chat send, "Finalize & Regenerate", an intake-chat send, and
+"Start Planning" (intake-finalize) — every one of them is a real call to
+Claude and can genuinely take 1-3 minutes, and a bare spinner starts
+reading as "broken" long before that resolves. Implemented as a plain
+`setInterval` inside a `useEffect`, with the tick's `setSeconds()` call
+kept strictly inside the interval's own callback (never synchronously in
+the effect body) — the shape the React Compiler's
+`react-hooks/set-state-in-effect` lint rule requires; an earlier draft
+that reset the counter to `0` synchronously on the inactive branch failed
+that same lint rule and was reworked into this version.
+
+**Known gap: `DELETE /planning/runs/:id` ("Discard this plan") is
+documented but not implemented on this backend commit** — checked by
+reading every route in `planning.ts` and every exported function in
+`services/planningEngine.ts` directly; neither has any delete/abandon
+logic for a run. Deliberately **not built** on the frontend as a result —
+a button calling a route that 404s would be worse than no button. Revisit
+once the backend actually ships it.
 
 **One function drives Generate/Critique/Arbitrate, not three separate
 buttons** — `runPipelineForward()` inspects the run's own `status` (and,
@@ -2112,13 +2223,21 @@ a `useEffect` that re-syncs local state to a prop on every change.
 workspace — added to `(app)/layout.tsx`'s `isFullBleedWorkspace` regex and
 `(tabs)/layout.tsx`'s `TABS` list, same pattern as Outliner/Assistant):
 one route, two views toggled by a segmented control in its own header —
-**Pipeline** (a 3-step stage stepper, the current stage's artifact/review
-gate/chat interview/entity review depending on `status`) and **Prompts**
-(role+stage selectors, the draft form, a placeholder-token reference
-strip next to the User Prompt Template field, an output-shape hint banner
-for the two role/stage combinations whose output gets parsed as JSON —
+**Pipeline** (the intake chat until `intake_active` clears, then a 3-step
+stage stepper and the current stage's artifact/review gate/rejection
+chat/entity review depending on `status`) and **Prompts** (role+stage
+selectors, the draft form, a placeholder-token reference strip driven by
+`placeholdersFor(role, stage)` — a function, not a flat table, since
+`arbitrator_chat`/`arbitrator_directive` genuinely take different
+placeholders at `intake` vs. any other stage, confirmed by reading the
+backend source rather than trusting the feature doc's own placeholder
+table, which additionally omitted that `entity_extractor` also receives
+`{{CURRENT_ARTIFACT}}` — confirmed via `extractEntities()` — not just
+`{{BOOK_CONTEXT}}` as documented; an output-shape hint banner for the two
+role/stage combinations whose output gets parsed as JSON —
 `generator`/`stage_3_beats` and `entity_extractor` — and a version history
-list with Activate/Delete via the existing `OptionsMenu` component).
+list with authorship badges and Activate/Delete via the existing
+`OptionsMenu` component).
 
 **Two small, real, pre-existing bugs fixed in the same pass** (found while
 wiring this feature's own full-bleed layout, not part of the feature
@@ -2137,25 +2256,36 @@ entries for this feature.
 **Verified working** (against a local mock backend extended with
 `/agent-prompts` and `/planning/runs` handlers replicating the real
 envelope shapes, the per-role/stage active-version-deactivation behavior,
-the 409-on-delete-active conflict, and the "no active prompt for X/Y"
-failure-with-`last_error` behavior): starting a run shows the Stage 1
-stepper and a real "Generate Summary" button; generating auto-chains
-through critique and arbitration to the review gate, showing the real
-artifact and both critics' reviews and the arbitrator's synthesis;
-rejecting opens the chat interview, sending a message shows both the
-user's line and a reply, and "Finalize & Regenerate" compiles a directive
-and drives back to a revised review gate (confirmed the regenerated
-artifact reflects the directive); approving advances through all three
-stages in sequence; Stage 3's approval reaches the entity review screen
-with entities correctly grouped by type, unchecking one and confirming
-sends exactly the remaining index, and the run reports `done`; the `done`
-state survives a hard reload via the `?run=` URL param. Separately for
-the Prompt Editor: the seeded active version's content populates the
-form; saving a new version shows a real "Saved — now active" confirmation
-and the new version listed as ACTIVE; reactivating an older version
+the 409-on-delete-active conflict, the "no active prompt for X/Y"
+failure-with-`last_error` behavior, `authored_by`, and the intake-chat/
+intake-finalize endpoints): starting a run lands on the intake chat, not
+a Generate button, with "Start Planning" correctly disabled until at
+least one message exists; sending an intake message shows the reply and
+enables "Start Planning"; finalizing intake lands on the Stage 1
+`"generating"` card (confirmed it does **not** auto-chain into Generate);
+clicking Generate auto-chains through critique and arbitration to the
+review gate, showing the real artifact — including the intake-derived
+directive folded into it — and both critics' reviews and the arbitrator's
+synthesis; rejecting opens the rejection interview (a separate thread
+from intake), sending a message shows both the user's line and a reply,
+and "Finalize & Regenerate" compiles a directive and lands back on the
+`"generating"` card rather than auto-chaining (confirmed a second,
+explicit "Generate" click is what actually reaches the revised review
+gate, with the regenerated artifact reflecting the directive); approving
+advances through all three stages in sequence; Stage 3's approval reaches
+the entity review screen with entities correctly grouped by type,
+unchecking one and confirming sends exactly the remaining index, and the
+run reports `done`; the `done` state survives a hard reload via the
+`?run=` URL param. Separately for the Prompt Editor: a `"claude"`-authored
+active version shows the Claude badge in version history and the inline
+edit warning; saving over it shows the real confirm dialog first, and
+only proceeds on confirm; the resulting new version shows the Writer
+badge and no warning; a second edit of that writer-authored version saves
+immediately with no confirm dialog; reactivating an older version
 repopulates the draft form with its content; deleting the active version
 shows the real 409 conflict message; deleting an inactive version
-succeeds. Zero console errors across the full pass.
+succeeds; the dual-moment guidance text renders correctly for
+`arbitrator_chat`. Zero console errors across the full pass.
 
 ---
 

@@ -1,10 +1,23 @@
 "use client";
 
-import { AlertTriangle, Check, ChevronLeft, Loader2, Send, Sparkles, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Bot,
+  Check,
+  ChevronLeft,
+  Loader2,
+  Paperclip,
+  PenLine,
+  Send,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname, useParams, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "@/lib/api-client";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DropdownSelect } from "@/components/ui/dropdown-select";
 import { OptionsMenu } from "@/components/ui/options-menu";
 import { refreshOutline } from "@/lib/outline-store";
@@ -12,12 +25,13 @@ import {
   AGENT_ROLE_META,
   AGENT_ROLES,
   type AgentPrompt,
+  type AgentPromptAuthor,
   DEFAULT_EFFORT,
   DEFAULT_MODEL,
   EFFORT_LEVELS,
   type ExtractedEntityCandidate,
   outputShapeHint,
-  PLACEHOLDER_REFERENCE,
+  placeholdersFor,
   PLANNING_RUN_STATUS_LABEL,
   PLANNING_STAGE_META,
   PLANNING_STAGES,
@@ -26,18 +40,20 @@ import {
   type PlanningRun,
   type PlanningRunStatus,
   type PlanningStage,
+  roleStageGuidance,
   RUN_STAGES,
-  SINGLE_STAGE_ROLES,
 } from "@/lib/planning-data";
 import {
   approvePlanningStage,
   confirmPlanningEntities,
   deleteAgentPromptVersion,
+  finalizeIntakeConversation,
   finalizePlanningDirective,
   loadPlanningRun,
   rejectPlanningStage,
   runPipelineForward,
   saveAgentPromptVersion,
+  sendIntakeChatTurn,
   sendPlanningChatTurn,
   startPlanningRun,
   updateAgentPromptVersion,
@@ -47,6 +63,58 @@ import {
   useAgentPromptsLoadStatus,
 } from "@/lib/planning-store";
 import { useProject } from "@/lib/project-store";
+
+/**
+ * A `generate`/`critique`/`arbitrate`/chat/finalize call can take
+ * 60-180+ seconds in practice (adaptive-thinking Claude over a full
+ * book's Codex context is not fast) — this is normal, not a hang. Ticks
+ * once a second while `active` so a loading state can say how long
+ * it's actually been, instead of a bare spinner that starts looking
+ * broken well before a real call resolves.
+ */
+function useElapsedSeconds(active: boolean): number {
+  const [seconds, setSeconds] = useState(0);
+
+  // No setState in the inactive branch — every call site here only ever
+  // renders this value while `active` is true, so there's nothing to
+  // reset for a render that never happens. `setSeconds` only ever runs
+  // inside the interval's own callback, the sanctioned "subscribe, then
+  // setState in a callback" effect shape — never synchronously in the
+  // effect body itself.
+  useEffect(() => {
+    if (!active) return;
+    const start = Date.now();
+    const interval = window.setInterval(() => setSeconds(Math.floor((Date.now() - start) / 1000)), 1000);
+    return () => window.clearInterval(interval);
+  }, [active]);
+
+  return seconds;
+}
+
+function LongRunningNote({ seconds }: { seconds: number }) {
+  return (
+    <p className="mt-1.5 text-xs text-ink-faint">
+      {seconds < 8 ? "Working…" : `Still working — ${seconds}s so far.`} This step can take a couple of minutes;
+      that&apos;s normal, not stuck.
+    </p>
+  );
+}
+
+function readFileAsBase64(file: File): Promise<{ base64: string; mediaType: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        reject(new Error("Failed to read file."));
+        return;
+      }
+      resolve({ base64: result.split(",")[1] ?? "", mediaType: file.type || "application/octet-stream" });
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read file."));
+    reader.readAsDataURL(file);
+  });
+}
 
 /**
  * The Planning Engine workspace — a pre-writing pipeline (Stage 1 Core
@@ -242,13 +310,53 @@ function PipelineView({
     setAdvancing(true);
     setActionError(null);
     try {
+      // Deliberately doesn't auto-chain into runPipelineForward() the way
+      // approving/retrying does — finalizing a directive is the writer's
+      // last input before a fresh 60-180s Generate call, and given how
+      // long that can take, it should be a deliberate next click, not a
+      // multi-minute wait sprung by the same click that just finished an
+      // interview. Landing back on the "generating" card with its own
+      // "Generate"/"Continue" button (see RunStatusPanel) matches how the
+      // very first Stage 1 generation works after intake, too.
       await finalizePlanningDirective(run.id);
-      const result = await runPipelineForward(run.id);
-      if (result.status === "failed" && result.lastError) setActionError(result.lastError);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Couldn't finalize the directive.");
     } finally {
       setAdvancing(false);
+    }
+  }
+
+  const [intakeSending, setIntakeSending] = useState(false);
+  const [intakeFinalizing, setIntakeFinalizing] = useState(false);
+
+  async function handleIntakeSend(message: string, document?: { base64: string; mediaType: string }) {
+    if (!run) return;
+    setIntakeSending(true);
+    setActionError(null);
+    try {
+      await sendIntakeChatTurn(run.id, message, document);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't send that message.");
+      throw err;
+    } finally {
+      setIntakeSending(false);
+    }
+  }
+
+  async function handleIntakeFinalize() {
+    if (!run) return;
+    setIntakeFinalizing(true);
+    setActionError(null);
+    try {
+      // Same reasoning as handleFinalizeDirective above — lands on the
+      // "generating" card with its own explicit Generate button rather
+      // than silently kicking off a multi-minute Stage 1 call.
+      await finalizeIntakeConversation(run.id);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't start planning.");
+      throw err;
+    } finally {
+      setIntakeFinalizing(false);
     }
   }
 
@@ -291,6 +399,26 @@ function PipelineView({
 
   if (!run) return null;
 
+  if (run.status === "intake_active") {
+    return (
+      <div className="mx-auto flex h-full max-w-2xl flex-col">
+        {actionError && (
+          <p className="mb-3 flex items-center gap-2 rounded-xl border border-danger/40 bg-danger/10 p-3 text-xs text-danger">
+            <AlertTriangle className="size-3.5 shrink-0" />
+            {actionError}
+          </p>
+        )}
+        <IntakeChat
+          run={run}
+          sending={intakeSending}
+          finalizing={intakeFinalizing}
+          onSend={handleIntakeSend}
+          onFinalize={handleIntakeFinalize}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <StageStepper currentStage={run.currentStage} runStatus={run.status} />
@@ -329,9 +457,10 @@ function StartPlanningCard({
         <Sparkles className="mx-auto size-6 text-gold" />
         <h2 className="mt-3 font-display text-xl text-ink">Start Planning</h2>
         <p className="mt-2 text-sm text-ink-muted">
-          A guided pre-writing pipeline — Core Summary, then Act Outlines, then Chapter Beats — each stage written
-          by a Generator, reviewed by two Critics, and synthesized by an Arbitrator before it comes to you for
-          approval. This never writes manuscript prose; Generate/drafting stays exactly as it is.
+          Starts with a short conversation — tell me about the book, in your own words — then a guided pipeline
+          takes it from there: Core Summary, then Act Outlines, then Chapter Beats, each stage written by a
+          Generator, reviewed by two Critics, and synthesized by an Arbitrator before it comes to you for approval.
+          This never writes manuscript prose; Generate/drafting stays exactly as it is.
         </p>
         {error && <p className="mt-3 text-xs text-danger">{error}</p>}
         <button
@@ -348,11 +477,157 @@ function StartPlanningCard({
   );
 }
 
+/**
+ * The pre-Stage-1 intake conversation — a chat, not a form (see the
+ * feature doc's own framing: "Start Planning" opens this, not a
+ * "Generate" button). Pasting a URL directly into the message is enough;
+ * the backend gives Claude a server-side web_fetch tool that reads the
+ * page itself. A document attach is one-shot — read for this one call
+ * only, never persisted — so there's no asset-management UI here, just a
+ * file picker feeding straight into the next send.
+ */
+function IntakeChat({
+  run,
+  sending,
+  finalizing,
+  onSend,
+  onFinalize,
+}: {
+  run: PlanningRun;
+  sending: boolean;
+  finalizing: boolean;
+  onSend: (message: string, document?: { base64: string; mediaType: string }) => Promise<void>;
+  onFinalize: () => Promise<void>;
+}) {
+  const [message, setMessage] = useState("");
+  const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const elapsed = useElapsedSeconds(sending || finalizing);
+
+  async function handleSend() {
+    const text = message.trim();
+    if (!text || sending) return;
+    setAttachError(null);
+    try {
+      const document = attachedFile ? await readFileAsBase64(attachedFile) : undefined;
+      await onSend(text, document);
+      setMessage("");
+      setAttachedFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    } catch {
+      setAttachError("Couldn't read that file — try again or send without it.");
+    }
+  }
+
+  return (
+    <div className="card flex min-h-0 flex-1 flex-col p-5">
+      <h2 className="font-display text-lg text-ink">Tell me about your book</h2>
+      <p className="mt-1 text-xs text-ink-faint">
+        Describe what you want in plain language, paste a reference link (I&apos;ll read it), or attach a document.
+        Click &quot;Start Planning&quot; once you&apos;re done.
+      </p>
+
+      <div className="scroll-slim mt-3 flex min-h-[220px] flex-1 flex-col gap-3 overflow-y-auto rounded-xl border border-line p-3">
+        {run.intakeChatHistory.length === 0 && (
+          <p className="text-xs text-ink-faint">Nothing yet — say what this book is about.</p>
+        )}
+        {run.intakeChatHistory.map((m, i) => (
+          <div
+            key={i}
+            className={`max-w-[85%] whitespace-pre-wrap rounded-xl px-3 py-2 text-sm ${
+              m.role === "user" ? "ml-auto bg-gold/15 text-ink" : "bg-surface-2 text-ink-muted"
+            }`}
+          >
+            {m.content}
+          </div>
+        ))}
+        {sending && (
+          <div className="max-w-[85%] rounded-xl bg-surface-2 px-3 py-2 text-xs text-ink-faint">
+            <span className="flex items-center gap-1.5">
+              <Loader2 className="size-3 animate-spin" />
+              Reading…
+            </span>
+            <LongRunningNote seconds={elapsed} />
+          </div>
+        )}
+      </div>
+
+      {attachedFile && (
+        <div className="mt-2 flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-1.5 text-xs text-ink-muted">
+          <Paperclip className="size-3.5 shrink-0" />
+          <span className="min-w-0 flex-1 truncate">{attachedFile.name}</span>
+          <button
+            type="button"
+            aria-label="Remove attachment"
+            onClick={() => {
+              setAttachedFile(null);
+              if (fileInputRef.current) fileInputRef.current.value = "";
+            }}
+            className="shrink-0 text-ink-faint transition-colors hover:text-ink"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      )}
+      {attachError && <p className="mt-2 text-xs text-danger">{attachError}</p>}
+
+      <div className="mt-3 flex items-center gap-2">
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="hidden"
+          onChange={(e) => setAttachedFile(e.target.files?.[0] ?? null)}
+        />
+        <button
+          type="button"
+          aria-label="Attach a document"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={sending}
+          className="grid size-9 shrink-0 place-items-center rounded-xl border border-line text-ink-muted transition-colors hover:border-line-strong hover:text-ink disabled:opacity-50"
+        >
+          <Paperclip className="size-4" />
+        </button>
+        <input
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleSend();
+          }}
+          disabled={sending}
+          placeholder="Describe your book, or paste a link…"
+          className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-line-strong focus:outline-none disabled:opacity-50"
+        />
+        <button
+          type="button"
+          aria-label="Send"
+          onClick={handleSend}
+          disabled={sending || !message.trim()}
+          className="grid size-9 shrink-0 place-items-center rounded-xl bg-gold text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
+          {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+        </button>
+      </div>
+
+      <button
+        type="button"
+        onClick={onFinalize}
+        disabled={finalizing || sending || run.intakeChatHistory.length === 0}
+        className="mt-3 inline-flex items-center justify-center gap-2 rounded-xl bg-gold px-4 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
+      >
+        {finalizing && <Loader2 className="size-4 animate-spin" />}
+        Start Planning
+      </button>
+      {finalizing && <LongRunningNote seconds={elapsed} />}
+    </div>
+  );
+}
+
 function StageStepper({
   currentStage,
   runStatus,
 }: {
-  currentStage: Exclude<PlanningStage, "all">;
+  currentStage: Exclude<PlanningStage, "all" | "intake">;
   runStatus: PlanningRunStatus;
 }) {
   const currentIndex = RUN_STAGES.indexOf(currentStage);
@@ -404,6 +679,7 @@ function RunStatusPanel({
   onConfirmEntities: (approvedIndexes: number[]) => void;
 }) {
   const stageMeta = PLANNING_STAGE_META[run.currentStage];
+  const elapsed = useElapsedSeconds(advancing);
 
   switch (run.status) {
     case "generating":
@@ -411,7 +687,7 @@ function RunStatusPanel({
     case "awaiting_arbitration":
       return (
         <div className="card p-6 text-center">
-          <p className="text-sm text-ink-muted">{PLANNING_RUN_STATUS_LABEL[run.status]}…</p>
+          <p className="text-sm text-ink-muted">{advancing ? PLANNING_RUN_STATUS_LABEL[run.status] : "Ready"}…</p>
           <button
             type="button"
             onClick={onAdvance}
@@ -421,6 +697,7 @@ function RunStatusPanel({
             {advancing && <Loader2 className="size-4 animate-spin" />}
             {advancing ? "Working…" : run.status === "generating" ? `Generate ${stageMeta.short}` : "Continue"}
           </button>
+          {advancing && <LongRunningNote seconds={elapsed} />}
         </div>
       );
     case "failed":
@@ -549,6 +826,8 @@ function ChatInterview({
 }) {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const elapsed = useElapsedSeconds(sending);
+  const finalizingElapsed = useElapsedSeconds(advancing);
 
   async function handleSend() {
     const text = message.trim();
@@ -582,6 +861,15 @@ function ChatInterview({
             {m.content}
           </div>
         ))}
+        {sending && (
+          <div className="max-w-[85%] rounded-xl bg-surface-2 px-3 py-2 text-xs text-ink-faint">
+            <span className="flex items-center gap-1.5">
+              <Loader2 className="size-3 animate-spin" />
+              Thinking…
+            </span>
+            <LongRunningNote seconds={elapsed} />
+          </div>
+        )}
       </div>
       <div className="mt-3 flex items-center gap-2">
         <input
@@ -590,8 +878,9 @@ function ChatInterview({
           onKeyDown={(e) => {
             if (e.key === "Enter") handleSend();
           }}
+          disabled={sending}
           placeholder="What should change?"
-          className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-line-strong focus:outline-none"
+          className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-line-strong focus:outline-none disabled:opacity-50"
         />
         <button
           type="button"
@@ -606,12 +895,13 @@ function ChatInterview({
       <button
         type="button"
         onClick={onFinalize}
-        disabled={advancing || run.chatHistory.length === 0}
+        disabled={advancing || sending || run.chatHistory.length === 0}
         className="mt-3 inline-flex items-center justify-center gap-2 rounded-xl border border-line px-4 py-2 text-sm font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
       >
         {advancing && <Loader2 className="size-4 animate-spin" />}
         Finalize & Regenerate
       </button>
+      {advancing && <LongRunningNote seconds={finalizingElapsed} />}
     </div>
   );
 }
@@ -813,7 +1103,7 @@ function PromptEditorView({ bookId }: { bookId: string }) {
 
       <p className="text-xs text-ink-faint">
         {AGENT_ROLE_META[role].description}
-        {SINGLE_STAGE_ROLES.has(role) ? ' Typically only needs one "All Stages" version.' : ""}
+        {roleStageGuidance(role) ? ` ${roleStageGuidance(role)}` : ""}
       </p>
 
       {listStatus === "error" && <p className="text-xs text-danger">{listError}</p>}
@@ -844,13 +1134,14 @@ function PromptEditorView({ bookId }: { bookId: string }) {
             {versions.map((v) => (
               <li key={v.id} className="flex items-center justify-between gap-3 py-2.5">
                 <div className="min-w-0">
-                  <p className="text-sm text-ink">
+                  <p className="flex flex-wrap items-center gap-2 text-sm text-ink">
                     v{v.version}
                     {v.isActive && (
-                      <span className="ml-2 rounded-full bg-success/15 px-2 py-0.5 text-[0.6rem] font-semibold text-success">
+                      <span className="rounded-full bg-success/15 px-2 py-0.5 text-[0.6rem] font-semibold text-success">
                         ACTIVE
                       </span>
                     )}
+                    <AuthorBadge author={v.authoredBy} />
                   </p>
                   <p className="truncate text-xs text-ink-faint">
                     {v.model} · {v.effort} · {new Date(v.createdAt).toLocaleString()}
@@ -903,12 +1194,17 @@ function PromptDraftEditor({
   const [effort, setEffort] = useState<EffortLevel>(active?.effort ?? DEFAULT_EFFORT);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [confirmingOverwrite, setConfirmingOverwrite] = useState(false);
 
-  async function handleSave() {
-    if (!systemPrompt.trim() || !userPromptTemplate.trim()) {
-      setSaveError("Both System Prompt and User Prompt Template are required.");
-      return;
-    }
+  // Fixed for this component instance's lifetime — `active` only ever
+  // seeds initial state here (see the module comment above), so this
+  // reads the authorship of whatever was loaded, not whatever's active
+  // right now. Only "claude"-authored prompts get the edit warning/confirm
+  // below; once the writer has saved over one, the new version defaults
+  // to "writer"-authored server-side and this component remounts clean.
+  const loadedFromClaude = (active?.authoredBy ?? "writer") === "claude";
+
+  async function performSave() {
     setSaving(true);
     setSaveError(null);
     try {
@@ -923,10 +1219,34 @@ function PromptDraftEditor({
     }
   }
 
-  const placeholders = PLACEHOLDER_REFERENCE[role];
+  function handleSaveClick() {
+    if (!systemPrompt.trim() || !userPromptTemplate.trim()) {
+      setSaveError("Both System Prompt and User Prompt Template are required.");
+      return;
+    }
+    setSaveError(null);
+    // Only the specific moment of editing *over* a Claude-authored
+    // version needs a confirm — this is a real "are you sure" gate, not
+    // just a badge, per the writer's own request. Saving over a
+    // writer-authored version (theirs, or a prior edit of their own)
+    // proceeds immediately, same as before this feature existed.
+    if (loadedFromClaude) {
+      setConfirmingOverwrite(true);
+      return;
+    }
+    void performSave();
+  }
+
+  const placeholders = placeholdersFor(role, stage);
 
   return (
     <div className="card space-y-4 p-5">
+      {loadedFromClaude && (
+        <p className="flex items-start gap-2 rounded-xl border border-warn/40 bg-warn/10 p-3 text-xs text-ink-muted">
+          <Bot className="mt-0.5 size-3.5 shrink-0 text-warn" />
+          This prompt was written by Claude and tuned to work reliably. Editing it may reduce reliability.
+        </p>
+      )}
       <div>
         <label className="label-caps text-[0.6rem]">System Prompt</label>
         <textarea
@@ -984,7 +1304,7 @@ function PromptDraftEditor({
         {savedFlash && <span className="text-xs text-success">Saved — now active.</span>}
         <button
           type="button"
-          onClick={handleSave}
+          onClick={handleSaveClick}
           disabled={saving}
           className="inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
         >
@@ -992,6 +1312,33 @@ function PromptDraftEditor({
           Save New Version
         </button>
       </div>
+
+      {confirmingOverwrite && (
+        <ConfirmDialog
+          title="Overwrite a Claude-authored prompt?"
+          description="This will save your edited version as a new, active version — the original Claude-authored one stays in Version History if you want it back. Continue?"
+          confirmLabel="Save Anyway"
+          onCancel={() => setConfirmingOverwrite(false)}
+          onConfirm={() => {
+            setConfirmingOverwrite(false);
+            void performSave();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function AuthorBadge({ author }: { author: AgentPromptAuthor }) {
+  return author === "claude" ? (
+    <span className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[0.6rem] font-medium text-ink-muted">
+      <Bot className="size-3" />
+      Claude
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[0.6rem] font-medium text-ink-muted">
+      <PenLine className="size-3" />
+      Writer
+    </span>
   );
 }
