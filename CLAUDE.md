@@ -2290,6 +2290,29 @@ block (only that failure sets `attachError`) and letting a real `onSend`
 failure propagate to the caller's existing `actionError` banner instead of
 being swallowed and mislabeled.
 
+**Live production bug: switching Role in the Prompt Editor made every
+role but Generator look like it had no prompt at all.** Reported against
+real production data (11 active rows: Generator at each of the three real
+stages, `logic_critic`/`suspense_critic`/`arbitrator_panel`/
+`entity_extractor` each at `"all"`, `arbitrator_chat`/`arbitrator_directive`
+each at both `"intake"` and `"all"` — confirmed independently via a direct
+`GET /agent-prompts` call, ruling out a fetch/response problem before
+looking at the frontend at all). Root cause: `role` and `stage` were two
+independent `useState`s with nothing coupling them — switching the Role
+dropdown left `stage` wherever it already was, almost always the
+component's initial default of `"stage_1_summary"`, which only Generator
+actually has a prompt at. `versions = prompts.filter(p => p.agentRole ===
+role && p.stage === stage)` then correctly found nothing for that
+role+stage pair, which was indistinguishable in the UI from "this role's
+prompt doesn't exist" even though the fetch had returned all 11 rows
+correctly the whole time. Fixed with `pickDefaultStageForRole(role,
+prompts)`: the Role dropdown's `onChange` now also sets `stage` to
+wherever that role's own active prompt actually lives (prefers `"all"`,
+then `"intake"`, then the first real stage with data) instead of leaving
+Stage untouched across a Role switch. `"All Stages"`/`"Intake"` remain
+freely switchable by hand afterward for the two dual-moment roles — this
+only fixes the automatic default a Role switch lands on.
+
 **Verified working** (against a local mock backend extended with
 `/agent-prompts` and `/planning/runs` handlers replicating the real
 envelope shapes, the per-role/stage active-version-deactivation behavior,

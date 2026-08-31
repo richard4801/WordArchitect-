@@ -1134,6 +1134,30 @@ function EntityGroup({
 // Prompt Editor
 // ---------------------------------------------------------------------
 
+/**
+ * Real roles/stages, confirmed against production: `generator` is the
+ * only role that actually varies by `stage_1_summary`/`stage_2_acts`/
+ * `stage_3_beats` — `logic_critic`, `suspense_critic`, `arbitrator_panel`,
+ * and `entity_extractor` each have exactly one active prompt at `"all"`,
+ * and `arbitrator_chat`/`arbitrator_directive` each have two, one at
+ * `"intake"` and one at `"all"`. Switching Role while Stage still points
+ * at wherever the *previous* role's prompt lived (most commonly the
+ * default "Stage 1", which only Generator ever uses) filters `versions`
+ * to nothing — indistinguishable in the UI from "this role has no
+ * prompt," even though the fetch returned all of them. This picks the
+ * stage that role's own data actually lives at instead of leaving Stage
+ * untouched across a Role switch.
+ */
+function pickDefaultStageForRole(role: AgentRole, prompts: AgentPrompt[]): PlanningStage {
+  const activeStages = new Set(prompts.filter((p) => p.agentRole === role && p.isActive).map((p) => p.stage));
+  if (activeStages.has("all")) return "all";
+  if (activeStages.has("intake")) return "intake";
+  for (const s of RUN_STAGES) {
+    if (activeStages.has(s)) return s;
+  }
+  return "all";
+}
+
 function PromptEditorView({ bookId }: { bookId: string }) {
   const prompts = useAgentPrompts(bookId);
   const listStatus = useAgentPromptsLoadStatus();
@@ -1194,7 +1218,14 @@ function PromptEditorView({ bookId }: { bookId: string }) {
             value={AGENT_ROLE_META[role].label}
             onChange={(label) => {
               const next = AGENT_ROLES.find((r) => AGENT_ROLE_META[r].label === label);
-              if (next) setRole(next);
+              if (!next) return;
+              setRole(next);
+              // Jump Stage to wherever this role's own prompt actually
+              // lives — see pickDefaultStageForRole's comment for why
+              // leaving Stage untouched across a Role switch is the bug
+              // that made every non-Generator role look like it had no
+              // prompt at all.
+              setStage(pickDefaultStageForRole(next, prompts));
             }}
             options={AGENT_ROLES.map((r) => AGENT_ROLE_META[r].label)}
             placeholder="Select role"
