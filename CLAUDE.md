@@ -2151,13 +2151,20 @@ the effect body) — the shape the React Compiler's
 that reset the counter to `0` synchronously on the inactive branch failed
 that same lint rule and was reworked into this version.
 
-**Known gap: `DELETE /planning/runs/:id` ("Discard this plan") is
-documented but not implemented on this backend commit** — checked by
-reading every route in `planning.ts` and every exported function in
-`services/planningEngine.ts` directly; neither has any delete/abandon
-logic for a run. Deliberately **not built** on the frontend as a result —
-a button calling a route that 404s would be worse than no button. Revisit
-once the backend actually ships it.
+**"Discard this plan" — initially skipped, now real.** The first pass
+through this feature found `DELETE /planning/runs/:id` documented but not
+implemented on the backend commit at the time (no route, no service
+function) and deliberately left it unbuilt rather than ship a button that
+would 404. The backend has since shipped it (`deletePlanningRun()` in
+`planningEngine.ts` — a plain `DELETE FROM planning_runs WHERE id = ...`,
+`204` on success, `404` if the run doesn't exist); `deletePlanningRun()`
+in `planning-store.ts` now wraps it and a small "Discard this plan" text
+link (shown during intake and the main stage view alike, gated behind a
+real `ConfirmDialog`) calls it. Confirmed by reading the backend's own
+comment on the route: this only clears the run's own bookkeeping row
+(intake/chat history, stage artifacts, panel reviews) — it does **not**
+cascade to anything already materialized from a prior Stage 3 approval, so
+the confirm copy says so explicitly rather than implying a full undo.
 
 **One function drives Generate/Critique/Arbitrate, not three separate
 buttons** — `runPipelineForward()` inspects the run's own `status` (and,
@@ -2285,7 +2292,12 @@ immediately with no confirm dialog; reactivating an older version
 repopulates the draft form with its content; deleting the active version
 shows the real 409 conflict message; deleting an inactive version
 succeeds; the dual-moment guidance text renders correctly for
-`arbitrator_chat`. Zero console errors across the full pass.
+`arbitrator_chat`. Zero console errors across the full pass. Separately,
+once the backend shipped `DELETE /planning/runs/:id`: "Discard this plan"
+shows during intake and mid-pipeline alike, Cancel on the confirm dialog
+leaves the run untouched (checked directly against the mock's own state),
+and confirming actually deletes the run server-side and drops the UI back
+to the "Start Planning" card with the `?run=` param cleared from the URL.
 
 ---
 

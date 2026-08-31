@@ -273,6 +273,22 @@ export function clearActivePlanningRun(): void {
   emitRun();
 }
 
+/**
+ * Abandons a run outright ("Discard this plan") — removes only the run's
+ * own bookkeeping row (intake/chat history, stage artifacts, panel
+ * reviews). Confirmed by reading the backend's `deletePlanningRun()`
+ * directly: it does NOT touch anything already materialized from a prior
+ * Stage 3 approval — a `chapter_beats` row or `codex_entries` created
+ * before this run was discarded stay exactly where they are. Clears the
+ * active-run singleton if this was the one in view, so the caller can
+ * drop back to the "Start Planning" card without a stale reference
+ * lingering.
+ */
+export async function deletePlanningRun(runId: string): Promise<void> {
+  await apiFetch<void>(`/planning/runs/${runId}`, { method: "DELETE" });
+  if (activeRun?.id === runId) clearActivePlanningRun();
+}
+
 /** Load (or resume) a run by id — the only thing the page needs to persist client-side (its own `?run=` URL param) to pick a session back up after a refresh. */
 export async function loadPlanningRun(runId: string): Promise<void> {
   runStatus = "loading";

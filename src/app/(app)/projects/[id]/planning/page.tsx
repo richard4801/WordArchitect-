@@ -47,6 +47,7 @@ import {
   approvePlanningStage,
   confirmPlanningEntities,
   deleteAgentPromptVersion,
+  deletePlanningRun,
   finalizeIntakeConversation,
   finalizePlanningDirective,
   loadPlanningRun,
@@ -242,10 +243,27 @@ function PipelineView({
   const [starting, setStarting] = useState(false);
   const [advancing, setAdvancing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [discarding, setDiscarding] = useState(false);
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
 
   useEffect(() => {
     if (runIdParam && (!run || run.id !== runIdParam)) void loadPlanningRun(runIdParam);
   }, [runIdParam, run]);
+
+  async function handleDiscard() {
+    if (!run) return;
+    setDiscarding(true);
+    setActionError(null);
+    try {
+      await deletePlanningRun(run.id);
+      onRunIdChange(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't discard this plan.");
+    } finally {
+      setDiscarding(false);
+      setConfirmingDiscard(false);
+    }
+  }
 
   async function handleStart() {
     setStarting(true);
@@ -399,9 +417,33 @@ function PipelineView({
 
   if (!run) return null;
 
+  const discardControl = (
+    <div className="mb-3 flex justify-end">
+      <button
+        type="button"
+        onClick={() => setConfirmingDiscard(true)}
+        disabled={discarding}
+        className="text-xs text-ink-faint underline-offset-2 transition-colors hover:text-danger hover:underline disabled:opacity-50"
+      >
+        Discard this plan
+      </button>
+    </div>
+  );
+
+  const confirmDiscardDialog = confirmingDiscard && (
+    <ConfirmDialog
+      title="Discard this plan?"
+      description="This removes the run's own conversation, artifacts, and reviews. It does NOT undo anything already written to your Outliner or Codex from a prior stage approval — those stay exactly as they are. This can't be undone."
+      confirmLabel="Discard"
+      onCancel={() => setConfirmingDiscard(false)}
+      onConfirm={handleDiscard}
+    />
+  );
+
   if (run.status === "intake_active") {
     return (
       <div className="mx-auto flex h-full max-w-2xl flex-col">
+        {discardControl}
         {actionError && (
           <p className="mb-3 flex items-center gap-2 rounded-xl border border-danger/40 bg-danger/10 p-3 text-xs text-danger">
             <AlertTriangle className="size-3.5 shrink-0" />
@@ -415,12 +457,14 @@ function PipelineView({
           onSend={handleIntakeSend}
           onFinalize={handleIntakeFinalize}
         />
+        {confirmDiscardDialog}
       </div>
     );
   }
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      {discardControl}
       <StageStepper currentStage={run.currentStage} runStatus={run.status} />
       {actionError && (
         <p className="flex items-center gap-2 rounded-xl border border-danger/40 bg-danger/10 p-3 text-xs text-danger">
@@ -438,6 +482,7 @@ function PipelineView({
         onFinalizeDirective={handleFinalizeDirective}
         onConfirmEntities={handleConfirmEntities}
       />
+      {confirmDiscardDialog}
     </div>
   );
 }
