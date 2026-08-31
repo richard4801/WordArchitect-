@@ -2471,6 +2471,78 @@ a `JSON.stringify()` dump); the Arbitrator Synthesis card renders its
 `verdict`/`summary`/`recommendations` the same way. Zero console errors
 across the full pass.
 
+**Live production bug: closing the browser made an in-progress plan look
+completely gone.** User report: they closed the tab mid-pipeline and came
+back to find their run vanished — no history, nothing. Root cause, confirmed
+by reading the backend's `src/routes/planning.ts` directly: there is no
+`GET /planning/runs?bookId=` (or any other list-by-book) endpoint — the
+only way to load a run is `GET /planning/runs/:id`, by its own id. The
+frontend's only record of that id was the page's own `?run=` URL query
+param (`planning/page.tsx`'s `runIdParam`), and the very first check in
+`PipelineView` was `if (!runIdParam && !run) return <StartPlanningCard />`
+— so the instant that query string was lost (closing the browser and
+reopening via history/a bookmark/the project's own Planning nav link,
+none of which carry `?run=`, rather than hitting the back button), the
+page had no way left to ask "does this book actually have a run" and fell
+straight through to the brand-new-user empty state. The run row itself —
+intake history, stage artifacts, everything — was never touched.
+
+Fixed with a per-browser localStorage fallback, the same tradeoff class
+`getUserId()`/`writing-goal-store.ts` already use for "real data, just not
+synced across devices, because there's no backend resource to ask instead":
+`planning-store.ts`'s `setActiveRun()` (the single function every run
+mutation already funnels through) now also calls `storeRunId(bookId, run.id)`
+on every successful load/step, keyed `wa-planning-run:<bookId>`; a new
+exported `getStoredRunId(bookId)` reads it back, and `deletePlanningRun()`
+clears it for a discarded run so a fresh "Start Planning" is what actually
+shows afterward. `PipelineView` now resolves `effectiveRunId =
+runIdParam ?? fallbackRunId`, where `fallbackRunId` is populated from
+`getStoredRunId(bookId)` whenever the URL itself has no `?run=` — and once
+found, `onRunIdChange(stored)` writes it straight back into the URL, so
+the very next reload resumes through the query param directly again, same
+as before this fix existed. The empty-state guard now branches on
+`effectiveRunId`, not the raw `runIdParam`, so a genuinely run-less book
+still correctly falls through to `StartPlanningCard`.
+
+Two things this needed to get right, both because a client-only browser
+API (`localStorage`) can't be read synchronously during a "use client"
+component's render without risking a server/first-hydration-render
+mismatch: the actual `getStoredRunId()` read happens inside a `useEffect`,
+never in the render body, and a `storageChecked` flag gates the empty
+state so the very first paint (before that effect has run) shows nothing
+rather than a wrong, briefly-flashed "Start Planning" card. And the
+`setStorageChecked`/`setFallbackRunId` calls inside that effect are
+deferred into a `window.setTimeout(..., 0)` callback rather than called
+synchronously in the effect body — the same "subscribe, then setState in a
+callback" shape `useElapsedSeconds` earlier in this file already
+established was required to satisfy the React Compiler's
+`react-hooks/set-state-in-effect` lint rule.
+
+**Real limitation, flagged rather than papered over:** this only fixes
+resuming on the *same browser* the run was started on. Clearing site data,
+switching browsers, or opening the project on a different device still
+can't recover an in-progress run — the actual, fully correct fix is a
+backend `GET /planning/runs?bookId=` (returning the book's most recent/
+active run, mirroring the list-by-book pattern every other domain in this
+app already follows), which this integration pass has no push access to
+add. Worth requesting from the backend team the same way `DELETE
+/planning/runs/:id` and `POST /agent-prompts/clone` were previously
+requested and then wired up once they shipped.
+
+**Verified working** (against a local mock backend and a real two-context
+Playwright reproduction of the exact failure mode — seeding a fresh
+browser context's `localStorage` with a run id from an earlier session,
+then navigating to the bare `/projects/:id/planning` URL with no `?run=`
+param at all, matching "closed the tab, came back via nav/bookmark"
+precisely): starting a run and sending an intake message correctly writes
+the run id to `localStorage`; a fresh navigation with no `?run=` param and
+that stored id present resumes the exact same intake conversation
+(confirmed the earlier message's real text is visible, not a blank
+conversation) and rewrites the URL to carry `?run=` again; a book that has
+never had a run started still correctly shows "Start Planning," confirming
+the fallback doesn't manufacture a run out of nowhere. Zero console
+errors, including through the hydration-sensitive first-paint path.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance

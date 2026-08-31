@@ -52,6 +52,7 @@ import {
   deletePlanningRun,
   finalizeIntakeConversation,
   finalizePlanningDirective,
+  getStoredRunId,
   loadPlanningRun,
   rejectPlanningStage,
   runPipelineForward,
@@ -248,9 +249,45 @@ function PipelineView({
   const [discarding, setDiscarding] = useState(false);
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
 
+  // The backend has no "list runs for this book" endpoint — the only way
+  // to resume a run is by its own id, which normally lives in the `?run=`
+  // URL param. But that param is lost the moment the tab/URL itself is
+  // (closing the browser, opening Planning from the nav instead of the
+  // back button, etc.), which made an in-progress run look completely
+  // gone even though nothing was actually deleted server-side. Fall back
+  // to the last run id this browser saw for this book (see
+  // `getStoredRunId` in planning-store.ts) before assuming none exists.
+  // Deferred to an effect (not read directly during render) so the
+  // server-rendered/first-hydration pass — which has no localStorage —
+  // matches the client's first paint; `storageChecked` gates the
+  // "no run at all" empty state so that first paint shows nothing rather
+  // than a wrong, briefly-flashed "Start Planning" card.
+  const [storageChecked, setStorageChecked] = useState(false);
+  const [fallbackRunId, setFallbackRunId] = useState<string | null>(null);
+
+  // setState only ever runs inside the timeout's own callback — same
+  // "subscribe, then setState in a callback" shape `useElapsedSeconds`
+  // above uses, never synchronously in the effect body itself.
   useEffect(() => {
-    if (runIdParam && (!run || run.id !== runIdParam)) void loadPlanningRun(runIdParam);
-  }, [runIdParam, run]);
+    const timeout = window.setTimeout(() => {
+      if (runIdParam) {
+        setFallbackRunId(null);
+        setStorageChecked(true);
+        return;
+      }
+      const stored = getStoredRunId(bookId);
+      setFallbackRunId(stored);
+      setStorageChecked(true);
+      if (stored) onRunIdChange(stored);
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [bookId, runIdParam, onRunIdChange]);
+
+  const effectiveRunId = runIdParam ?? fallbackRunId;
+
+  useEffect(() => {
+    if (effectiveRunId && (!run || run.id !== effectiveRunId)) void loadPlanningRun(effectiveRunId);
+  }, [effectiveRunId, run]);
 
   async function handleDiscard() {
     if (!run) return;
@@ -393,7 +430,8 @@ function PipelineView({
     }
   }
 
-  if (!runIdParam && !run) {
+  if (!effectiveRunId && !run) {
+    if (!storageChecked) return null;
     return <StartPlanningCard onStart={handleStart} starting={starting} error={actionError} />;
   }
 

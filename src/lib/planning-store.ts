@@ -273,10 +273,54 @@ function subscribeRun(l: () => void) {
   return () => runListeners.delete(l);
 }
 
+// The backend has no `GET /planning/runs?bookId=` — the only way to load a
+// run is by its own id (`GET /planning/runs/:id`), so the page persists
+// that id in its own `?run=` URL param to survive a refresh. But closing
+// the browser (or opening the Planning tab from a bookmark, the nav, or a
+// fresh tab rather than the back button) loses that query string entirely,
+// and with no server-side "does this book have a run" lookup to fall back
+// to, the writer's in-progress run looked completely gone even though the
+// row was untouched server-side. This is a per-browser localStorage
+// fallback of the same kind `getUserId()`/`writing-goal-store.ts` already
+// use for "real data, just not synced across devices": the last run id
+// seen for a book, so a bare `/projects/:id/planning` visit can still
+// resume it. The real fix — a backend list-by-book endpoint — is out of
+// this app's reach without backend push access; flagged to the user.
+const RUN_ID_STORAGE_PREFIX = "wa-planning-run:";
+
+function storeRunId(bookId: string, runId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(`${RUN_ID_STORAGE_PREFIX}${bookId}`, runId);
+  } catch {
+    // Private/blocked storage contexts can throw here — losing the resume hint is a soft failure, not fatal.
+  }
+}
+
+function clearStoredRunId(bookId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(`${RUN_ID_STORAGE_PREFIX}${bookId}`);
+  } catch {
+    // Same as above.
+  }
+}
+
+/** The last run id this browser saw for `bookId`, if any — see the comment above `RUN_ID_STORAGE_PREFIX`. */
+export function getStoredRunId(bookId: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(`${RUN_ID_STORAGE_PREFIX}${bookId}`);
+  } catch {
+    return null;
+  }
+}
+
 function setActiveRun(row: PlanningRunRow): PlanningRun {
   activeRun = mapRunRow(row);
   runStatus = "loaded";
   runError = null;
+  storeRunId(activeRun.bookId, activeRun.id);
   emitRun();
   return activeRun;
 }
@@ -308,8 +352,10 @@ export function clearActivePlanningRun(): void {
  * lingering.
  */
 export async function deletePlanningRun(runId: string): Promise<void> {
+  const bookId = activeRun?.id === runId ? activeRun.bookId : null;
   await apiFetch<void>(`/planning/runs/${runId}`, { method: "DELETE" });
   if (activeRun?.id === runId) clearActivePlanningRun();
+  if (bookId) clearStoredRunId(bookId);
 }
 
 /** Load (or resume) a run by id — the only thing the page needs to persist client-side (its own `?run=` URL param) to pick a session back up after a refresh. */
