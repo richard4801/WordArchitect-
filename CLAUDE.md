@@ -2403,6 +2403,74 @@ on the copy's real stage with no manual adjustment) and both carry the
 cloned `"claude"` authorship badge and edit warning; Dismiss hides the
 card without cloning anything. Zero console errors across the full pass.
 
+**Live production bug: pipeline text was showing raw markdown/JSON syntax
+instead of readable prose.** User report, with a production screenshot: the
+Stage artifact, both critics' reviews, and the Arbitrator Synthesis card were
+all showing literal `###`/`**` markdown syntax and literal `{`/`}`/`"key":`
+JSON syntax instead of formatted, readable text — a direct consequence of
+two pre-existing choices that made sense in isolation but never got a real
+rendering pass: `ReviewGate` printed the Stage artifact string verbatim into
+a `<pre>` (fine for Stage 1/2's plain-text placeholder content in every prior
+test, but real Generator prose uses markdown headers/emphasis, and a Stage 3
+artifact is JSON to begin with), and `JsonBlock` — used for both critic
+reviews and the arbitrator synthesis, deliberately schema-agnostic since
+`panel_reviews`/`arbitrator_synthesis` have no fixed shape (whatever the
+writer's own prompts ask the model to return) — rendered anything that
+wasn't a bare string via `JSON.stringify(value, null, 2)` in a `<pre>`,
+which is exactly literal JSON syntax by definition.
+
+Fixed both without giving up the "any shape works" property either needed:
+- **`ArtifactContent`** (`planning/page.tsx`) replaces `ReviewGate`'s raw
+  `<pre>{artifact}</pre>`: if the artifact string starts with `{`/`[`, it's
+  tried as JSON first (real for `stage_3_beats`) and handed to the new
+  `StructuredValue` renderer below; otherwise (Stage 1/2's plain prose) it
+  goes through the app's existing `renderMarkdown()` — the same
+  dependency-free renderer `chat-panel.tsx`'s `MessageBubble` already uses
+  for AI Assistant replies, so `###` headers, `**bold**`, `*italic*`, and
+  lists in a Generator's real output now render as real `<h3>`/`<strong>`/
+  `<ul>` elements instead of showing the markup characters themselves.
+- **`StructuredValue`** (new) is a small recursive renderer that walks an
+  arbitrary JSON value and produces labeled sections instead of literal
+  syntax: a string leaf goes through `renderMarkdown()` (so a model that put
+  `**word**` inside a JSON field's value also comes out readable, not just
+  top-level prose); an array of primitives becomes a bullet list, an array
+  of objects becomes a stack of bordered sub-sections (one per item,
+  recursing); an object becomes one labeled block per key (`fieldLabel()`
+  title-cases and splits both `snake_case` and `camelCase` keys — e.g.
+  `chapterNumber` → "Chapter Number", `outlineText` → "Outline Text" — so a
+  raw JSON key never surfaces as-is); `null`/`undefined`/empty-string values
+  are dropped rather than shown as blank sections. `JsonBlock` (still the
+  entry point `ReviewCard`/`ArtifactContent` call for anything that isn't a
+  bare markdown string) now just wraps `StructuredValue` instead of
+  `JSON.stringify()` — same call sites, same "no fixed schema" guarantee,
+  zero visible braces/brackets/quotes either way.
+- One real lint catch along the way: an early draft did
+  `try { return <StructuredValue value={JSON.parse(trimmed)} /> } catch {…}`
+  directly, which the React Compiler's `react-hooks/error-boundaries` rule
+  correctly flags (JSX construction inside a `try` doesn't actually catch
+  rendering errors, only the `JSON.parse` itself, and rendering errors need
+  a real error boundary) — fixed by moving `JSON.parse` alone into the
+  `try` and only branching on a plain `isJson` boolean afterward, so the
+  `<StructuredValue>` JSX is constructed outside any `try` block.
+
+**Verified working** (against a local mock backend extended with
+markdown-and-emphasis-bearing simulated Generator/Critic/Arbitrator content
+for Stage 1 and Stage 3 specifically to exercise this fix, since the mock's
+prior plain-text placeholders never would have caught this class of bug):
+drove a run through intake → Stage 1 → Stage 2 → Stage 3 to the review gate
+each time and confirmed via both a full-page text scan and a screenshot —
+no literal `###`, `**`, or JSON-syntax characters (`{"`, `":`) appear
+anywhere on the page at any stage; the Stage 1 artifact's `###`/`##`
+headers render as real headings, its bullet list as a real `<ul>`, and its
+`**bold**`/`*italic*` spans as real `<strong>`/`<em>`; the Stage 3 JSON
+artifact renders as labeled "Chapter Number"/"Title"/"Beats"/"Outline Text"
+sections with a bolded word inside a beat's outline text still rendering as
+`<strong>`, not literal asterisks; both critics' reviews render their
+`score`/`notes`/`strengths` as labeled sections with real bullet lists (not
+a `JSON.stringify()` dump); the Arbitrator Synthesis card renders its
+`verdict`/`summary`/`recommendations` the same way. Zero console errors
+across the full pass.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance

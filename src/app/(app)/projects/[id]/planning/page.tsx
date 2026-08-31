@@ -861,9 +861,9 @@ function ReviewGate({
     <div className="space-y-4">
       <div className="card p-5">
         <h3 className="label-caps text-[0.65rem]">{PLANNING_STAGE_META[run.currentStage].label} — Artifact</h3>
-        <pre className="scroll-slim mt-3 max-h-96 overflow-y-auto whitespace-pre-wrap break-words text-sm text-ink">
-          {artifact}
-        </pre>
+        <div className="scroll-slim mt-3 max-h-96 overflow-y-auto text-sm text-ink">
+          <ArtifactContent artifact={artifact} />
+        </div>
       </div>
       {run.panelReviews && (
         <div className="grid gap-4 sm:grid-cols-2">
@@ -910,13 +910,95 @@ function ReviewCard({ title, value }: { title: string; value: unknown }) {
   );
 }
 
+/** A Generator artifact is plain markdown prose at Stage 1/2 but a JSON string at Stage 3 — render whichever it actually is, never the raw ###/braces syntax. */
+function ArtifactContent({ artifact }: { artifact: string }) {
+  const trimmed = artifact.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    let parsed: unknown;
+    let isJson = true;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      isJson = false;
+    }
+    if (isJson) return <StructuredValue value={parsed} />;
+  }
+  return <div className="text-ink">{renderMarkdown(artifact)}</div>;
+}
+
+function fieldLabel(key: string): string {
+  return key
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
+ * panel_reviews / arbitrator_synthesis / a Stage 3 artifact have no fixed
+ * schema — they're whatever shape the writer's own prompts ask the model to
+ * return. This walks that value recursively and renders it as labeled
+ * sections/lists/prose instead of literal JSON syntax (braces, brackets,
+ * quotes) — every string leaf still goes through renderMarkdown so any
+ * ###/** the model wrote inside a field also comes out readable.
+ */
+function StructuredValue({ value }: { value: unknown }) {
+  if (value === null || value === undefined) return null;
+
+  if (typeof value === "string") {
+    return value.trim() ? <div className="text-ink">{renderMarkdown(value)}</div> : null;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return <p className="leading-relaxed text-ink">{String(value)}</p>;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return null;
+    const allPrimitive = value.every((v) => typeof v === "string" || typeof v === "number" || typeof v === "boolean");
+    if (allPrimitive) {
+      return (
+        <ul className="list-disc space-y-1 pl-5">
+          {value.map((v, i) => (
+            <li key={i}>{typeof v === "string" ? renderMarkdown(v) : String(v)}</li>
+          ))}
+        </ul>
+      );
+    }
+    return (
+      <div className="space-y-3">
+        {value.map((item, i) => (
+          <div key={i} className="border-l-2 border-line pl-3">
+            <StructuredValue value={item} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>).filter(
+    ([, v]) => v !== null && v !== undefined && v !== "",
+  );
+  if (entries.length === 0) return null;
+  return (
+    <div className="space-y-3">
+      {entries.map(([key, v]) => (
+        <div key={key}>
+          <h5 className="label-caps text-[0.6rem] text-ink-muted">{fieldLabel(key)}</h5>
+          <div className="mt-1">
+            <StructuredValue value={v} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** panel_reviews / arbitrator_synthesis have no fixed schema — they're whatever shape the writer's own prompts ask the model to return, so this renders defensively rather than assuming any particular field. */
 function JsonBlock({ value }: { value: unknown }) {
-  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
   return (
-    <pre className="scroll-slim mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-xs text-ink-muted">
-      {text}
-    </pre>
+    <div className="scroll-slim mt-2 max-h-64 overflow-y-auto text-xs text-ink-muted">
+      <StructuredValue value={value} />
+    </div>
   );
 }
 
