@@ -28,12 +28,19 @@ export default function AppLayout({
   const pathname = usePathname();
   const isDashboard = pathname === "/";
   // The manuscript editor, the outliner, the characters workspace, the
-  // worldbuilding hub, and the notes hub are all full-bleed pages with
-  // their own top bar — they replace the standard header entirely, same
-  // as their mockups (too much horizontal content — mode/structure
-  // sidebar, multi-column board, list+detail rail — to fit the standard
-  // tab-chrome + right-rail project layout).
-  const isFullBleedWorkspace = /^\/projects\/[^/]+\/(chapters|outlines|characters|world|notes)/.test(pathname);
+  // worldbuilding hub, the notes hub, the AI Assistant, and the Planning
+  // Engine are all full-bleed pages with their own top bar — they replace
+  // the standard header entirely, same as their mockups (too much
+  // horizontal content — mode/structure sidebar, multi-column board,
+  // list+detail rail, chat thread, review/chat panels — to fit the
+  // standard tab-chrome + right-rail project layout). `assistant` was
+  // missing from this list even though assistant/page.tsx's own comment
+  // and layout (its own h-dvh + header, no standard chrome) both assumed
+  // it — without this it would have rendered doubled-up under the
+  // standard header/padding instead of on its own.
+  const isFullBleedWorkspace = /^\/projects\/[^/]+\/(chapters|outlines|characters|world|notes|assistant|planning)/.test(
+    pathname,
+  );
   const [collapsed] = useSidebarCollapsed();
   const focusModeActive = useFocusModeActive();
 

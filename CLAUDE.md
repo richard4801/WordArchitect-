@@ -408,6 +408,7 @@ backend during backend-side development.
 | Banned Terms | **Live** — `/banned-terms` | `banned-terms-store.ts` |
 | AI Assistant Chat | **Live** — `/chat` + `/chat/sessions` | `chat-store.ts` |
 | Outliner | **Live** — `/outline/beats` + `/manuscript/chapters/:id/beats` + `/manuscript/beats/:id` | `outline-store.ts` |
+| Planning Engine | **Live** — `/agent-prompts` + `/planning/runs` | `planning-store.ts` |
 | Dashboard-only stats | Mock, deferred | `dashboard-data.ts` (no backend resource exists for these — see §4.9) |
 
 ### Project (live)
@@ -2000,6 +2001,162 @@ the one field left with no real-data source of any kind, not even a
 localStorage-derivable proxy — there's no session-time tracking anywhere
 in the app.
 
+### 4.10 Planning Engine
+
+**Live — backed by the real backend's `/agent-prompts` and `/planning/runs`
+on `claude/ai-fiction-platform-backend-qnvkm5` (see the backend repo's
+`src/routes/agentPrompts.ts` / `src/routes/planning.ts` and
+`src/services/planningEngine.ts`).** A pre-writing pipeline — Stage 1 Core
+Summary -> Stage 2 Act Outlines -> Stage 3 Chapter Beats — each stage
+written by a Generator agent, reviewed by two parallel Critics (Logic,
+Suspense), synthesized by an Arbitrator, and gated on the writer's
+explicit approval before advancing. This never writes manuscript prose —
+Generate/Hanami drafting is completely untouched; this is purely the
+pre-writing/planning phase. Types/metadata in `src/lib/planning-data.ts`;
+`src/lib/planning-store.ts` fetches/writes real data — no mock/seed
+predecessor existed for this domain, it shipped live from the start.
+
+**Every agent's behavior is a database row the writer authors and saves —
+the backend contains zero prompt content of its own.** A run can't do
+anything until at least the four Stage 1 prompts (`generator`,
+`logic_critic`, `suspense_critic`, `arbitrator_panel`, all at
+`stage_1_summary`) exist. Seven roles total (`generator`, `logic_critic`,
+`suspense_critic`, `arbitrator_panel`, `arbitrator_chat`,
+`arbitrator_directive`, `entity_extractor`) × four stages
+(`stage_1_summary`, `stage_2_acts`, `stage_3_beats`, or `all` for a role
+whose behavior doesn't need to vary by stage — `arbitrator_chat`,
+`arbitrator_directive`, `entity_extractor` typically only need one `all`
+version each, a UI hint only, not enforced). `POST /agent-prompts` saves
+a **new version and activates it immediately**, deactivating whatever was
+previously active for that exact role+stage — the only "save" action,
+no separate draft/publish step. `PATCH /agent-prompts/:id` edits a
+version's content in place, or reactivates an older one via
+`isActive: true`. `DELETE` refuses with a real `409` if the version is
+currently active for its role+stage — surfaced in the UI as "activate a
+different one first" rather than a generic error, since `ApiError.status`
+from `api-client.ts` carries the real HTTP status for exactly this kind
+of branch.
+
+**Response shapes confirmed by reading the route source directly**
+(continuing this repo's established discipline): `GET /agent-prompts` ->
+`{prompts: [...]}`; `POST`/`PATCH` -> `{prompt: {...}}`; `DELETE` -> `204`.
+`POST /planning/runs` -> `{run}` (201); every step endpoint
+(`generate`/`critique`/`arbitrate`/`approve`/`reject`/`chat`/
+`finalize-directive`/`entities/confirm`) -> `{run}` (200) with the run's
+*entire* updated state, not a delta — `planning-store.ts` just replaces
+its single in-memory `activeRun` wholesale on every call rather than
+patching fields, same singleton-replacement pattern `manuscript-store.ts`
+already uses for the one open chapter's body.
+
+**One function drives Generate/Critique/Arbitrate, not three separate
+buttons** — `runPipelineForward()` inspects the run's own `status` (and,
+on a `failed` run, whether this stage already has an artifact / panel
+reviews, since `status` alone doesn't say which of the three sub-steps
+blew up) to figure out which endpoint is still outstanding, then loops
+until it hits a human gate (`awaiting_user_review`) or a real error
+(`failed`). This backs a single "Generate"/"Retry" button per the
+backend doc's own suggestion that auto-chaining beats three manual
+clicks; each underlying call is still one bounded request, so nothing
+risks a client-side timeout regardless of how long an individual step
+takes. The same function serves the very first click on a fresh stage
+and a "Retry" after failure, since both just resolve to "call whichever
+step this run's state says is next."
+
+**A run's `id` is the only client-side state that needs to survive a
+refresh** — persisted in `planning/page.tsx`'s own `?run=` URL param
+(`router.replace`, no full navigation) and resumed via
+`GET /planning/runs/:id` on mount. The active-run store is a true
+singleton (only one run is ever being driven at a time), guarded against
+a stale run left over from a different project after an SPA navigation
+by checking `run.bookId === bookId` before treating it as valid — same
+"check the id still matches" discipline the manuscript editor's
+chapter-body singleton already applies.
+
+**Stage 3 approval has real side effects beyond advancing the run:**
+`approveStage` on the backend materializes the approved JSON beats into
+real `chapter_beats` rows (the existing Outliner) and immediately kicks
+off entity extraction — status becomes `awaiting_entity_review`, not
+`done`. The frontend calls `refreshOutline(bookId)` (an existing export
+from `outline-store.ts`) right after a Stage-3 approve succeeds, so the
+Outliner board shows the new beats without the writer needing a manual
+page reload — this was an explicit requirement from the feature doc, not
+incidental.
+
+**The entity batch-review screen** (`awaiting_entity_review`) lists every
+candidate from `run.extractedEntities`, grouped by type (Characters vs.
+World Categories, from `codex_entry`/`world_category`), all
+default-checked. "Confirm Selected" sends only the checked indexes to
+`POST .../entities/confirm` — everything else is discarded server-side;
+the frontend never writes to Codex/World Categories directly for this
+flow, matching the doc's explicit "what NOT to build" list.
+
+**`panel_reviews`/`arbitrator_synthesis` have no fixed schema** — they're
+whatever shape the writer's own prompts ask the model to return, not a
+schema this backend enforces. Rendered defensively via a small
+`JsonBlock` helper: a plain string renders as-is, anything else via
+`JSON.stringify(value, null, 2)` in a `<pre>` — no assumption about a
+particular field (a "score," a "verdict") being present.
+
+**Prompt Editor form state resets via remounting, not an effect** — the
+draft's System Prompt / User Prompt Template / Model / Effort fields are
+owned by a `PromptDraftEditor` child component keyed by
+`` `${role}:${stage}:${active?.id ?? "new"}` `` at its call site, so
+switching role/stage/version fully remounts it with fresh `useState`
+initializers seeded from the newly-selected active version — the same
+"reset via `key`" shape `EditorBody`'s `key={activeChapter.id}` already
+uses in the manuscript editor, and the one the React Compiler's
+`react-hooks/set-state-in-effect` lint rule pushed this toward instead of
+a `useEffect` that re-syncs local state to a prop on every change.
+
+**UI** (`src/app/(app)/projects/[id]/planning/page.tsx`, a new full-bleed
+workspace — added to `(app)/layout.tsx`'s `isFullBleedWorkspace` regex and
+`(tabs)/layout.tsx`'s `TABS` list, same pattern as Outliner/Assistant):
+one route, two views toggled by a segmented control in its own header —
+**Pipeline** (a 3-step stage stepper, the current stage's artifact/review
+gate/chat interview/entity review depending on `status`) and **Prompts**
+(role+stage selectors, the draft form, a placeholder-token reference
+strip next to the User Prompt Template field, an output-shape hint banner
+for the two role/stage combinations whose output gets parsed as JSON —
+`generator`/`stage_3_beats` and `entity_extractor` — and a version history
+list with Activate/Delete via the existing `OptionsMenu` component).
+
+**Two small, real, pre-existing bugs fixed in the same pass** (found while
+wiring this feature's own full-bleed layout, not part of the feature
+itself): `(app)/layout.tsx`'s `isFullBleedWorkspace` regex was missing
+`assistant` even though `assistant/page.tsx`'s own comment and layout (its
+own `h-dvh` + header, no standard chrome) both assumed it — without this
+fix, the AI Assistant page would have rendered with the standard app
+header/padding stacked on top of its own header. Separately,
+`sidebar.tsx`'s `FULL_BLEED_WORKSPACES` map (which forces the correct
+top-level nav item active for a full-bleed workspace whose own path is
+under `/projects/[id]/...`) was also missing an `assistant` entry, so
+being on a project's Assistant page never highlighted the top-level "AI
+Assistant" nav item. Both fixed alongside adding the analogous `planning`
+entries for this feature.
+
+**Verified working** (against a local mock backend extended with
+`/agent-prompts` and `/planning/runs` handlers replicating the real
+envelope shapes, the per-role/stage active-version-deactivation behavior,
+the 409-on-delete-active conflict, and the "no active prompt for X/Y"
+failure-with-`last_error` behavior): starting a run shows the Stage 1
+stepper and a real "Generate Summary" button; generating auto-chains
+through critique and arbitration to the review gate, showing the real
+artifact and both critics' reviews and the arbitrator's synthesis;
+rejecting opens the chat interview, sending a message shows both the
+user's line and a reply, and "Finalize & Regenerate" compiles a directive
+and drives back to a revised review gate (confirmed the regenerated
+artifact reflects the directive); approving advances through all three
+stages in sequence; Stage 3's approval reaches the entity review screen
+with entities correctly grouped by type, unchecking one and confirming
+sends exactly the remaining index, and the run reports `done`; the `done`
+state survives a hard reload via the `?run=` URL param. Separately for
+the Prompt Editor: the seeded active version's content populates the
+form; saving a new version shows a real "Saved — now active" confirmation
+and the new version listed as ACTIVE; reactivating an older version
+repopulates the draft form with its content; deleting the active version
+shows the real 409 conflict message; deleting an inactive version
+succeeds. Zero console errors across the full pass.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance
@@ -2382,12 +2539,13 @@ export interface AiProvider {
 /                                            Dashboard — Project[] (live) + dashboard-data.ts mock (§4.9)
 /projects                                    Project[] (live)
 /projects/new                                submits NewProjectInput
-/projects/[id]                               Project detail chrome (9-tab nav), Edit Project modal (updateProject)
+/projects/[id]                               Project detail chrome (10-tab nav), Edit Project modal (updateProject)
 /projects/[id]                (Overview tab) Project + real ManuscriptPart[]/word counts (§5.6) + deriveRecentActivity
 /projects/[id]/analytics                     stub — <ComingSoon>, no data model
 /projects/[id]/settings                      stub — <ComingSoon>, no data model
 /projects/[id]/chapters                      ManuscriptPart[] (live) + ChapterBody (live) + CommentThread[] (mock) (§4.5/§5) + BannedTermRow[] (live, §4.6) + ChatSessionRow[]/ChatMessage[] (live, AI tab, §4.7) + OutlineBeat[] (live read-only, Outline tab, §4.8)
 /projects/[id]/outlines                      OutlinePart[]/OutlineChapter[]/OutlineBeat[] (live, §4.8)
+/projects/[id]/planning                      AgentPrompt[]/PlanningRun (live, §4.10) — full-bleed Planning Engine workspace (Pipeline + Prompt Editor views)
 /projects/[id]/assistant                     ChatSessionRow[]/ChatMessage[] (live, §4.7) — full-page AI Assistant workspace
 /projects/[id]/characters                    Character[] (live) + selected Character detail, Edit/Delete via options menu
 /projects/[id]/characters/all                Character[] (live), grid+pagination, Edit/Delete via options menu

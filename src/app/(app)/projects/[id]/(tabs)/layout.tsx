@@ -17,6 +17,7 @@ import {
   Sparkles,
   Trash2,
   Users,
+  Workflow,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -38,6 +39,7 @@ const TABS = [
   { key: "characters", label: "Characters", icon: Users },
   { key: "world", label: "World", icon: Globe2 },
   { key: "outlines", label: "Outlines", icon: ListTree },
+  { key: "planning", label: "Planning", icon: Workflow },
   { key: "notes", label: "Notes", icon: FileText },
   { key: "assistant", label: "Assistant", icon: Sparkles },
   { key: "analytics", label: "Analytics", icon: BarChart3 },

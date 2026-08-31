@@ -16,6 +16,11 @@ const FULL_BLEED_WORKSPACES = [
   { pattern: /^\/projects\/[^/]+\/characters/, href: "/characters" },
   { pattern: /^\/projects\/[^/]+\/world/, href: "/worldbuilding" },
   { pattern: /^\/projects\/[^/]+\/notes/, href: "/notes" },
+  // Was missing entirely — being on a project's own /assistant page never
+  // lit up the top-level "AI Assistant" nav item, since its href ("/assistant")
+  // is a different path than "/projects/[id]/assistant" and the generic
+  // `pathname.startsWith(item.href)` check below can't bridge that on its own.
+  { pattern: /^\/projects\/[^/]+\/assistant/, href: "/assistant" },
 ];
 
 /**
