@@ -2260,6 +2260,36 @@ being on a project's Assistant page never highlighted the top-level "AI
 Assistant" nav item. Both fixed alongside adding the analogous `planning`
 entries for this feature.
 
+**The intake and rejection chats were rebuilt to match the AI Assistant's
+real chat UI, not a scaled-down one-off** — the first version used a
+plain `<input>`, flat-colored bubbles, and a text "Reading…" line for the
+waiting state, which read as a placeholder next to the rest of the app.
+Both now share `ChatBubble` (gold, right-aligned for the writer; `card-2`,
+left-aligned and markdown-rendered via `renderMarkdown()` for the
+assistant — identical to `MessageBubble` in `chat-panel.tsx`) and
+`ChatTypingIndicator` (the same three-dot bounce), and both use the same
+header/scroll-region/composer sectioning as `ChatPanel`: a bordered
+header, an auto-scrolling message list (`scrollRef` + a `useEffect` that
+scrolls to bottom on new messages or while sending), and a bordered
+composer with an auto-growing `<textarea>` (Enter to send, Shift+Enter
+for a newline) instead of a single-line `<input>`. `IntakeChat` sits in a
+genuinely `flex h-full` ancestor chain (the page's own `flex h-dvh
+flex-col` shell), so it fills real available height the way `ChatPanel`
+does; `ChatInterview` doesn't (`RunStatusPanel` renders inside a plain
+`space-y-6` block, not a fixed-height flex column), so it uses a bounded
+`max-h-[28rem]` scroll region instead of `flex-1` — matching each
+component's own layout context rather than copying `flex-1` somewhere
+it wouldn't actually stretch.
+
+**A real bug surfaced while rebuilding `IntakeChat`'s send handler**: the
+original `try { readFile; onSend } catch { setAttachError("Couldn't read
+that file…") }` blamed every failure on the file reader, including a
+genuine send failure (e.g. the backend's "no active prompt" 502) — visibly
+wrong copy on a real error. Fixed by reading the file in its own `try`
+block (only that failure sets `attachError`) and letting a real `onSend`
+failure propagate to the caller's existing `actionError` banner instead of
+being swallowed and mislabeled.
+
 **Verified working** (against a local mock backend extended with
 `/agent-prompts` and `/planning/runs` handlers replicating the real
 envelope shapes, the per-role/stage active-version-deactivation behavior,

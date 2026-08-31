@@ -21,6 +21,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DropdownSelect } from "@/components/ui/dropdown-select";
 import { OptionsMenu } from "@/components/ui/options-menu";
 import { refreshOutline } from "@/lib/outline-store";
+import { renderMarkdown } from "@/lib/simple-markdown";
 import {
   AGENT_ROLE_META,
   AGENT_ROLES,
@@ -523,13 +524,51 @@ function StartPlanningCard({
 }
 
 /**
+ * One message bubble — user (gold, right-aligned) or assistant (card-2,
+ * left-aligned, markdown-rendered), the exact same visual language as
+ * `MessageBubble` in `chat-panel.tsx` (the AI Assistant), reused here so
+ * the intake conversation and the rejection interview both read as the
+ * same real chat surface as the rest of the app rather than a
+ * scaled-down one-off.
+ */
+function ChatBubble({ role, content }: { role: "user" | "assistant"; content: string }) {
+  const isUser = role === "user";
+  return (
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+      <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm ${isUser ? "bg-gold text-gold-contrast" : "card-2"}`}>
+        {isUser ? (
+          <p className="whitespace-pre-wrap leading-relaxed">{content}</p>
+        ) : (
+          <div className="text-ink">{renderMarkdown(content)}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ChatTypingIndicator() {
+  return (
+    <div className="flex justify-start">
+      <div className="card-2 flex items-center gap-1.5 px-4 py-3">
+        <span className="size-1.5 animate-bounce rounded-full bg-ink-faint [animation-delay:-0.3s]" />
+        <span className="size-1.5 animate-bounce rounded-full bg-ink-faint [animation-delay:-0.15s]" />
+        <span className="size-1.5 animate-bounce rounded-full bg-ink-faint" />
+      </div>
+    </div>
+  );
+}
+
+/**
  * The pre-Stage-1 intake conversation — a chat, not a form (see the
  * feature doc's own framing: "Start Planning" opens this, not a
  * "Generate" button). Pasting a URL directly into the message is enough;
  * the backend gives Claude a server-side web_fetch tool that reads the
  * page itself. A document attach is one-shot — read for this one call
  * only, never persisted — so there's no asset-management UI here, just a
- * file picker feeding straight into the next send.
+ * file picker feeding straight into the next send. Structured the same
+ * header/scroll-region/composer way as the AI Assistant's `ChatPanel`
+ * (see chat-panel.tsx) rather than one padded block, since that's what
+ * actually reads as "a real chat interface" in this app's own language.
  */
 function IntakeChat({
   run,
@@ -548,58 +587,74 @@ function IntakeChat({
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [attachError, setAttachError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const elapsed = useElapsedSeconds(sending || finalizing);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [run.intakeChatHistory.length, sending]);
 
   async function handleSend() {
     const text = message.trim();
     if (!text || sending) return;
     setAttachError(null);
+    let document: { base64: string; mediaType: string } | undefined;
+    if (attachedFile) {
+      try {
+        document = await readFileAsBase64(attachedFile);
+      } catch {
+        setAttachError("Couldn't read that file — try again or send without it.");
+        return;
+      }
+    }
     try {
-      const document = attachedFile ? await readFileAsBase64(attachedFile) : undefined;
       await onSend(text, document);
       setMessage("");
       setAttachedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch {
-      setAttachError("Couldn't read that file — try again or send without it.");
+      // onSend's caller (handleIntakeSend in PipelineView) already surfaces
+      // this via the shared actionError banner — nothing file-related went
+      // wrong here, so this must not fall into the file-read error above.
     }
   }
 
   return (
-    <div className="card flex min-h-0 flex-1 flex-col p-5">
-      <h2 className="font-display text-lg text-ink">Tell me about your book</h2>
-      <p className="mt-1 text-xs text-ink-faint">
-        Describe what you want in plain language, paste a reference link (I&apos;ll read it), or attach a document.
-        Click &quot;Start Planning&quot; once you&apos;re done.
-      </p>
+    <section className="card flex min-h-0 flex-1 flex-col p-0">
+      <div className="flex items-center gap-2.5 border-b border-line px-5 py-3.5">
+        <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface-2 text-gold">
+          <Sparkles className="size-4" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-ink">Tell me about your book</p>
+          <p className="truncate text-xs text-ink-faint">
+            Plain language, a reference link, or an attached document — I&apos;ll read it.
+          </p>
+        </div>
+      </div>
 
-      <div className="scroll-slim mt-3 flex min-h-[220px] flex-1 flex-col gap-3 overflow-y-auto rounded-xl border border-line p-3">
-        {run.intakeChatHistory.length === 0 && (
-          <p className="text-xs text-ink-faint">Nothing yet — say what this book is about.</p>
-        )}
-        {run.intakeChatHistory.map((m, i) => (
-          <div
-            key={i}
-            className={`max-w-[85%] whitespace-pre-wrap rounded-xl px-3 py-2 text-sm ${
-              m.role === "user" ? "ml-auto bg-gold/15 text-ink" : "bg-surface-2 text-ink-muted"
-            }`}
-          >
-            {m.content}
-          </div>
-        ))}
-        {sending && (
-          <div className="max-w-[85%] rounded-xl bg-surface-2 px-3 py-2 text-xs text-ink-faint">
-            <span className="flex items-center gap-1.5">
-              <Loader2 className="size-3 animate-spin" />
-              Reading…
-            </span>
-            <LongRunningNote seconds={elapsed} />
+      <div ref={scrollRef} className="scroll-slim min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        {run.intakeChatHistory.length === 0 ? (
+          <p className="pt-8 text-center text-sm text-ink-faint">
+            Say what this book is about, in your own words, to get started.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-4">
+            {run.intakeChatHistory.map((m, i) => (
+              <ChatBubble key={i} role={m.role} content={m.content} />
+            ))}
+            {sending && (
+              <div className="flex flex-col items-start gap-1.5">
+                <ChatTypingIndicator />
+                <LongRunningNote seconds={elapsed} />
+              </div>
+            )}
           </div>
         )}
       </div>
 
       {attachedFile && (
-        <div className="mt-2 flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-1.5 text-xs text-ink-muted">
+        <div className="mx-5 mb-2 flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-1.5 text-xs text-ink-muted">
           <Paperclip className="size-3.5 shrink-0" />
           <span className="min-w-0 flex-1 truncate">{attachedFile.name}</span>
           <button
@@ -615,56 +670,62 @@ function IntakeChat({
           </button>
         </div>
       )}
-      {attachError && <p className="mt-2 text-xs text-danger">{attachError}</p>}
+      {attachError && <p className="mx-5 mb-2 text-xs text-danger">{attachError}</p>}
 
-      <div className="mt-3 flex items-center gap-2">
-        <input
-          ref={fileInputRef}
-          type="file"
-          className="hidden"
-          onChange={(e) => setAttachedFile(e.target.files?.[0] ?? null)}
-        />
+      <div className="border-t border-line p-3.5">
+        <div className="flex items-end gap-2 rounded-xl border border-line bg-surface px-3 py-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            onChange={(e) => setAttachedFile(e.target.files?.[0] ?? null)}
+          />
+          <button
+            type="button"
+            aria-label="Attach a document"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={sending}
+            className="grid size-7 shrink-0 place-items-center rounded-lg text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-40"
+          >
+            <Paperclip className="size-4" />
+          </button>
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            rows={1}
+            disabled={sending}
+            placeholder="Describe your book, or paste a link…"
+            className="max-h-32 min-h-[24px] flex-1 resize-none bg-transparent text-sm text-ink placeholder:text-ink-faint focus:outline-none disabled:opacity-50"
+          />
+          <button
+            type="button"
+            aria-label="Send"
+            onClick={handleSend}
+            disabled={sending || !message.trim()}
+            className="grid size-7 shrink-0 place-items-center rounded-lg bg-gold text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-40"
+          >
+            {sending ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+          </button>
+        </div>
+
         <button
           type="button"
-          aria-label="Attach a document"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={sending}
-          className="grid size-9 shrink-0 place-items-center rounded-xl border border-line text-ink-muted transition-colors hover:border-line-strong hover:text-ink disabled:opacity-50"
+          onClick={onFinalize}
+          disabled={finalizing || sending || run.intakeChatHistory.length === 0}
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-gold px-4 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
         >
-          <Paperclip className="size-4" />
+          {finalizing && <Loader2 className="size-4 animate-spin" />}
+          Start Planning
         </button>
-        <input
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") handleSend();
-          }}
-          disabled={sending}
-          placeholder="Describe your book, or paste a link…"
-          className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-line-strong focus:outline-none disabled:opacity-50"
-        />
-        <button
-          type="button"
-          aria-label="Send"
-          onClick={handleSend}
-          disabled={sending || !message.trim()}
-          className="grid size-9 shrink-0 place-items-center rounded-xl bg-gold text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
-          {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-        </button>
+        {finalizing && <LongRunningNote seconds={elapsed} />}
       </div>
-
-      <button
-        type="button"
-        onClick={onFinalize}
-        disabled={finalizing || sending || run.intakeChatHistory.length === 0}
-        className="mt-3 inline-flex items-center justify-center gap-2 rounded-xl bg-gold px-4 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
-      >
-        {finalizing && <Loader2 className="size-4 animate-spin" />}
-        Start Planning
-      </button>
-      {finalizing && <LongRunningNote seconds={elapsed} />}
-    </div>
+    </section>
   );
 }
 
@@ -873,6 +934,11 @@ function ChatInterview({
   const [sending, setSending] = useState(false);
   const elapsed = useElapsedSeconds(sending);
   const finalizingElapsed = useElapsedSeconds(advancing);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [run.chatHistory.length, sending]);
 
   async function handleSend() {
     const text = message.trim();
@@ -887,67 +953,71 @@ function ChatInterview({
   }
 
   return (
-    <div className="card flex flex-col p-5">
-      <h3 className="label-caps text-[0.65rem]">Rejection Interview</h3>
-      <p className="mt-1 text-xs text-ink-faint">
-        Tell the Arbitrator what should change — once you&apos;re satisfied, finalize to regenerate.
-      </p>
-      <div className="scroll-slim mt-3 flex max-h-96 min-h-[120px] flex-1 flex-col gap-3 overflow-y-auto rounded-xl border border-line p-3">
-        {run.chatHistory.length === 0 && (
-          <p className="text-xs text-ink-faint">No messages yet — say what should change.</p>
-        )}
-        {run.chatHistory.map((m, i) => (
-          <div
-            key={i}
-            className={`max-w-[85%] rounded-xl px-3 py-2 text-sm ${
-              m.role === "user" ? "ml-auto bg-gold/15 text-ink" : "bg-surface-2 text-ink-muted"
-            }`}
-          >
-            {m.content}
-          </div>
-        ))}
-        {sending && (
-          <div className="max-w-[85%] rounded-xl bg-surface-2 px-3 py-2 text-xs text-ink-faint">
-            <span className="flex items-center gap-1.5">
-              <Loader2 className="size-3 animate-spin" />
-              Thinking…
-            </span>
-            <LongRunningNote seconds={elapsed} />
+    <section className="card flex flex-col p-0">
+      <div className="border-b border-line px-5 py-3.5">
+        <h3 className="text-sm font-medium text-ink">Rejection Interview</h3>
+        <p className="mt-0.5 text-xs text-ink-faint">
+          Tell the Arbitrator what should change — once you&apos;re satisfied, finalize to regenerate.
+        </p>
+      </div>
+
+      <div ref={scrollRef} className="scroll-slim max-h-[28rem] min-h-[10rem] overflow-y-auto px-5 py-4">
+        {run.chatHistory.length === 0 ? (
+          <p className="pt-8 text-center text-sm text-ink-faint">Say what should change to get started.</p>
+        ) : (
+          <div className="flex flex-col gap-4">
+            {run.chatHistory.map((m, i) => (
+              <ChatBubble key={i} role={m.role} content={m.content} />
+            ))}
+            {sending && (
+              <div className="flex flex-col items-start gap-1.5">
+                <ChatTypingIndicator />
+                <LongRunningNote seconds={elapsed} />
+              </div>
+            )}
           </div>
         )}
       </div>
-      <div className="mt-3 flex items-center gap-2">
-        <input
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") handleSend();
-          }}
-          disabled={sending}
-          placeholder="What should change?"
-          className="w-full rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-line-strong focus:outline-none disabled:opacity-50"
-        />
+
+      <div className="border-t border-line p-3.5">
+        <div className="flex items-end gap-2 rounded-xl border border-line bg-surface px-3 py-2">
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            rows={1}
+            disabled={sending}
+            placeholder="What should change?"
+            className="max-h-32 min-h-[24px] flex-1 resize-none bg-transparent text-sm text-ink placeholder:text-ink-faint focus:outline-none disabled:opacity-50"
+          />
+          <button
+            type="button"
+            aria-label="Send"
+            onClick={handleSend}
+            disabled={sending || !message.trim()}
+            className="grid size-7 shrink-0 place-items-center rounded-lg bg-gold text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-40"
+          >
+            {sending ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+          </button>
+        </div>
+
         <button
           type="button"
-          aria-label="Send"
-          onClick={handleSend}
-          disabled={sending || !message.trim()}
-          className="grid size-9 shrink-0 place-items-center rounded-xl bg-gold text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
+          onClick={onFinalize}
+          disabled={advancing || sending || run.chatHistory.length === 0}
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-line px-4 py-2 text-sm font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
         >
-          {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+          {advancing && <Loader2 className="size-4 animate-spin" />}
+          Finalize & Regenerate
         </button>
+        {advancing && <LongRunningNote seconds={finalizingElapsed} />}
       </div>
-      <button
-        type="button"
-        onClick={onFinalize}
-        disabled={advancing || sending || run.chatHistory.length === 0}
-        className="mt-3 inline-flex items-center justify-center gap-2 rounded-xl border border-line px-4 py-2 text-sm font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
-      >
-        {advancing && <Loader2 className="size-4 animate-spin" />}
-        Finalize & Regenerate
-      </button>
-      {advancing && <LongRunningNote seconds={finalizingElapsed} />}
-    </div>
+    </section>
   );
 }
 
