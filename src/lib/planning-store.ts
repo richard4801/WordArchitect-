@@ -195,6 +195,29 @@ export async function deleteAgentPromptVersion(bookId: string, id: string): Prom
   await loadAgentPrompts(bookId);
 }
 
+/**
+ * Copies every active prompt from `fromBookId` into `toBookId` — the
+ * "use the same prompts as my other project" action for a brand-new
+ * book, which otherwise has zero `agent_prompts` rows (scoped per
+ * `book_id`) and nothing for the Planning Engine to run. Each clone goes
+ * through the normal versioning path server-side, so it's safe to call
+ * even if `toBookId` already has some prompts — those just move into
+ * version history rather than blocking the clone. Preserves whatever
+ * `authored_by` the source prompt had (confirmed by reading
+ * `clonePromptsFromBook()` directly): copying from a Claude-authored book
+ * keeps the copies marked `"claude"`, with the same edit-warning
+ * behavior. Throws (ApiError, status 404) if the source book has no
+ * active prompts of its own to clone.
+ */
+export async function clonePromptsFromBook(fromBookId: string, toBookId: string): Promise<AgentPrompt[]> {
+  const res = await apiFetch<PromptsListResponse>("/agent-prompts/clone", {
+    method: "POST",
+    body: JSON.stringify({ fromBookId, toBookId }),
+  });
+  await loadAgentPrompts(toBookId);
+  return res.prompts.map(mapPromptRow);
+}
+
 // ---------------------------------------------------------------------
 // Planning run
 // ---------------------------------------------------------------------

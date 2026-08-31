@@ -2352,6 +2352,57 @@ leaves the run untouched (checked directly against the mock's own state),
 and confirming actually deletes the run server-side and drops the UI back
 to the "Start Planning" card with the `?run=` param cleared from the URL.
 
+**"Copy prompts from another project" — closes the empty-book gap using
+the backend's new `POST /agent-prompts/clone`.** Prompts are scoped per
+`book_id`, so a brand-new book starts with zero rows and nothing for any
+Planning Engine step to run — this is the one-time "reuse my other
+project's setup instead of writing all seven roles from scratch" action.
+Confirmed by reading `clonePromptsFromBook()` directly: it copies every
+*active* prompt from the source book into the destination via the normal
+`createAgentPrompt()` versioning path (so it's safe to call even if the
+destination already has some prompts — those just move into version
+history rather than blocking the clone) and preserves whatever
+`authored_by` the source had, so cloning from a Claude-authored book
+keeps the copies marked `"claude"` and subject to the same edit-warning
+behavior. `clonePromptsFromBook(fromBookId, toBookId)` in
+`planning-store.ts` wraps `POST /agent-prompts/clone` and refetches the
+destination's prompt list on success — no manual cache surgery, same
+"just refetch, the list is small" approach every other prompt mutation
+already uses.
+
+**UI** (`ClonePromptsCard` in `planning/page.tsx`): shown above the
+normal role/stage editor whenever `GET /agent-prompts?bookId=` has
+resolved to zero rows (`listStatus === "loaded" && prompts.length === 0`
+— gated on *loaded*, not just an empty array, so it doesn't flash before
+the fetch has actually finished) — not a hard gate, since the ordinary
+editor stays fully usable underneath it and a dismiss (×) button hides
+the card for writers who want to start from scratch instead. The book
+picker is built from `useProjects()` (the same store every other
+project-picker in this app already reads, so no new fetch), filtered to
+exclude the current book; same-titled projects (a real possibility —
+"Untitled Project" is a common one early on) are disambiguated with a
+short id suffix so a duplicate name can't cause cloning from the wrong
+source. Disappears on its own once cloning succeeds — `prompts.length`
+naturally goes from 0 to a real number and the `isEmptyBook` check flips
+false, no separate "done" callback needed. The `404` case (source book
+has nothing active to clone) surfaces as "That project has no prompts set
+up yet either." rather than a generic error, per the endpoint's own
+documented meaning for that status.
+
+**Verified working** (against a local mock backend extended with
+`POST /agent-prompts/clone` matching the real request/response/error
+shapes): the clone card appears only for a genuinely empty book, with the
+ordinary role/stage editor still fully usable alongside it; the book
+picker correctly disambiguates two same-titled other projects by
+appending their id; confirming a clone actually creates all 11 rows
+server-side (checked directly via the mock's own state) and the card
+disappears the moment the list updates; the newly-cloned Generator and
+Logic Critic prompts both show their real copied content immediately
+(Logic Critic via the same `pickDefaultStageForRole` fix above, landing
+on the copy's real stage with no manual adjustment) and both carry the
+cloned `"claude"` authorship badge and edit warning; Dismiss hides the
+card without cloning anything. Zero console errors across the full pass.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance

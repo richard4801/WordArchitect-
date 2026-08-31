@@ -46,6 +46,7 @@ import {
 } from "@/lib/planning-data";
 import {
   approvePlanningStage,
+  clonePromptsFromBook,
   confirmPlanningEntities,
   deleteAgentPromptVersion,
   deletePlanningRun,
@@ -64,7 +65,7 @@ import {
   useAgentPromptsError,
   useAgentPromptsLoadStatus,
 } from "@/lib/planning-store";
-import { useProject } from "@/lib/project-store";
+import { useProject, useProjects } from "@/lib/project-store";
 
 /**
  * A `generate`/`critique`/`arbitrate`/chat/finalize call can take
@@ -1167,6 +1168,12 @@ function PromptEditorView({ bookId }: { bookId: string }) {
   const [stage, setStage] = useState<PlanningStage>("stage_1_summary");
   const [versionError, setVersionError] = useState<string | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
+  const [dismissedClonePrompt, setDismissedClonePrompt] = useState(false);
+
+  // A brand-new book has zero rows here — only once the list has actually
+  // loaded (not just idle/loading) does an empty array mean "genuinely
+  // nothing yet" rather than "hasn't fetched yet."
+  const isEmptyBook = listStatus === "loaded" && prompts.length === 0;
 
   // A timed subscription, not a synchronous setState-in-effect — the
   // sanctioned effect shape (see EntityReview's comment above for the
@@ -1211,6 +1218,12 @@ function PromptEditorView({ bookId }: { bookId: string }) {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      {isEmptyBook && !dismissedClonePrompt && (
+        <ClonePromptsCard
+          bookId={bookId}
+          onDismiss={() => setDismissedClonePrompt(true)}
+        />
+      )}
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <label className="label-caps text-[0.6rem]">Role</label>
@@ -1304,6 +1317,99 @@ function PromptEditorView({ bookId }: { bookId: string }) {
           </ul>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Shown when this book has zero agent prompts of its own — a brand-new
+ * book, since prompts are scoped per `book_id`. Offers reusing another of
+ * the writer's own projects' prompts instead of writing all seven roles
+ * from scratch. Not a hard gate: dismissible, and the normal role/stage
+ * editor below is always available either way. Disappears on its own
+ * once cloning succeeds, since `prompts.length` naturally goes from 0 to
+ * 11 and `isEmptyBook` in the parent flips false — no separate "done"
+ * callback needed.
+ */
+function ClonePromptsCard({ bookId, onDismiss }: { bookId: string; onDismiss: () => void }) {
+  const projects = useProjects();
+  const otherProjects = useMemo(() => projects.filter((p) => p.id !== bookId), [projects, bookId]);
+
+  function labelFor(id: string): string {
+    const p = otherProjects.find((x) => x.id === id);
+    if (!p) return "";
+    // Disambiguate same-named projects ("Untitled Project" is a common
+    // one early on) rather than risk cloning from the wrong one.
+    const dupes = otherProjects.filter((x) => x.title === p.title);
+    return dupes.length > 1 ? `${p.title} (${p.id.slice(0, 8)})` : p.title;
+  }
+
+  const [selectedId, setSelectedId] = useState(otherProjects[0]?.id ?? "");
+  const [cloning, setCloning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleClone() {
+    if (!selectedId) return;
+    setCloning(true);
+    setError(null);
+    try {
+      await clonePromptsFromBook(selectedId, bookId);
+    } catch (err) {
+      setError(
+        err instanceof ApiError && err.status === 404
+          ? "That project has no prompts set up yet either."
+          : err instanceof Error
+            ? err.message
+            : "Couldn't copy prompts.",
+      );
+    } finally {
+      setCloning(false);
+    }
+  }
+
+  if (otherProjects.length === 0) return null;
+
+  return (
+    <div className="card space-y-3 p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-medium text-ink">Copy prompts from another project</h3>
+          <p className="mt-0.5 text-xs text-ink-faint">
+            This book has no agent prompts yet. Reuse another project&apos;s instead of writing all seven roles from
+            scratch.
+          </p>
+        </div>
+        <button
+          type="button"
+          aria-label="Dismiss"
+          onClick={onDismiss}
+          className="shrink-0 text-ink-faint transition-colors hover:text-ink"
+        >
+          <X className="size-4" />
+        </button>
+      </div>
+      <div className="flex items-center gap-2">
+        <DropdownSelect
+          value={labelFor(selectedId)}
+          onChange={(label) => {
+            const match = otherProjects.find((p) => labelFor(p.id) === label);
+            if (match) setSelectedId(match.id);
+          }}
+          options={otherProjects.map((p) => labelFor(p.id))}
+          placeholder="Select a project"
+          className="flex-1"
+        />
+        <button
+          type="button"
+          onClick={handleClone}
+          disabled={cloning || !selectedId}
+          className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-gold px-4 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
+          {cloning && <Loader2 className="size-4 animate-spin" />}
+          Copy
+        </button>
+      </div>
+      {error && <p className="text-xs text-danger">{error}</p>}
     </div>
   );
 }
