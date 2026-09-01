@@ -2543,6 +2543,119 @@ never had a run started still correctly shows "Start Planning," confirming
 the fallback doesn't manufacture a run out of nowhere. Zero console
 errors, including through the hydration-sensitive first-paint path.
 
+**Backend change: the Scrutiny Panel went from 2 critics to 3, plus a
+real bug found in the same pass — Arbitrate could run against a draft
+that was never actually critiqued.** The backend split `logic_critic`/
+`suspense_critic` into three non-overlapping critics — `continuity_critic`
+(same scope as the old Logic Critic), `pacing_critic` (new — chapter-to-
+plot ratio, decompression, cliffhanger cadence), `craft_critic` (the old
+Suspense Critic, minus escalation/cadence which moved to Pacing) — and
+`logic_critic`/`suspense_critic` are no longer valid `agentRole` values;
+`POST /agent-prompts` now rejects them with a 400. Confirmed by reading
+the backend's `src/types/domain.ts` directly: `panel_reviews` is now
+`Partial<Record<AgentRole, unknown>>`, an open map keyed by critic role,
+not a fixed `{logic_critic, suspense_critic}` shape — matches this file's
+own prior "no fixed schema" framing for `panel_reviews`, just formalized.
+Each issue inside a critic's own `issues` array also gained a `status:
+"new" | "unresolved" | "resolved"` field: critics now see their own prior
+review via a new `{{PREVIOUS_CRITIQUE}}` placeholder on a revision pass
+(and the Arbitrator sees its own prior synthesis via `{{PREVIOUS_SYNTHESIS}}`)
+and mark each previously-raised issue resolved/unresolved before looking
+for anything new.
+
+Three hardcoded frontend spots needed updating, all in `planning-data.ts`/
+`planning/page.tsx`:
+1. **`AgentRole`/`AGENT_ROLES`/`AGENT_ROLE_META`** — swapped in the 3 new
+   roles with real labels/descriptions. The Prompt Editor's Role dropdown
+   is also now defensive against this exact class of change happening
+   again: `roleOptions` is `AGENT_ROLES` plus any role actually present in
+   the book's own fetched prompts that isn't in that fixed list (a role
+   added server-side, or written some other way — the MCP tool surface,
+   most plausibly — before this file catches up), and a new `roleLabel()`
+   (`planning-data.ts`) falls back to a derived title-cased label (splits
+   both `snake_case` and `camelCase`, same logic `fieldLabel()` already
+   uses for JSON keys elsewhere in this file) instead of crashing or
+   silently hiding an unrecognized role. `placeholdersFor()`'s switch
+   gained a `default: return []` for the same reason — an unrecognized
+   role selected via that fallback path shouldn't throw.
+2. **Critique results display, made genuinely data-driven, not just
+   relabeled.** `ReviewGate`'s two hardcoded `<ReviewCard title="Logic
+   Critic" .../>` / `"Suspense Critic"` cards are gone — it now maps over
+   `Object.entries(run.panelReviews)` and renders one card per key
+   actually present, titled via `roleLabel(role)`. This means the panel's
+   composition can change again (add/remove/rename a critic) without
+   another frontend change to *this* display, only to `AGENT_ROLE_META`/
+   `CRITIC_ROLES` for the Prompt Editor's own labels — the whole point of
+   the backend's own `CRITIC_ROLES` being "a plain array, not hardcoded
+   call sites" carried through to this side too. The grid is
+   `sm:grid-cols-2 lg:grid-cols-3` now (was a fixed 2-column grid, which
+   would have wrapped a 3rd card alone onto its own row). Each issue's new
+   `status` field gets a small colored `IssueStatusBadge` (gold "New",
+   red "Unresolved", green "Resolved") inside `StructuredValue`'s object-
+   rendering branch — special-cased by key name (`status`) and value
+   (one of the three known strings) rather than a generic labeled text
+   block like every other field, since this is literally showing whether
+   the critic's own prior complaint got fixed.
+3. **Real bug, found and fixed in the same pass: a `failed` run's retry
+   heuristic could send Arbitrate a draft that was never actually
+   critiqued.** `nextForwardStep`'s `"failed"` branch used to infer
+   "critique already succeeded" purely from `run.panelReviews` being
+   non-null — but the backend's critique step only ever *writes*
+   `panel_reviews` on success (confirmed by reading `runCritique()`
+   directly: a failure calls `markFailed()`, which persists `status:
+   "failed"` and `last_error` only, leaving `panel_reviews` exactly as it
+   was before that attempt). On a revision cycle — reject a stage,
+   compile a directive, regenerate a new artifact, and have *that*
+   critique call fail — `panel_reviews` still holds the *previous*
+   artifact's real critique from before the rejection, which is non-null,
+   so the old heuristic wrongly concluded "already critiqued" and jumped
+   straight to Arbitrate on a draft nothing had actually reviewed. This
+   reproduced precisely once the local `run.status` reflected the real
+   server-side `"failed"` state (e.g. after a reload) rather than a stale
+   in-memory status left over from the last *successful* call.
+
+   Fixed by never trusting `panelReviews`/`stageArtifacts` presence as a
+   freshness signal at all: a new module-level `lastCritiqueSuccess`
+   marker in `planning-store.ts` (`{runId, stage, artifact}`) is set only
+   inside `callCritique`'s own success path, for the exact artifact text
+   just reviewed, and cleared on `loadPlanningRun` (a reload can't vouch
+   for what happened in some earlier session) and inside `callGenerate`
+   (a new artifact invalidates any prior critique-success marker for this
+   stage). `nextForwardStep`'s `"failed"` branch now only returns
+   `"arbitrate"` when `critiqueSucceededForCurrentArtifact(run)` confirms
+   the marker matches this exact run, stage, and artifact text —
+   otherwise it retries Critique first, every time. Normal (non-`"failed"`)
+   flow is untouched: the `"critiquing"`/`"awaiting_arbitration"` branches
+   already always call Critique/Arbitrate unconditionally, since those
+   statuses are themselves only ever set by a genuinely successful prior
+   step.
+
+**Verified working** (mock backend extended to reject `logic_critic`/
+`suspense_critic` with a 400 matching the real `VALID_AGENT_ROLES` check,
+and to reproduce the exact bug scenario — a stage critiqued successfully,
+then rejected, regenerated, and its *next* critique call forced to fail
+the same way the real backend's `markFailed()` does, i.e. leaving
+`panel_reviews` untouched): the Role dropdown lists all three new critic
+labels and neither old one; `POST /agent-prompts` with the old role names
+is confirmed rejected with 400; the Critique results panel renders 3 cards
+titled "Continuity Critic"/"Pacing & Chapter-Economy Critic"/"Craft &
+Suspense Critic" with real issue-status badges, no literal JSON syntax;
+and — the core fix — loading a run whose server-side status is genuinely
+`"failed"` with stale (pre-rejection) `panel_reviews` still present, then
+clicking Retry, was confirmed via network-request interception to call
+`/critique` first and only `/arbitrate` after it succeeds (never the
+reverse), with `panel_reviews` genuinely refreshed for the new artifact
+afterward. Zero console errors.
+
+**Also discovered in the same pass, not yet acted on:** the backend has
+since shipped `GET /planning/runs?bookId=` (commit `ca23eac` on the
+backend repo) — exactly the list-by-book endpoint this file flagged as
+the correct, complete fix for the "closed the browser, run looked gone"
+bug above (the `localStorage` fallback only resumes on the same browser).
+Wiring it in would let a fresh page load resolve a book's run without any
+client-side fallback at all, and would work across browsers/devices too.
+Not wired up in this pass — flagged for the next one.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance

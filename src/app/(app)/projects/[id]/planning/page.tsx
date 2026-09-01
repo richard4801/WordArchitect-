@@ -25,6 +25,7 @@ import { renderMarkdown } from "@/lib/simple-markdown";
 import {
   AGENT_ROLE_META,
   AGENT_ROLES,
+  roleLabel,
   type AgentPrompt,
   type AgentPromptAuthor,
   DEFAULT_EFFORT,
@@ -544,7 +545,7 @@ function StartPlanningCard({
         <p className="mt-2 text-sm text-ink-muted">
           Starts with a short conversation — tell me about the book, in your own words — then a guided pipeline
           takes it from there: Core Summary, then Act Outlines, then Chapter Beats, each stage written by a
-          Generator, reviewed by two Critics, and synthesized by an Arbitrator before it comes to you for approval.
+          Generator, reviewed by a panel of Critics, and synthesized by an Arbitrator before it comes to you for approval.
           This never writes manuscript prose; Generate/drafting stays exactly as it is.
         </p>
         {error && <p className="mt-3 text-xs text-danger">{error}</p>}
@@ -903,10 +904,16 @@ function ReviewGate({
           <ArtifactContent artifact={artifact} />
         </div>
       </div>
-      {run.panelReviews && (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <ReviewCard title="Logic Critic" value={run.panelReviews.logic_critic} />
-          <ReviewCard title="Suspense Critic" value={run.panelReviews.suspense_critic} />
+      {run.panelReviews && Object.keys(run.panelReviews).length > 0 && (
+        // One card per key actually present in panel_reviews, not a fixed
+        // pair — the Scrutiny Panel's composition (currently 3 critics:
+        // continuity_critic, pacing_critic, craft_critic) isn't hardcoded
+        // here, so it can change again (add/remove/rename a critic) without
+        // another frontend change to this display, only to CRITIC_ROLES.
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {Object.entries(run.panelReviews).map(([role, value]) => (
+            <ReviewCard key={role} title={roleLabel(role)} value={value} />
+          ))}
         </div>
       )}
       {run.arbitratorSynthesis !== null && run.arbitratorSynthesis !== undefined && (
@@ -1019,15 +1026,45 @@ function StructuredValue({ value }: { value: unknown }) {
   if (entries.length === 0) return null;
   return (
     <div className="space-y-3">
-      {entries.map(([key, v]) => (
-        <div key={key}>
-          <h5 className="label-caps text-[0.6rem] text-ink-muted">{fieldLabel(key)}</h5>
-          <div className="mt-1">
-            <StructuredValue value={v} />
+      {entries.map(([key, v]) => {
+        // A critic issue's own `status` — "new" | "unresolved" | "resolved"
+        // — is literally showing whether the critic's prior complaint got
+        // fixed on a revision pass, worth a badge rather than a generic
+        // labeled text block like every other field.
+        if (key.toLowerCase() === "status" && typeof v === "string" && ISSUE_STATUS_META[v]) {
+          return (
+            <div key={key}>
+              <IssueStatusBadge status={v} />
+            </div>
+          );
+        }
+        return (
+          <div key={key}>
+            <h5 className="label-caps text-[0.6rem] text-ink-muted">{fieldLabel(key)}</h5>
+            <div className="mt-1">
+              <StructuredValue value={v} />
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
+  );
+}
+
+const ISSUE_STATUS_META: Record<string, { label: string; className: string }> = {
+  new: { label: "New", className: "border-gold/40 bg-gold/10 text-gold" },
+  unresolved: { label: "Unresolved", className: "border-danger/40 bg-danger/10 text-danger" },
+  resolved: { label: "Resolved", className: "border-success/40 bg-success/10 text-success" },
+};
+
+function IssueStatusBadge({ status }: { status: string }) {
+  const meta = ISSUE_STATUS_META[status] ?? { label: status, className: "border-line text-ink-muted" };
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[0.65rem] font-medium ${meta.className}`}
+    >
+      {meta.label}
+    </span>
   );
 }
 
@@ -1258,8 +1295,9 @@ function EntityGroup({
 /**
  * Real roles/stages, confirmed against production: `generator` is the
  * only role that actually varies by `stage_1_summary`/`stage_2_acts`/
- * `stage_3_beats` — `logic_critic`, `suspense_critic`, `arbitrator_panel`,
- * and `entity_extractor` each have exactly one active prompt at `"all"`,
+ * `stage_3_beats` — the critic roles (`continuity_critic`, `pacing_critic`,
+ * `craft_critic`), `arbitrator_panel`, and `entity_extractor` each have
+ * exactly one active prompt at `"all"`,
  * and `arbitrator_chat`/`arbitrator_directive` each have two, one at
  * `"intake"` and one at `"all"`. Switching Role while Stage still points
  * at wherever the *previous* role's prompt lived (most commonly the
@@ -1310,6 +1348,20 @@ function PromptEditorView({ bookId }: { bookId: string }) {
   );
   const active = versions.find((v) => v.isActive) ?? null;
 
+  // The Role dropdown's options are AGENT_ROLES plus any role actually
+  // present in this book's own fetched prompts that isn't in that fixed
+  // list — defensive against the exact class of bug that hid 6 of 7 roles
+  // here once already (this file's own git history): if the backend adds
+  // or renames a role (a prompt written some other way, e.g. the MCP tool
+  // surface, or this file simply not having caught up yet) before this
+  // file's AGENT_ROLES does, that role's prompt still shows up and is
+  // selectable — via roleLabel()'s derived-label fallback — instead of
+  // silently disappearing from the editor.
+  const roleOptions = useMemo<AgentRole[]>(() => {
+    const extra = Array.from(new Set(prompts.map((p) => p.agentRole))).filter((r) => !AGENT_ROLES.includes(r));
+    return [...AGENT_ROLES, ...extra];
+  }, [prompts]);
+
   async function handleActivate(id: string) {
     setVersionError(null);
     try {
@@ -1348,9 +1400,9 @@ function PromptEditorView({ bookId }: { bookId: string }) {
         <div>
           <label className="label-caps text-[0.6rem]">Role</label>
           <DropdownSelect
-            value={AGENT_ROLE_META[role].label}
+            value={roleLabel(role)}
             onChange={(label) => {
-              const next = AGENT_ROLES.find((r) => AGENT_ROLE_META[r].label === label);
+              const next = roleOptions.find((r) => roleLabel(r) === label);
               if (!next) return;
               setRole(next);
               // Jump Stage to wherever this role's own prompt actually
@@ -1360,7 +1412,7 @@ function PromptEditorView({ bookId }: { bookId: string }) {
               // prompt at all.
               setStage(pickDefaultStageForRole(next, prompts));
             }}
-            options={AGENT_ROLES.map((r) => AGENT_ROLE_META[r].label)}
+            options={roleOptions.map((r) => roleLabel(r))}
             placeholder="Select role"
             className="mt-1.5"
           />
@@ -1381,7 +1433,7 @@ function PromptEditorView({ bookId }: { bookId: string }) {
       </div>
 
       <p className="text-xs text-ink-faint">
-        {AGENT_ROLE_META[role].description}
+        {AGENT_ROLE_META[role]?.description ?? "A role this Prompt Editor doesn't have a description for yet."}
         {roleStageGuidance(role) ? ` ${roleStageGuidance(role)}` : ""}
       </p>
 

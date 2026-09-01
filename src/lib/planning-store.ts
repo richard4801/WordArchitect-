@@ -229,7 +229,9 @@ type PlanningRunRow = {
   current_stage: Exclude<PlanningStage, "all" | "intake">;
   status: PlanningRunStatus;
   stage_artifacts: Partial<Record<Exclude<PlanningStage, "all" | "intake">, string>>;
-  panel_reviews: { logic_critic?: unknown; suspense_critic?: unknown } | null;
+  // Keyed by critic role — open, since the panel's composition isn't
+  // hardcoded on either side (see the backend's own PlanningRun type).
+  panel_reviews: Record<string, unknown> | null;
   arbitrator_synthesis: unknown;
   chat_history: PlanningChatMessage[];
   intake_chat_history: PlanningChatMessage[];
@@ -365,6 +367,10 @@ export async function loadPlanningRun(runId: string): Promise<void> {
   emitRun();
   try {
     const res = await apiFetch<RunResponse>(`/planning/runs/${runId}`);
+    // A freshly-loaded run can't vouch for a critique success from some
+    // earlier session/tab — only a real callCritique() success in THIS
+    // session may unlock Arbitrate on a failed run, see nextForwardStep.
+    lastCritiqueSuccess = null;
     setActiveRun(res.run);
   } catch (err) {
     runStatus = "error";
@@ -427,13 +433,43 @@ export async function finalizeIntakeConversation(runId: string): Promise<Plannin
   return setActiveRun(res.run);
 }
 
+// Real production bug: a `failed` run's retry heuristic used to infer
+// "critique already succeeded" from `panel_reviews` merely being non-null
+// — but the backend's critique step only ever *writes* `panel_reviews` on
+// success (`markFailed` on a critique error persists `status: "failed"`
+// and `last_error` only, leaving `panel_reviews` exactly as it was before
+// this attempt). On a revision cycle where an earlier draft's critique had
+// already succeeded, that field is never null — so a Critique call that
+// genuinely failed on the *new* artifact still read as "already critiqued"
+// on retry, and Arbitrate ran against a draft that was never actually
+// reviewed. `panel_reviews`/`stageArtifacts` presence can't be trusted as
+// a freshness signal at all; only a critique call that actually succeeded,
+// in this browser session, for this exact run+stage+artifact, may unlock
+// Arbitrate. Reset whenever a fresh server state is loaded (a reload can't
+// vouch for what happened in some earlier session) or a new artifact is
+// generated (a prior critique-success marker can't vouch for different
+// text) — set only inside `callCritique`'s own success path below.
+let lastCritiqueSuccess: { runId: string; stage: PlanningStage; artifact: string } | null = null;
+
+function critiqueSucceededForCurrentArtifact(run: PlanningRun): boolean {
+  return (
+    lastCritiqueSuccess !== null &&
+    lastCritiqueSuccess.runId === run.id &&
+    lastCritiqueSuccess.stage === run.currentStage &&
+    lastCritiqueSuccess.artifact === (run.stageArtifacts[run.currentStage] ?? "")
+  );
+}
+
 async function callGenerate(runId: string): Promise<PlanningRun> {
+  lastCritiqueSuccess = null;
   const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/generate`, { method: "POST" });
   return setActiveRun(res.run);
 }
 async function callCritique(runId: string): Promise<PlanningRun> {
   const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/critique`, { method: "POST" });
-  return setActiveRun(res.run);
+  const run = setActiveRun(res.run);
+  lastCritiqueSuccess = { runId: run.id, stage: run.currentStage, artifact: run.stageArtifacts[run.currentStage] ?? "" };
+  return run;
 }
 async function callArbitrate(runId: string): Promise<PlanningRun> {
   const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/arbitrate`, { method: "POST" });
@@ -445,8 +481,12 @@ async function callArbitrate(runId: string): Promise<PlanningRun> {
  * the run's own state, rather than a client-tracked "which step was in
  * flight" — this is what lets one function serve both the very first
  * "Generate" click (status starts at `generating`) and "Retry" after a
- * `failed` run (status alone doesn't say which step blew up, but whether
- * this stage already has an artifact / panel reviews does).
+ * `failed` run (status alone doesn't say which step blew up). On a
+ * `failed` run, Arbitrate is only ever offered once
+ * `critiqueSucceededForCurrentArtifact` confirms a real, in-session
+ * Critique success for this exact artifact — never inferred from
+ * `panelReviews` merely being present, which can be stale from an earlier
+ * cycle (see the comment above `lastCritiqueSuccess`).
  */
 function nextForwardStep(run: PlanningRun): "generate" | "critique" | "arbitrate" | null {
   if (run.status === "generating") return "generate";
@@ -454,7 +494,7 @@ function nextForwardStep(run: PlanningRun): "generate" | "critique" | "arbitrate
   if (run.status === "awaiting_arbitration") return "arbitrate";
   if (run.status === "failed") {
     if (!run.stageArtifacts[run.currentStage]) return "generate";
-    if (!run.panelReviews) return "critique";
+    if (!critiqueSucceededForCurrentArtifact(run)) return "critique";
     return "arbitrate";
   }
   return null;
