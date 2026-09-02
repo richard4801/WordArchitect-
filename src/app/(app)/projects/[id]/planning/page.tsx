@@ -2,15 +2,22 @@
 
 import {
   AlertTriangle,
+  BookOpen,
   Bot,
   Check,
+  CheckCircle2,
   ChevronLeft,
+  Circle,
+  Download,
+  Lock,
   Loader2,
   Paperclip,
   PenLine,
+  Search,
   Send,
   Sparkles,
   Trash2,
+  Undo2,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -23,27 +30,38 @@ import { OptionsMenu } from "@/components/ui/options-menu";
 import { refreshOutline } from "@/lib/outline-store";
 import { renderMarkdown } from "@/lib/simple-markdown";
 import {
+  ACTS_PER_BOOK,
   AGENT_ROLE_META,
   AGENT_ROLES,
-  roleLabel,
   type AgentPrompt,
   type AgentPromptAuthor,
+  chunksNeededForRange,
+  computePlanningProgress,
+  currentUnitKey,
+  currentUnitPosition,
   DEFAULT_EFFORT,
   DEFAULT_MODEL,
   EFFORT_LEVELS,
   type ExtractedEntityCandidate,
+  ledgerBadgeLabel,
+  nextPlanningPosition,
   outputShapeHint,
+  partRangeKey,
+  PARTS_PER_ACT,
   placeholdersFor,
   PLANNING_RUN_STATUS_LABEL,
   PLANNING_STAGE_META,
   PLANNING_STAGES,
   type AgentRole,
+  type ContinuityLedgerEntry,
   type EffortLevel,
   type PlanningRun,
-  type PlanningRunStatus,
   type PlanningStage,
+  type UnitPosition,
+  roleLabel,
   roleStageGuidance,
   RUN_STAGES,
+  unitKeyForPosition,
 } from "@/lib/planning-data";
 import {
   approvePlanningStage,
@@ -51,9 +69,10 @@ import {
   confirmPlanningEntities,
   deleteAgentPromptVersion,
   deletePlanningRun,
+  discardPlanningStage,
+  extractPlanningEntities,
   finalizeIntakeConversation,
   finalizePlanningDirective,
-  getStoredRunId,
   loadPlanningRun,
   rejectPlanningStage,
   runPipelineForward,
@@ -61,90 +80,288 @@ import {
   sendIntakeChatTurn,
   sendPlanningChatTurn,
   startPlanningRun,
+  unapprovePlanningStage,
   updateAgentPromptVersion,
   useActivePlanningRun,
   useAgentPrompts,
   useAgentPromptsError,
   useAgentPromptsLoadStatus,
+  useBookPlanningRuns,
+  useBookPlanningRunsLoadStatus,
+  useEntityActionError,
+  useEntityActionStatus,
 } from "@/lib/planning-store";
 import { useProject, useProjects } from "@/lib/project-store";
 
 /**
- * A `generate`/`critique`/`arbitrate`/chat/finalize call can take
- * 60-180+ seconds in practice (adaptive-thinking Claude over a full
- * book's Codex context is not fast) — this is normal, not a hang. Ticks
- * once a second while `active` so a loading state can say how long
- * it's actually been, instead of a bare spinner that starts looking
- * broken well before a real call resolves.
+ * The Planning Engine — a pre-writing pipeline: an intake conversation,
+ * then Stage 1 Core Summary, then a strict, incremental Act → Part →
+ * Beats hierarchy (3 fixed Acts, 3 fixed Parts each, each Part planned as
+ * an outline then one or more beats chunks), every unit gated on human
+ * approval. See planning-data.ts's own top-of-file comment and the
+ * backend's CLAUDE.md "Planning Engine" section for the full contract
+ * this was built against — read directly, not from a design mock alone;
+ * the mock this UI's visual design is based on invented several fields
+ * (a ledger "Type"/three-state "Status", entity confidence scores/source
+ * units, a per-critic-pair review screen, a cross-book run list) that
+ * don't exist on the real backend. Corrections applied throughout this
+ * file are called out in their own comments where they matter.
  */
+
+// ---------------------------------------------------------------------
+// Shared small helpers
+// ---------------------------------------------------------------------
+
+/** Ticks once a second while `active` — the sanctioned "subscribe, then setState in a callback" effect shape (never synchronously in the effect body), needed for the React Compiler's react-hooks/set-state-in-effect rule. */
 function useElapsedSeconds(active: boolean): number {
   const [seconds, setSeconds] = useState(0);
-
-  // No setState in the inactive branch — every call site here only ever
-  // renders this value while `active` is true, so there's nothing to
-  // reset for a render that never happens. `setSeconds` only ever runs
-  // inside the interval's own callback, the sanctioned "subscribe, then
-  // setState in a callback" effect shape — never synchronously in the
-  // effect body itself.
   useEffect(() => {
     if (!active) return;
     const start = Date.now();
     const interval = window.setInterval(() => setSeconds(Math.floor((Date.now() - start) / 1000)), 1000);
     return () => window.clearInterval(interval);
   }, [active]);
-
   return seconds;
 }
 
 function LongRunningNote({ seconds }: { seconds: number }) {
+  if (seconds < 8) return <p className="mt-3 text-xs text-ink-faint">Working…</p>;
   return (
-    <p className="mt-1.5 text-xs text-ink-faint">
-      {seconds < 8 ? "Working…" : `Still working — ${seconds}s so far.`} This step can take a couple of minutes;
-      that&apos;s normal, not stuck.
+    <p className="mt-3 text-xs text-ink-faint">
+      Still working — {seconds}s so far. This step can take a couple of minutes; that&apos;s normal, not stuck.
     </p>
   );
 }
 
-function readFileAsBase64(file: File): Promise<{ base64: string; mediaType: string }> {
-  return new Promise((resolve, reject) => {
+async function readFileAsBase64(file: File): Promise<{ base64: string; mediaType: string }> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result !== "string") {
-        reject(new Error("Failed to read file."));
-        return;
-      }
-      resolve({ base64: result.split(",")[1] ?? "", mediaType: file.type || "application/octet-stream" });
-    };
-    reader.onerror = () => reject(reader.error ?? new Error("Failed to read file."));
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+  const [, base64] = dataUrl.split(",", 2);
+  return { base64, mediaType: file.type || "application/octet-stream" };
+}
+
+function fieldLabel(key: string): string {
+  return key
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+const ISSUE_STATUS_META: Record<string, { label: string; className: string }> = {
+  new: { label: "New", className: "border-gold/40 bg-gold/10 text-gold" },
+  unresolved: { label: "Unresolved", className: "border-danger/40 bg-danger/10 text-danger" },
+  resolved: { label: "Resolved", className: "border-success/40 bg-success/10 text-success" },
+};
+
+function IssueStatusBadge({ status }: { status: string }) {
+  const meta = ISSUE_STATUS_META[status] ?? { label: status, className: "border-line text-ink-muted" };
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[0.65rem] font-medium ${meta.className}`}>
+      {meta.label}
+    </span>
+  );
+}
+
+const SEVERITY_META: Record<string, { label: string; className: string }> = {
+  critical: { label: "Critical", className: "bg-danger" },
+  moderate: { label: "Moderate", className: "bg-gold" },
+  minor: { label: "Minor", className: "bg-info" },
+};
+
+/** A compact "6 issues · 2 critical · 3 moderate · 1 minor" summary line, computed from real issue data — no fabricated confidence score, just a count. */
+function IssueSeverityCounts({ issues }: { issues: unknown }) {
+  if (!Array.isArray(issues) || issues.length === 0) return null;
+  const counts = new Map<string, number>();
+  for (const issue of issues) {
+    const severity = issue && typeof issue === "object" && "severity" in issue ? String((issue as { severity: unknown }).severity) : "unknown";
+    counts.set(severity, (counts.get(severity) ?? 0) + 1);
+  }
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
+      <span>{issues.length} issue{issues.length === 1 ? "" : "s"}</span>
+      {Array.from(counts.entries()).map(([severity, count]) => {
+        const meta = SEVERITY_META[severity];
+        return (
+          <span key={severity} className="inline-flex items-center gap-1">
+            <span className={`size-1.5 rounded-full ${meta?.className ?? "bg-ink-faint"}`} />
+            {count} {meta?.label ?? severity}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/** A Generator artifact is plain markdown prose at stage_1_summary/act_summary but a JSON string at part_outline/part_beats — render whichever it actually is, never the raw ###/braces syntax. */
+function ArtifactContent({ artifact }: { artifact: string }) {
+  const trimmed = artifact.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    let parsed: unknown;
+    let isJson = true;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      isJson = false;
+    }
+    if (isJson) return <StructuredValue value={parsed} />;
+  }
+  return <div className="text-ink">{renderMarkdown(artifact)}</div>;
+}
+
+const BULLET_TONE: Record<string, string> = {
+  mustFix: "bg-danger",
+  worthConsidering: "bg-gold",
+  whatWorks: "bg-success",
+};
+
+/**
+ * panel_reviews / arbitrator_synthesis / a part_outline or part_beats
+ * artifact have no fixed schema — they're whatever shape the writer's own
+ * prompts ask the model to return. This walks that value recursively and
+ * renders it as labeled sections/lists/prose instead of literal JSON
+ * syntax (braces, brackets, quotes) — every string leaf still goes
+ * through renderMarkdown so any ###/** the model wrote inside a field
+ * also comes out readable. `toneKey`, when set, colors a bullet list's
+ * markers (the Arbitrator's mustFix/worthConsidering/whatWorks sections)
+ * instead of the plain gray dot every other list gets.
+ */
+function StructuredValue({ value, toneKey }: { value: unknown; toneKey?: string }) {
+  if (value === null || value === undefined) return null;
+
+  if (typeof value === "string") {
+    return value.trim() ? <div className="text-ink">{renderMarkdown(value)}</div> : null;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return <p className="leading-relaxed text-ink">{String(value)}</p>;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return null;
+    const allPrimitive = value.every((v) => typeof v === "string" || typeof v === "number" || typeof v === "boolean");
+    if (allPrimitive) {
+      const dotClass = (toneKey && BULLET_TONE[toneKey]) || "bg-ink-faint";
+      return (
+        <ul className="space-y-1.5">
+          {value.map((v, i) => (
+            <li key={i} className="flex items-start gap-2">
+              <span className={`mt-1.5 size-1.5 shrink-0 rounded-full ${dotClass}`} />
+              <span>{typeof v === "string" ? renderMarkdown(v) : String(v)}</span>
+            </li>
+          ))}
+        </ul>
+      );
+    }
+    return (
+      <div className="space-y-3">
+        {value.map((item, i) => (
+          <div key={i} className="border-l-2 border-line pl-3">
+            <StructuredValue value={item} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>).filter(
+    ([, v]) => v !== null && v !== undefined && v !== "",
+  );
+  if (entries.length === 0) return null;
+  return (
+    <div className="space-y-3">
+      {entries.map(([key, v]) => {
+        // A critic issue's own `status` — "new" | "unresolved" | "resolved"
+        // — is literally showing whether the critic's prior complaint got
+        // fixed on a revision pass, worth a badge rather than a generic
+        // labeled text block like every other field.
+        if (key.toLowerCase() === "status" && typeof v === "string" && ISSUE_STATUS_META[v]) {
+          return (
+            <div key={key}>
+              <IssueStatusBadge status={v} />
+            </div>
+          );
+        }
+        // The Arbitrator's issues array gets a compact severity-count
+        // summary line above the full list, matching the mock's visual
+        // design (real data: issues[].severity from each critic review).
+        if (key.toLowerCase() === "issues" && Array.isArray(v)) {
+          return (
+            <div key={key}>
+              <h5 className="label-caps text-[0.6rem] text-ink-muted">{fieldLabel(key)}</h5>
+              <IssueSeverityCounts issues={v} />
+              <div className="mt-2">
+                <StructuredValue value={v} />
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div key={key}>
+            <h5 className="label-caps text-[0.6rem] text-ink-muted">{fieldLabel(key)}</h5>
+            <div className="mt-1">
+              <StructuredValue value={v} toneKey={key} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** panel_reviews / arbitrator_synthesis have no fixed schema — renders defensively rather than assuming any particular field. */
+function JsonBlock({ value, toneKey }: { value: unknown; toneKey?: string }) {
+  return (
+    <div className="scroll-slim mt-2 max-h-64 overflow-y-auto text-xs text-ink-muted">
+      <StructuredValue value={value} toneKey={toneKey} />
+    </div>
+  );
 }
 
 /**
- * The Planning Engine workspace — a pre-writing pipeline (Stage 1 Core
- * Summary -> Stage 2 Act Outlines -> Stage 3 Chapter Beats), each stage
- * written by a Generator, reviewed by two parallel Critics, synthesized
- * by an Arbitrator, and gated on explicit human approval before
- * advancing. This never writes manuscript prose — drafting stays exactly
- * as it was, entirely through the existing Generate/Hanami flow.
- *
- * Two views live on one route rather than two separate ones: the Pipeline
- * runner (driving an in-progress run stage by stage) and the Prompt
- * Editor (authoring the agent behavior every run depends on — the backend
- * has zero prompt content of its own, so a run can't do anything until at
- * least the Stage 1 prompts exist). A dedicated, full-bleed page like
- * Chapters/Outliner/Assistant, not a tab inside the shared project
- * chrome — the Prompt Editor's two full-width textareas and the Pipeline's
- * review/chat panels both want more room than the tab-chrome + right-rail
- * layout leaves.
- *
- * A run's `id` is the only client-side state that needs to survive a
- * refresh — persisted in this page's own `?run=` URL param, per the
- * backend's own suggested resume pattern (`GET /planning/runs/:id`).
+ * One message bubble — user (gold, right-aligned) or assistant (card-2,
+ * left-aligned, markdown-rendered), the exact same visual language as
+ * `MessageBubble` in `chat-panel.tsx` (the AI Assistant), reused here so
+ * the intake conversation and the rejection interview both read as the
+ * same real chat surface as the rest of the app.
  */
+function ChatBubble({ role, content }: { role: "user" | "assistant"; content: string }) {
+  if (role === "user") {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-gold px-4 py-2.5 text-sm text-gold-contrast">{content}</div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex justify-start">
+      <div className="card-2 max-w-[85%] rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm text-ink">{renderMarkdown(content)}</div>
+    </div>
+  );
+}
 
-type View = "pipeline" | "prompts";
+function ChatTypingIndicator() {
+  return (
+    <div className="flex justify-start">
+      <div className="card-2 flex items-center gap-1 rounded-2xl rounded-tl-sm px-4 py-3">
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className="size-1.5 animate-bounce rounded-full bg-ink-faint"
+            style={{ animationDelay: `${i * 0.15}s` }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Page shell
+// ---------------------------------------------------------------------
 
 export default function PlanningPage() {
   return (
@@ -154,13 +371,60 @@ export default function PlanningPage() {
   );
 }
 
+type PlanningView = "pipeline" | "runs" | "ledger" | "entities" | "prompts";
+
+const NAV_ITEMS: { key: PlanningView; label: string }[] = [
+  { key: "pipeline", label: "Pipeline Map" },
+  { key: "runs", label: "Run List" },
+  { key: "ledger", label: "Continuity Ledger" },
+  { key: "entities", label: "Entity Review" },
+  { key: "prompts", label: "Settings" },
+];
+
 function PlanningPageInner() {
-  const { id } = useParams<{ id: string }>();
-  const project = useProject(id);
+  const { id: bookId } = useParams<{ id: string }>();
+  const project = useProject(bookId);
   const pathname = usePathname();
   const router = useRouter();
   const runIdParam = useSearchParams().get("run");
-  const [view, setView] = useState<View>("pipeline");
+  const [view, setView] = useState<PlanningView>("pipeline");
+
+  // Real GET /planning/runs?bookId= — resolves "what run(s) does this book
+  // have" without depending on a specific run id surviving client-side
+  // (closing the browser, a bookmark, the project's own nav link — none
+  // of these carry ?run=). Server-sorted most-recently-updated first, so
+  // runs[0] is "the run to resume" for the common one-active-run case.
+  const runs = useBookPlanningRuns(bookId);
+  const runsLoadStatus = useBookPlanningRunsLoadStatus();
+  const { run: rawRun, status: runLoadStatus, error: runLoadError } = useActivePlanningRun();
+  const run = rawRun && rawRun.bookId === bookId ? rawRun : null;
+
+  const targetRunId = runIdParam ?? runs[0]?.id ?? null;
+
+  useEffect(() => {
+    if (targetRunId && (!run || run.id !== targetRunId)) void loadPlanningRun(targetRunId);
+  }, [targetRunId, run]);
+
+  function onRunIdChange(runId: string | null) {
+    router.replace(runId ? `${pathname}?run=${runId}` : pathname);
+  }
+
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+
+  async function handleStart() {
+    setStarting(true);
+    setStartError(null);
+    try {
+      const newRun = await startPlanningRun(bookId);
+      onRunIdChange(newRun.id);
+      setView("pipeline");
+    } catch (err) {
+      setStartError(err instanceof Error ? err.message : "Couldn't start a planning run.");
+    } finally {
+      setStarting(false);
+    }
+  }
 
   if (!project) {
     return (
@@ -175,355 +439,68 @@ function PlanningPageInner() {
     );
   }
 
+  const stillResolvingRuns = runsLoadStatus === "idle" || runsLoadStatus === "loading";
+
   return (
-    <div className="flex h-dvh flex-col overflow-hidden">
-      <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-line px-5 py-3 sm:px-6">
+    <div className="flex h-dvh overflow-hidden">
+      <aside className="flex w-56 shrink-0 flex-col border-r border-line bg-surface-1 p-3">
         <Link
           href={`/projects/${project.id}`}
-          className="flex shrink-0 items-center gap-1.5 text-sm text-ink-muted transition-colors hover:text-ink"
+          className="mb-4 flex items-center gap-1.5 px-1 text-sm text-ink-muted transition-colors hover:text-ink"
         >
           <ChevronLeft className="size-4" />
           Back to Project
         </Link>
-        <span className="hidden text-line-strong sm:inline">/</span>
-        <span className="hidden truncate text-sm font-medium text-ink sm:inline">Planning Engine</span>
-        <div className="ml-auto flex items-center gap-1 rounded-xl border border-line p-1">
-          <button
-            type="button"
-            onClick={() => setView("pipeline")}
-            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-              view === "pipeline" ? "bg-gold text-gold-contrast" : "text-ink-muted hover:text-ink"
-            }`}
-          >
-            Pipeline
-          </button>
-          <button
-            type="button"
-            onClick={() => setView("prompts")}
-            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-              view === "prompts" ? "bg-gold text-gold-contrast" : "text-ink-muted hover:text-ink"
-            }`}
-          >
-            Prompts
-          </button>
-        </div>
-      </header>
+        <p className="mb-1 truncate px-1 text-sm font-medium text-ink">{project.title}</p>
+        <p className="mb-4 px-1 text-xs text-ink-faint">Planning Engine</p>
+        <nav className="space-y-0.5">
+          {NAV_ITEMS.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => setView(item.key)}
+              disabled={item.key !== "runs" && item.key !== "prompts" && !targetRunId}
+              className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                view === item.key ? "bg-gold text-gold-contrast" : "text-ink-muted hover:bg-surface-2 hover:text-ink"
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
+      </aside>
       <div className="scroll-slim min-h-0 flex-1 overflow-y-auto p-5 sm:p-6">
-        {view === "pipeline" ? (
-          <PipelineView
-            bookId={project.id}
-            runIdParam={runIdParam}
-            onRunIdChange={(runId) => router.replace(runId ? `${pathname}?run=${runId}` : pathname)}
-          />
-        ) : (
+        {stillResolvingRuns ? null : !targetRunId ? (
+          <StartPlanningCard onStart={handleStart} starting={starting} error={startError} />
+        ) : view === "prompts" ? (
           <PromptEditorView bookId={project.id} />
+        ) : view === "runs" ? (
+          <RunListView
+            bookId={project.id}
+            activeRunId={targetRunId}
+            onOpenRun={(runId) => {
+              onRunIdChange(runId);
+              setView("pipeline");
+            }}
+            onStartNew={handleStart}
+            starting={starting}
+          />
+        ) : !run ? (
+          runLoadStatus === "error" ? (
+            <div className="mx-auto max-w-xl card p-6 text-center">
+              <p className="text-sm text-danger">{runLoadError ?? "Couldn't load this planning run."}</p>
+            </div>
+          ) : (
+            <p className="text-center text-sm text-ink-muted">Loading planning run…</p>
+          )
+        ) : view === "ledger" ? (
+          <ContinuityLedgerView run={run} />
+        ) : view === "entities" ? (
+          <EntityReviewView key={run.updatedAt} run={run} />
+        ) : (
+          <PipelineView run={run} bookId={project.id} onOpenLedger={() => setView("ledger")} onOpenEntities={() => setView("entities")} />
         )}
       </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------
-// Pipeline
-// ---------------------------------------------------------------------
-
-function PipelineView({
-  bookId,
-  runIdParam,
-  onRunIdChange,
-}: {
-  bookId: string;
-  runIdParam: string | null;
-  onRunIdChange: (runId: string | null) => void;
-}) {
-  // The active-run store is a singleton across the whole app (one run is
-  // ever being driven at a time) — guard against a stale run left over
-  // from a different project after an SPA navigation, same "check the id
-  // still matches" pattern the manuscript editor's chapter-body singleton
-  // already uses.
-  const { run: rawRun, status, error } = useActivePlanningRun();
-  const run = rawRun && rawRun.bookId === bookId ? rawRun : null;
-
-  const [starting, setStarting] = useState(false);
-  const [advancing, setAdvancing] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [discarding, setDiscarding] = useState(false);
-  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
-
-  // The backend has no "list runs for this book" endpoint — the only way
-  // to resume a run is by its own id, which normally lives in the `?run=`
-  // URL param. But that param is lost the moment the tab/URL itself is
-  // (closing the browser, opening Planning from the nav instead of the
-  // back button, etc.), which made an in-progress run look completely
-  // gone even though nothing was actually deleted server-side. Fall back
-  // to the last run id this browser saw for this book (see
-  // `getStoredRunId` in planning-store.ts) before assuming none exists.
-  // Deferred to an effect (not read directly during render) so the
-  // server-rendered/first-hydration pass — which has no localStorage —
-  // matches the client's first paint; `storageChecked` gates the
-  // "no run at all" empty state so that first paint shows nothing rather
-  // than a wrong, briefly-flashed "Start Planning" card.
-  const [storageChecked, setStorageChecked] = useState(false);
-  const [fallbackRunId, setFallbackRunId] = useState<string | null>(null);
-
-  // setState only ever runs inside the timeout's own callback — same
-  // "subscribe, then setState in a callback" shape `useElapsedSeconds`
-  // above uses, never synchronously in the effect body itself.
-  useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      if (runIdParam) {
-        setFallbackRunId(null);
-        setStorageChecked(true);
-        return;
-      }
-      const stored = getStoredRunId(bookId);
-      setFallbackRunId(stored);
-      setStorageChecked(true);
-      if (stored) onRunIdChange(stored);
-    }, 0);
-    return () => window.clearTimeout(timeout);
-  }, [bookId, runIdParam, onRunIdChange]);
-
-  const effectiveRunId = runIdParam ?? fallbackRunId;
-
-  useEffect(() => {
-    if (effectiveRunId && (!run || run.id !== effectiveRunId)) void loadPlanningRun(effectiveRunId);
-  }, [effectiveRunId, run]);
-
-  async function handleDiscard() {
-    if (!run) return;
-    setDiscarding(true);
-    setActionError(null);
-    try {
-      await deletePlanningRun(run.id);
-      onRunIdChange(null);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Couldn't discard this plan.");
-    } finally {
-      setDiscarding(false);
-      setConfirmingDiscard(false);
-    }
-  }
-
-  async function handleStart() {
-    setStarting(true);
-    setActionError(null);
-    try {
-      const newRun = await startPlanningRun(bookId);
-      onRunIdChange(newRun.id);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Couldn't start a planning run.");
-    } finally {
-      setStarting(false);
-    }
-  }
-
-  async function handleAdvance() {
-    if (!run) return;
-    setAdvancing(true);
-    setActionError(null);
-    try {
-      const result = await runPipelineForward(run.id);
-      if (result.status === "failed" && result.lastError) setActionError(result.lastError);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Something went wrong running the pipeline.");
-    } finally {
-      setAdvancing(false);
-    }
-  }
-
-  async function handleApprove() {
-    if (!run) return;
-    setAdvancing(true);
-    setActionError(null);
-    const wasStage3 = run.currentStage === "stage_3_beats";
-    try {
-      await approvePlanningStage(run.id);
-      // Stage 3 approval materializes real chapter_beats server-side —
-      // refresh the Outliner's own cache so the new beats show up there
-      // without the writer needing a manual page reload.
-      if (wasStage3) refreshOutline(bookId);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Couldn't approve this stage.");
-    } finally {
-      setAdvancing(false);
-    }
-  }
-
-  async function handleReject() {
-    if (!run) return;
-    setAdvancing(true);
-    setActionError(null);
-    try {
-      await rejectPlanningStage(run.id);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Couldn't reject this stage.");
-    } finally {
-      setAdvancing(false);
-    }
-  }
-
-  async function handleFinalizeDirective() {
-    if (!run) return;
-    setAdvancing(true);
-    setActionError(null);
-    try {
-      // Deliberately doesn't auto-chain into runPipelineForward() the way
-      // approving/retrying does — finalizing a directive is the writer's
-      // last input before a fresh 60-180s Generate call, and given how
-      // long that can take, it should be a deliberate next click, not a
-      // multi-minute wait sprung by the same click that just finished an
-      // interview. Landing back on the "generating" card with its own
-      // "Generate"/"Continue" button (see RunStatusPanel) matches how the
-      // very first Stage 1 generation works after intake, too.
-      await finalizePlanningDirective(run.id);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Couldn't finalize the directive.");
-    } finally {
-      setAdvancing(false);
-    }
-  }
-
-  const [intakeSending, setIntakeSending] = useState(false);
-  const [intakeFinalizing, setIntakeFinalizing] = useState(false);
-
-  async function handleIntakeSend(message: string, document?: { base64: string; mediaType: string }) {
-    if (!run) return;
-    setIntakeSending(true);
-    setActionError(null);
-    try {
-      await sendIntakeChatTurn(run.id, message, document);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Couldn't send that message.");
-      throw err;
-    } finally {
-      setIntakeSending(false);
-    }
-  }
-
-  async function handleIntakeFinalize() {
-    if (!run) return;
-    setIntakeFinalizing(true);
-    setActionError(null);
-    try {
-      // Same reasoning as handleFinalizeDirective above — lands on the
-      // "generating" card with its own explicit Generate button rather
-      // than silently kicking off a multi-minute Stage 1 call.
-      await finalizeIntakeConversation(run.id);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Couldn't start planning.");
-      throw err;
-    } finally {
-      setIntakeFinalizing(false);
-    }
-  }
-
-  async function handleConfirmEntities(approvedIndexes: number[]) {
-    if (!run) return;
-    setAdvancing(true);
-    setActionError(null);
-    try {
-      await confirmPlanningEntities(run.id, approvedIndexes);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Couldn't save the selected entities.");
-    } finally {
-      setAdvancing(false);
-    }
-  }
-
-  if (!effectiveRunId && !run) {
-    if (!storageChecked) return null;
-    return <StartPlanningCard onStart={handleStart} starting={starting} error={actionError} />;
-  }
-
-  if (status === "loading" && !run) {
-    return <p className="text-center text-sm text-ink-muted">Loading planning run…</p>;
-  }
-
-  if (status === "error" && !run) {
-    return (
-      <div className="mx-auto max-w-xl card p-6 text-center">
-        <p className="text-sm text-danger">{error ?? "Couldn't load this planning run."}</p>
-        <button
-          type="button"
-          onClick={handleStart}
-          disabled={starting}
-          className="mt-4 rounded-xl bg-gold px-4 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
-          Start a New Run
-        </button>
-      </div>
-    );
-  }
-
-  if (!run) return null;
-
-  const discardControl = (
-    <div className="mb-3 flex justify-end">
-      <button
-        type="button"
-        onClick={() => setConfirmingDiscard(true)}
-        disabled={discarding}
-        className="text-xs text-ink-faint underline-offset-2 transition-colors hover:text-danger hover:underline disabled:opacity-50"
-      >
-        Discard this plan
-      </button>
-    </div>
-  );
-
-  const confirmDiscardDialog = confirmingDiscard && (
-    <ConfirmDialog
-      title="Discard this plan?"
-      description="This removes the run's own conversation, artifacts, and reviews. It does NOT undo anything already written to your Outliner or Codex from a prior stage approval — those stay exactly as they are. This can't be undone."
-      confirmLabel="Discard"
-      onCancel={() => setConfirmingDiscard(false)}
-      onConfirm={handleDiscard}
-    />
-  );
-
-  if (run.status === "intake_active") {
-    return (
-      <div className="mx-auto flex h-full max-w-2xl flex-col">
-        {discardControl}
-        {actionError && (
-          <p className="mb-3 flex items-center gap-2 rounded-xl border border-danger/40 bg-danger/10 p-3 text-xs text-danger">
-            <AlertTriangle className="size-3.5 shrink-0" />
-            {actionError}
-          </p>
-        )}
-        <IntakeChat
-          run={run}
-          sending={intakeSending}
-          finalizing={intakeFinalizing}
-          onSend={handleIntakeSend}
-          onFinalize={handleIntakeFinalize}
-        />
-        {confirmDiscardDialog}
-      </div>
-    );
-  }
-
-  return (
-    <div className="mx-auto max-w-3xl space-y-6">
-      {discardControl}
-      <StageStepper currentStage={run.currentStage} runStatus={run.status} />
-      {actionError && (
-        <p className="flex items-center gap-2 rounded-xl border border-danger/40 bg-danger/10 p-3 text-xs text-danger">
-          <AlertTriangle className="size-3.5 shrink-0" />
-          {actionError}
-        </p>
-      )}
-      <RunStatusPanel
-        run={run}
-        advancing={advancing}
-        onAdvance={handleAdvance}
-        onApprove={handleApprove}
-        onReject={handleReject}
-        onSendChat={(message) => sendPlanningChatTurn(run.id, message)}
-        onFinalizeDirective={handleFinalizeDirective}
-        onConfirmEntities={handleConfirmEntities}
-      />
-      {confirmDiscardDialog}
     </div>
   );
 }
@@ -541,12 +518,12 @@ function StartPlanningCard({
     <div className="mx-auto max-w-xl">
       <div className="card p-8 text-center">
         <Sparkles className="mx-auto size-6 text-gold" />
-        <h2 className="mt-3 font-display text-xl text-ink">Start Planning</h2>
+        <h2 className="mt-3 font-display text-xl text-ink">Let&apos;s build your story</h2>
         <p className="mt-2 text-sm text-ink-muted">
-          Starts with a short conversation — tell me about the book, in your own words — then a guided pipeline
-          takes it from there: Core Summary, then Act Outlines, then Chapter Beats, each stage written by a
-          Generator, reviewed by a panel of Critics, and synthesized by an Arbitrator before it comes to you for approval.
-          This never writes manuscript prose; Generate/drafting stays exactly as it is.
+          Starts with a conversation — describe your book, in your own words — then a guided pipeline takes it from
+          there: Core Summary, then each Act summarized, each Part outlined and beat-mapped, reviewed by a panel of
+          Critics and synthesized by an Arbitrator before it comes to you for approval. This never writes manuscript
+          prose; Generate/drafting stays exactly as it is.
         </p>
         {error && <p className="mt-3 text-xs text-danger">{error}</p>}
         <button
@@ -563,53 +540,207 @@ function StartPlanningCard({
   );
 }
 
-/**
- * One message bubble — user (gold, right-aligned) or assistant (card-2,
- * left-aligned, markdown-rendered), the exact same visual language as
- * `MessageBubble` in `chat-panel.tsx` (the AI Assistant), reused here so
- * the intake conversation and the rejection interview both read as the
- * same real chat surface as the rest of the app rather than a
- * scaled-down one-off.
- */
-function ChatBubble({ role, content }: { role: "user" | "assistant"; content: string }) {
-  const isUser = role === "user";
+// ---------------------------------------------------------------------
+// Unit addressing helpers (UI-only — planning-data.ts owns the raw
+// backend-mirroring logic; these build on top of it for display).
+// ---------------------------------------------------------------------
+
+const FIRST_UNIT_POSITION: UnitPosition = { stage: "stage_1_summary", act: null, part: null, beatChunk: null };
+
+function buildUnitSequence(run: PlanningRun): UnitPosition[] {
+  const seq: UnitPosition[] = [];
+  let pos: UnitPosition | null = FIRST_UNIT_POSITION;
+  let guard = 0;
+  while (pos && guard++ < 500) {
+    seq.push(pos);
+    pos = nextPlanningPosition(pos, run.partChapterRanges);
+  }
+  return seq;
+}
+
+type UnitState = "locked" | "current" | "approved";
+
+function unitStateFor(pos: UnitPosition, sequence: UnitPosition[], run: PlanningRun): UnitState {
+  if (run.status === "done") return "approved";
+  const key = unitKeyForPosition(pos);
+  const currentKey = currentUnitKey(run);
+  const idxOfPos = sequence.findIndex((p) => unitKeyForPosition(p) === key);
+  const idxOfCurrent = sequence.findIndex((p) => unitKeyForPosition(p) === currentKey);
+  if (idxOfPos === -1 || idxOfCurrent === -1) return "locked";
+  if (idxOfPos < idxOfCurrent) return "approved";
+  if (idxOfPos === idxOfCurrent) return "current";
+  return "locked";
+}
+
+function unitLabel(pos: UnitPosition, run: PlanningRun): string {
+  switch (pos.stage) {
+    case "stage_1_summary":
+      return "Stage 1 — Core Summary";
+    case "act_summary":
+      return `Act ${pos.act} — Summary`;
+    case "part_outline":
+      return `Act ${pos.act} · Part ${pos.part} — Outline`;
+    case "part_beats": {
+      const range = run.partChapterRanges[partRangeKey(pos.act as number, pos.part as number)];
+      const total = range ? chunksNeededForRange(range) : null;
+      return `Act ${pos.act} · Part ${pos.part} — Beats${total ? ` (chunk ${pos.beatChunk} of ${total})` : ""}`;
+    }
+  }
+}
+
+function StatusIcon({ state }: { state: UnitState }) {
+  if (state === "approved") return <CheckCircle2 className="size-4 text-success" />;
+  if (state === "current") return <Circle className="size-4 fill-gold text-gold" />;
+  return <Lock className="size-3.5 text-ink-faint" />;
+}
+
+// ---------------------------------------------------------------------
+// Pipeline Map — the Act/Part/Beats roadmap
+// ---------------------------------------------------------------------
+
+function PipelineMap({
+  run,
+  onOpenUnit,
+  onOpenLedger,
+  onOpenEntities,
+}: {
+  run: PlanningRun;
+  onOpenUnit: () => void;
+  onOpenLedger: () => void;
+  onOpenEntities: () => void;
+}) {
+  const sequence = useMemo(() => buildUnitSequence(run), [run]);
+  const progress = useMemo(() => computePlanningProgress(run), [run]);
+  const currentPos = currentUnitPosition(run);
+  const isDone = run.status === "done";
+
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-      <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm ${isUser ? "bg-gold text-gold-contrast" : "card-2"}`}>
-        {isUser ? (
-          <p className="whitespace-pre-wrap leading-relaxed">{content}</p>
+    <div className="space-y-4">
+      <div className="card p-5">
+        <div className="flex items-center justify-between">
+          <h3 className="label-caps text-[0.65rem]">Book Progress</h3>
+          <span className="text-xs text-ink-muted">
+            {progress.approved} / {progress.total}
+            {progress.totalIsFinal ? "" : "+"} units approved
+          </span>
+        </div>
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-surface-2">
+          <div
+            className="h-full rounded-full bg-gold transition-all"
+            style={{ width: `${progress.total > 0 ? Math.min(100, (progress.approved / progress.total) * 100) : 0}%` }}
+          />
+        </div>
+        {!progress.totalIsFinal && (
+          <p className="mt-1.5 text-[0.7rem] text-ink-faint">
+            Final count depends on chapter ranges not yet set — grows and refines as each Part&apos;s outline is approved.
+          </p>
+        )}
+      </div>
+
+      <UnitRow
+        label={unitLabel(FIRST_UNIT_POSITION, run)}
+        state={unitStateFor(FIRST_UNIT_POSITION, sequence, run)}
+      />
+
+      {Array.from({ length: ACTS_PER_BOOK }, (_, i) => i + 1).map((act) => {
+        const actSummaryPos: UnitPosition = { stage: "act_summary", act, part: null, beatChunk: null };
+        return (
+          <div key={act} className="card space-y-3 p-5">
+            <UnitRow label={unitLabel(actSummaryPos, run)} state={unitStateFor(actSummaryPos, sequence, run)} compact />
+            <div className="grid gap-3 sm:grid-cols-3">
+              {Array.from({ length: PARTS_PER_ACT }, (_, i) => i + 1).map((part) => {
+                const outlinePos: UnitPosition = { stage: "part_outline", act, part, beatChunk: null };
+                const outlineState = unitStateFor(outlinePos, sequence, run);
+                const range = run.partChapterRanges[partRangeKey(act, part)];
+                const totalChunks = range ? chunksNeededForRange(range) : 1;
+                const beatStates = Array.from({ length: totalChunks }, (_, i) => {
+                  const pos: UnitPosition = { stage: "part_beats", act, part, beatChunk: i + 1 };
+                  return unitStateFor(pos, sequence, run);
+                });
+                const beatsApproved = beatStates.filter((s) => s === "approved" || (isDone && s !== "locked")).length;
+                const partIsCurrent = outlineState === "current" || beatStates.includes("current");
+                const partIsLocked = outlineState === "locked" && beatStates.every((s) => s === "locked");
+
+                return (
+                  <div
+                    key={part}
+                    className={`rounded-xl border p-3 ${
+                      partIsCurrent ? "border-gold/60 bg-gold/5" : partIsLocked ? "border-line opacity-60" : "border-line"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-ink">Part {part}</span>
+                      {partIsCurrent && (
+                        <span className="rounded-full bg-gold/15 px-2 py-0.5 text-[0.6rem] font-medium text-gold">Up Next</span>
+                      )}
+                    </div>
+                    <div className="mt-2 flex items-center gap-1.5 text-xs text-ink-muted">
+                      <StatusIcon state={outlineState} />
+                      Outline
+                    </div>
+                    <div className="mt-1 flex items-center gap-1.5 text-xs text-ink-muted">
+                      {range ? <StatusIcon state={beatStates[0]} /> : <Lock className="size-3.5 text-ink-faint" />}
+                      Beats {range ? `(${beatsApproved}/${totalChunks} approved)` : "(chapter range TBD)"}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+
+      <div className="card flex flex-wrap items-center justify-between gap-3 p-5">
+        {isDone ? (
+          <div>
+            <p className="text-sm font-medium text-ink">Planning complete — every Act and Part is fully mapped.</p>
+            <p className="mt-1 text-xs text-ink-muted">
+              Chapter Beats are already in the Outliner.{" "}
+              <button type="button" onClick={onOpenEntities} className="text-gold hover:opacity-80">
+                Review extracted entities
+              </button>{" "}
+              or{" "}
+              <button type="button" onClick={onOpenLedger} className="text-gold hover:opacity-80">
+                browse the Continuity Ledger
+              </button>
+              .
+            </p>
+          </div>
         ) : (
-          <div className="text-ink">{renderMarkdown(content)}</div>
+          <div>
+            <p className="label-caps text-[0.6rem] text-ink-faint">Current Unit</p>
+            <p className="mt-1 text-sm font-medium text-ink">{unitLabel(currentPos, run)}</p>
+            <p className="mt-0.5 text-xs text-ink-muted">{PLANNING_RUN_STATUS_LABEL[run.status]}</p>
+          </div>
+        )}
+        {!isDone && (
+          <button
+            type="button"
+            onClick={onOpenUnit}
+            className="inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
+          >
+            Open Unit
+          </button>
         )}
       </div>
     </div>
   );
 }
 
-function ChatTypingIndicator() {
+function UnitRow({ label, state, compact }: { label: string; state: UnitState; compact?: boolean }) {
   return (
-    <div className="flex justify-start">
-      <div className="card-2 flex items-center gap-1.5 px-4 py-3">
-        <span className="size-1.5 animate-bounce rounded-full bg-ink-faint [animation-delay:-0.3s]" />
-        <span className="size-1.5 animate-bounce rounded-full bg-ink-faint [animation-delay:-0.15s]" />
-        <span className="size-1.5 animate-bounce rounded-full bg-ink-faint" />
-      </div>
+    <div className={compact ? "flex items-center gap-2" : "card flex items-center gap-2 p-4"}>
+      <StatusIcon state={state} />
+      <span className={`text-sm ${state === "locked" ? "text-ink-faint" : "text-ink"}`}>{label}</span>
     </div>
   );
 }
 
-/**
- * The pre-Stage-1 intake conversation — a chat, not a form (see the
- * feature doc's own framing: "Start Planning" opens this, not a
- * "Generate" button). Pasting a URL directly into the message is enough;
- * the backend gives Claude a server-side web_fetch tool that reads the
- * page itself. A document attach is one-shot — read for this one call
- * only, never persisted — so there's no asset-management UI here, just a
- * file picker feeding straight into the next send. Structured the same
- * header/scroll-region/composer way as the AI Assistant's `ChatPanel`
- * (see chat-panel.tsx) rather than one padded block, since that's what
- * actually reads as "a real chat interface" in this app's own language.
- */
+// ---------------------------------------------------------------------
+// Intake — a real multi-turn conversation, never a form that skips
+// straight to intake-finalize (see the file's own top-of-file comment)
+// ---------------------------------------------------------------------
+
 function IntakeChat({
   run,
   sending,
@@ -647,85 +778,61 @@ function IntakeChat({
         return;
       }
     }
+    setMessage("");
+    setAttachedFile(null);
     try {
       await onSend(text, document);
-      setMessage("");
-      setAttachedFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = "";
     } catch {
-      // onSend's caller (handleIntakeSend in PipelineView) already surfaces
-      // this via the shared actionError banner — nothing file-related went
-      // wrong here, so this must not fall into the file-read error above.
+      // actionError banner (rendered by the caller) already shows this.
     }
   }
 
   return (
     <section className="card flex min-h-0 flex-1 flex-col p-0">
-      <div className="flex items-center gap-2.5 border-b border-line px-5 py-3.5">
-        <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface-2 text-gold">
-          <Sparkles className="size-4" />
-        </span>
-        <div className="min-w-0">
+      <header className="flex shrink-0 items-center gap-2.5 border-b border-line px-5 py-4">
+        <Sparkles className="size-4 text-gold" />
+        <div>
           <p className="text-sm font-medium text-ink">Tell me about your book</p>
-          <p className="truncate text-xs text-ink-faint">
-            Plain language, a reference link, or an attached document — I&apos;ll read it.
-          </p>
+          <p className="text-xs text-ink-faint">Plain language, a reference link, or an attached document — I&apos;ll read it.</p>
         </div>
-      </div>
-
-      <div ref={scrollRef} className="scroll-slim min-h-0 flex-1 overflow-y-auto px-5 py-4">
-        {run.intakeChatHistory.length === 0 ? (
-          <p className="pt-8 text-center text-sm text-ink-faint">
-            Say what this book is about, in your own words, to get started.
+      </header>
+      <div ref={scrollRef} className="scroll-slim min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
+        {run.intakeChatHistory.length === 0 && (
+          <p className="text-sm text-ink-faint">
+            Describe your book&apos;s premise, themes, and how you want it to feel — I&apos;ll ask follow-up questions
+            until we&apos;re ready to start planning.
           </p>
-        ) : (
-          <div className="flex flex-col gap-4">
-            {run.intakeChatHistory.map((m, i) => (
-              <ChatBubble key={i} role={m.role} content={m.content} />
-            ))}
-            {sending && (
-              <div className="flex flex-col items-start gap-1.5">
-                <ChatTypingIndicator />
-                <LongRunningNote seconds={elapsed} />
-              </div>
-            )}
+        )}
+        {run.intakeChatHistory.map((m, i) => (
+          <ChatBubble key={i} role={m.role} content={m.content} />
+        ))}
+        {sending && <ChatTypingIndicator />}
+        {(sending || finalizing) && <LongRunningNote seconds={elapsed} />}
+      </div>
+      <div className="shrink-0 border-t border-line p-3">
+        {attachError && <p className="mb-2 px-1 text-xs text-danger">{attachError}</p>}
+        {attachedFile && (
+          <div className="mb-2 flex items-center gap-2 rounded-lg border border-line px-2.5 py-1.5 text-xs text-ink-muted">
+            <Paperclip className="size-3.5 shrink-0" />
+            <span className="truncate">{attachedFile.name}</span>
+            <button type="button" onClick={() => setAttachedFile(null)} className="ml-auto text-ink-faint hover:text-ink">
+              <X className="size-3.5" />
+            </button>
           </div>
         )}
-      </div>
-
-      {attachedFile && (
-        <div className="mx-5 mb-2 flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-1.5 text-xs text-ink-muted">
-          <Paperclip className="size-3.5 shrink-0" />
-          <span className="min-w-0 flex-1 truncate">{attachedFile.name}</span>
-          <button
-            type="button"
-            aria-label="Remove attachment"
-            onClick={() => {
-              setAttachedFile(null);
-              if (fileInputRef.current) fileInputRef.current.value = "";
-            }}
-            className="shrink-0 text-ink-faint transition-colors hover:text-ink"
-          >
-            <X className="size-3.5" />
-          </button>
-        </div>
-      )}
-      {attachError && <p className="mx-5 mb-2 text-xs text-danger">{attachError}</p>}
-
-      <div className="border-t border-line p-3.5">
-        <div className="flex items-end gap-2 rounded-xl border border-line bg-surface px-3 py-2">
+        <div className="flex items-end gap-2">
           <input
             ref={fileInputRef}
             type="file"
+            accept=".pdf,.txt,.md,.docx"
             className="hidden"
             onChange={(e) => setAttachedFile(e.target.files?.[0] ?? null)}
           />
           <button
             type="button"
-            aria-label="Attach a document"
             onClick={() => fileInputRef.current?.click()}
-            disabled={sending}
-            className="grid size-7 shrink-0 place-items-center rounded-lg text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-40"
+            aria-label="Attach a document"
+            className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-line text-ink-muted transition-colors hover:border-line-strong hover:text-ink"
           >
             <Paperclip className="size-4" />
           </button>
@@ -738,102 +845,117 @@ function IntakeChat({
                 handleSend();
               }
             }}
-            rows={1}
-            disabled={sending}
             placeholder="Describe your book, or paste a link…"
-            className="max-h-32 min-h-[24px] flex-1 resize-none bg-transparent text-sm text-ink placeholder:text-ink-faint focus:outline-none disabled:opacity-50"
+            rows={1}
+            className="max-h-32 min-h-[2.25rem] flex-1 resize-none rounded-lg border border-line bg-transparent px-3 py-2 text-sm text-ink outline-none focus:border-line-strong"
           />
           <button
             type="button"
             aria-label="Send"
             onClick={handleSend}
             disabled={sending || !message.trim()}
-            className="grid size-7 shrink-0 place-items-center rounded-lg bg-gold text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-40"
+            className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-gold text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {sending ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
           </button>
         </div>
-
         <button
           type="button"
           onClick={onFinalize}
-          disabled={finalizing || sending || run.intakeChatHistory.length === 0}
-          className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-gold px-4 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
+          disabled={run.intakeChatHistory.length === 0 || finalizing || sending}
+          className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gold px-4 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
         >
           {finalizing && <Loader2 className="size-4 animate-spin" />}
           Start Planning
         </button>
-        {finalizing && <LongRunningNote seconds={elapsed} />}
+        <p className="mt-1.5 text-center text-[0.7rem] text-ink-faint">This will lock in your brief and begin Stage 1: Core Summary.</p>
       </div>
     </section>
   );
 }
 
-function StageStepper({
-  currentStage,
-  runStatus,
-}: {
-  currentStage: Exclude<PlanningStage, "all" | "intake">;
-  runStatus: PlanningRunStatus;
-}) {
-  const currentIndex = RUN_STAGES.indexOf(currentStage);
-  return (
-    <div className="flex items-center gap-2">
-      {RUN_STAGES.map((stage, i) => {
-        const meta = PLANNING_STAGE_META[stage];
-        const isDone = i < currentIndex || (i === currentIndex && runStatus === "done");
-        const isCurrent = i === currentIndex && runStatus !== "done";
-        return (
-          <div key={stage} className="flex flex-1 items-center gap-2 last:flex-none">
-            <div
-              className={`flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium ${
-                isCurrent
-                  ? "border-gold bg-gold/10 text-gold"
-                  : isDone
-                    ? "border-success/40 bg-success/10 text-success"
-                    : "border-line text-ink-faint"
-              }`}
-            >
-              {isDone ? <Check className="size-3.5" /> : <span className="font-num">{i + 1}</span>}
-              {meta.short}
-            </div>
-            {i < RUN_STAGES.length - 1 && <div className="h-px flex-1 bg-line" />}
-          </div>
-        );
-      })}
-    </div>
-  );
+// ---------------------------------------------------------------------
+// Unit Detail — one reusable component for every unit type, keyed by
+// current_stage/current_act/current_part/current_beat_chunk, per
+// correction #3: a Part's Outline and its Beats chunk(s) are SEPARATE
+// gated units, never merged into one screen/action. This component is
+// only ever shown for the run's CURRENT unit — never a historical one —
+// so correction #2's "Approved badge and Approve/Reject buttons never
+// both on screen" is satisfied by construction, not by extra state.
+// ---------------------------------------------------------------------
+
+function parentArtifactFor(run: PlanningRun): { label: string; text: string } | null {
+  const pos = currentUnitPosition(run);
+  if (pos.stage === "stage_1_summary") return null;
+  if (pos.stage === "act_summary") return { label: "Book Vision", text: run.stageArtifacts["stage_1_summary"] ?? "" };
+  if (pos.stage === "part_outline") return { label: `Act ${pos.act} Summary`, text: run.stageArtifacts[`act_${pos.act}_summary`] ?? "" };
+  return { label: `Act ${pos.act} · Part ${pos.part} Outline`, text: run.stageArtifacts[`act_${pos.act}_part_${pos.part}_outline`] ?? "" };
 }
 
-function RunStatusPanel({
+function UnitDetail({
   run,
   advancing,
+  onBack,
   onAdvance,
   onApprove,
   onReject,
+  onUnapprove,
+  onDiscardStage,
   onSendChat,
   onFinalizeDirective,
-  onConfirmEntities,
 }: {
   run: PlanningRun;
   advancing: boolean;
+  onBack: () => void;
   onAdvance: () => void;
   onApprove: () => void;
   onReject: () => void;
-  onSendChat: (message: string) => Promise<PlanningRun>;
+  onUnapprove: () => void;
+  onDiscardStage: () => void;
+  onSendChat: (message: string) => Promise<void>;
   onFinalizeDirective: () => void;
-  onConfirmEntities: (approvedIndexes: number[]) => void;
 }) {
-  const stageMeta = PLANNING_STAGE_META[run.currentStage];
   const elapsed = useElapsedSeconds(advancing);
+  const unit = currentUnitKey(run);
+  const isFirstUnit = unit === "stage_1_summary";
+  const hasOwnArtifact = Boolean(run.stageArtifacts[unit]);
+  const parent = parentArtifactFor(run);
+  const [confirmingDiscardStage, setConfirmingDiscardStage] = useState(false);
 
-  switch (run.status) {
-    case "generating":
-    case "critiquing":
-    case "awaiting_arbitration":
-      return (
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <button type="button" onClick={onBack} className="flex items-center gap-1.5 text-sm text-ink-muted transition-colors hover:text-ink">
+          <ChevronLeft className="size-4" />
+          Back to Pipeline Map
+        </button>
+        {!isFirstUnit && !hasOwnArtifact && (
+          <button
+            type="button"
+            onClick={onUnapprove}
+            disabled={advancing}
+            className="flex items-center gap-1.5 text-xs text-ink-faint transition-colors hover:text-ink disabled:opacity-50"
+          >
+            <Undo2 className="size-3.5" />
+            Undo last approval
+          </button>
+        )}
+      </div>
+
+      <h2 className="font-display text-lg text-ink">{unitLabel(currentUnitPosition(run), run)}</h2>
+
+      {parent && parent.text && (
+        <details className="card p-4 text-sm text-ink-muted">
+          <summary className="cursor-pointer text-xs font-medium text-ink-faint">Context — {parent.label}</summary>
+          <div className="scroll-slim mt-3 max-h-56 overflow-y-auto">
+            <ArtifactContent artifact={parent.text} />
+          </div>
+        </details>
+      )}
+
+      {(run.status === "generating" || run.status === "critiquing" || run.status === "awaiting_arbitration") && (
         <div className="card p-6 text-center">
-          <p className="text-sm text-ink-muted">{advancing ? PLANNING_RUN_STATUS_LABEL[run.status] : "Ready"}…</p>
+          <p className="text-sm text-ink-muted">{PLANNING_RUN_STATUS_LABEL[run.status]}…</p>
           <button
             type="button"
             onClick={onAdvance}
@@ -841,75 +963,108 @@ function RunStatusPanel({
             className="mt-4 inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {advancing && <Loader2 className="size-4 animate-spin" />}
-            {advancing ? "Working…" : run.status === "generating" ? `Generate ${stageMeta.short}` : "Continue"}
+            {advancing ? "Working…" : run.status === "generating" ? "Generate" : "Continue"}
           </button>
           {advancing && <LongRunningNote seconds={elapsed} />}
         </div>
-      );
-    case "failed":
-      return (
+      )}
+
+      {run.status === "failed" && (
         <div className="card space-y-3 p-6">
           <p className="flex items-center gap-2 text-sm text-danger">
             <AlertTriangle className="size-4 shrink-0" />
             {run.lastError ?? "Something went wrong."}
           </p>
-          <button
-            type="button"
-            onClick={onAdvance}
-            disabled={advancing}
-            className="inline-flex items-center gap-2 rounded-xl border border-line px-4 py-2 text-sm font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
-          >
-            {advancing && <Loader2 className="size-4 animate-spin" />}
-            Retry
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onAdvance}
+              disabled={advancing}
+              className="inline-flex items-center gap-2 rounded-xl border border-line px-4 py-2 text-sm font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
+            >
+              {advancing && <Loader2 className="size-4 animate-spin" />}
+              Retry
+            </button>
+            {!isFirstUnit && hasOwnArtifact && (
+              <button
+                type="button"
+                onClick={() => setConfirmingDiscardStage(true)}
+                className="text-xs text-ink-faint underline-offset-2 hover:text-danger hover:underline"
+              >
+                Discard this draft
+              </button>
+            )}
+          </div>
+          {advancing && <LongRunningNote seconds={elapsed} />}
         </div>
-      );
-    case "awaiting_user_review":
-      return <ReviewGate run={run} advancing={advancing} onApprove={onApprove} onReject={onReject} />;
-    case "user_chat_active":
-      return <ChatInterview run={run} advancing={advancing} onSend={onSendChat} onFinalize={onFinalizeDirective} />;
-    case "awaiting_entity_review":
-      return <EntityReview key={run.id} run={run} advancing={advancing} onConfirm={onConfirmEntities} />;
-    case "done":
-      return (
-        <div className="card p-6 text-center">
-          <Check className="mx-auto size-6 text-success" />
-          <p className="mt-2 text-sm text-ink">
-            Planning complete. Chapter Beats are already in the Outliner — nothing else to do here.
-          </p>
-        </div>
-      );
-    default:
-      return null;
-  }
+      )}
+
+      {run.status === "awaiting_user_review" && (
+        <ReviewGate
+          run={run}
+          unit={unit}
+          advancing={advancing}
+          hasOwnArtifact={hasOwnArtifact}
+          isFirstUnit={isFirstUnit}
+          onApprove={onApprove}
+          onReject={onReject}
+          onDiscardStage={() => setConfirmingDiscardStage(true)}
+        />
+      )}
+
+      {run.status === "user_chat_active" && (
+        <RejectionInterview run={run} advancing={advancing} onSend={onSendChat} onFinalize={onFinalizeDirective} />
+      )}
+
+      {confirmingDiscardStage && (
+        <ConfirmDialog
+          title="Discard this draft?"
+          description="This trashes the current draft outright and falls back to the previous unit's review gate, ready to re-approve into a fresh generation. This can't be undone."
+          confirmLabel="Discard"
+          onCancel={() => setConfirmingDiscardStage(false)}
+          onConfirm={() => {
+            setConfirmingDiscardStage(false);
+            onDiscardStage();
+          }}
+        />
+      )}
+    </div>
+  );
 }
 
 function ReviewGate({
   run,
+  unit,
   advancing,
+  hasOwnArtifact,
+  isFirstUnit,
   onApprove,
   onReject,
+  onDiscardStage,
 }: {
   run: PlanningRun;
+  unit: string;
   advancing: boolean;
+  hasOwnArtifact: boolean;
+  isFirstUnit: boolean;
   onApprove: () => void;
   onReject: () => void;
+  onDiscardStage: () => void;
 }) {
-  const artifact = run.stageArtifacts[run.currentStage] ?? "";
+  const artifact = run.stageArtifacts[unit] ?? "";
   return (
     <div className="space-y-4">
       <div className="card p-5">
-        <h3 className="label-caps text-[0.65rem]">{PLANNING_STAGE_META[run.currentStage].label} — Artifact</h3>
+        <h3 className="label-caps text-[0.65rem]">Artifact</h3>
         <div className="scroll-slim mt-3 max-h-96 overflow-y-auto text-sm text-ink">
           <ArtifactContent artifact={artifact} />
         </div>
       </div>
       {run.panelReviews && Object.keys(run.panelReviews).length > 0 && (
         // One card per key actually present in panel_reviews, not a fixed
-        // pair — the Scrutiny Panel's composition (currently 3 critics:
-        // continuity_critic, pacing_critic, craft_critic) isn't hardcoded
-        // here, so it can change again (add/remove/rename a critic) without
-        // another frontend change to this display, only to CRITIC_ROLES.
+        // pair — the Scrutiny Panel's composition (currently 3 critics)
+        // isn't hardcoded here, so it can change again without another
+        // frontend change to this display.
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {Object.entries(run.panelReviews).map(([role, value]) => (
             <ReviewCard key={role} title={roleLabel(role)} value={value} />
@@ -918,28 +1073,37 @@ function ReviewGate({
       )}
       {run.arbitratorSynthesis !== null && run.arbitratorSynthesis !== undefined && (
         <div className="card p-5">
-          <h3 className="label-caps text-[0.65rem]">Arbitrator Synthesis</h3>
+          <h3 className="label-caps text-[0.65rem]">Arbitrator Verdict</h3>
           <JsonBlock value={run.arbitratorSynthesis} />
         </div>
       )}
-      <div className="flex items-center justify-end gap-3">
-        <button
-          type="button"
-          onClick={onReject}
-          disabled={advancing}
-          className="rounded-xl border border-line px-4 py-2 text-sm font-medium text-ink transition-colors hover:border-danger hover:text-danger disabled:opacity-50"
-        >
-          Reject
-        </button>
-        <button
-          type="button"
-          onClick={onApprove}
-          disabled={advancing}
-          className="inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
-          {advancing && <Loader2 className="size-4 animate-spin" />}
-          Approve
-        </button>
+      <div className="flex items-center justify-between gap-3">
+        {!isFirstUnit && hasOwnArtifact ? (
+          <button type="button" onClick={onDiscardStage} className="text-xs text-ink-faint underline-offset-2 hover:text-danger hover:underline">
+            Discard this draft
+          </button>
+        ) : (
+          <span />
+        )}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onReject}
+            disabled={advancing}
+            className="rounded-xl border border-line px-4 py-2 text-sm font-medium text-ink transition-colors hover:border-danger hover:text-danger disabled:opacity-50"
+          >
+            Reject &amp; Discuss
+          </button>
+          <button
+            type="button"
+            onClick={onApprove}
+            disabled={advancing}
+            className="inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {advancing && <Loader2 className="size-4 animate-spin" />}
+            Approve &amp; Lock
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -955,129 +1119,21 @@ function ReviewCard({ title, value }: { title: string; value: unknown }) {
   );
 }
 
-/** A Generator artifact is plain markdown prose at Stage 1/2 but a JSON string at Stage 3 — render whichever it actually is, never the raw ###/braces syntax. */
-function ArtifactContent({ artifact }: { artifact: string }) {
-  const trimmed = artifact.trim();
-  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-    let parsed: unknown;
-    let isJson = true;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch {
-      isJson = false;
-    }
-    if (isJson) return <StructuredValue value={parsed} />;
-  }
-  return <div className="text-ink">{renderMarkdown(artifact)}</div>;
-}
+// ---------------------------------------------------------------------
+// Rejection Interview
+//
+// CORRECTION vs. the design mock: the mock showed a left rail grouping
+// history by unit with a "Rejected N times" count per unit. That
+// structure doesn't exist in the real data — chat_history is one flat
+// array of {role, content}, the WHOLE run's rejection interviews
+// concatenated, with no per-turn unit tag to group by. Rendered here as
+// one continuous thread instead, exactly what the data supports — never
+// sliced to "this unit only," and with no "clear history" action at all
+// (there's no endpoint for it, and it would erase the Arbitrator's
+// deliberate continuous memory across the whole run).
+// ---------------------------------------------------------------------
 
-function fieldLabel(key: string): string {
-  return key
-    .replace(/[_-]+/g, " ")
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-/**
- * panel_reviews / arbitrator_synthesis / a Stage 3 artifact have no fixed
- * schema — they're whatever shape the writer's own prompts ask the model to
- * return. This walks that value recursively and renders it as labeled
- * sections/lists/prose instead of literal JSON syntax (braces, brackets,
- * quotes) — every string leaf still goes through renderMarkdown so any
- * ###/** the model wrote inside a field also comes out readable.
- */
-function StructuredValue({ value }: { value: unknown }) {
-  if (value === null || value === undefined) return null;
-
-  if (typeof value === "string") {
-    return value.trim() ? <div className="text-ink">{renderMarkdown(value)}</div> : null;
-  }
-
-  if (typeof value === "number" || typeof value === "boolean") {
-    return <p className="leading-relaxed text-ink">{String(value)}</p>;
-  }
-
-  if (Array.isArray(value)) {
-    if (value.length === 0) return null;
-    const allPrimitive = value.every((v) => typeof v === "string" || typeof v === "number" || typeof v === "boolean");
-    if (allPrimitive) {
-      return (
-        <ul className="list-disc space-y-1 pl-5">
-          {value.map((v, i) => (
-            <li key={i}>{typeof v === "string" ? renderMarkdown(v) : String(v)}</li>
-          ))}
-        </ul>
-      );
-    }
-    return (
-      <div className="space-y-3">
-        {value.map((item, i) => (
-          <div key={i} className="border-l-2 border-line pl-3">
-            <StructuredValue value={item} />
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  const entries = Object.entries(value as Record<string, unknown>).filter(
-    ([, v]) => v !== null && v !== undefined && v !== "",
-  );
-  if (entries.length === 0) return null;
-  return (
-    <div className="space-y-3">
-      {entries.map(([key, v]) => {
-        // A critic issue's own `status` — "new" | "unresolved" | "resolved"
-        // — is literally showing whether the critic's prior complaint got
-        // fixed on a revision pass, worth a badge rather than a generic
-        // labeled text block like every other field.
-        if (key.toLowerCase() === "status" && typeof v === "string" && ISSUE_STATUS_META[v]) {
-          return (
-            <div key={key}>
-              <IssueStatusBadge status={v} />
-            </div>
-          );
-        }
-        return (
-          <div key={key}>
-            <h5 className="label-caps text-[0.6rem] text-ink-muted">{fieldLabel(key)}</h5>
-            <div className="mt-1">
-              <StructuredValue value={v} />
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-const ISSUE_STATUS_META: Record<string, { label: string; className: string }> = {
-  new: { label: "New", className: "border-gold/40 bg-gold/10 text-gold" },
-  unresolved: { label: "Unresolved", className: "border-danger/40 bg-danger/10 text-danger" },
-  resolved: { label: "Resolved", className: "border-success/40 bg-success/10 text-success" },
-};
-
-function IssueStatusBadge({ status }: { status: string }) {
-  const meta = ISSUE_STATUS_META[status] ?? { label: status, className: "border-line text-ink-muted" };
-  return (
-    <span
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[0.65rem] font-medium ${meta.className}`}
-    >
-      {meta.label}
-    </span>
-  );
-}
-
-/** panel_reviews / arbitrator_synthesis have no fixed schema — they're whatever shape the writer's own prompts ask the model to return, so this renders defensively rather than assuming any particular field. */
-function JsonBlock({ value }: { value: unknown }) {
-  return (
-    <div className="scroll-slim mt-2 max-h-64 overflow-y-auto text-xs text-ink-muted">
-      <StructuredValue value={value} />
-    </div>
-  );
-}
-
-function ChatInterview({
+function RejectionInterview({
   run,
   advancing,
   onSend,
@@ -1085,14 +1141,14 @@ function ChatInterview({
 }: {
   run: PlanningRun;
   advancing: boolean;
-  onSend: (message: string) => Promise<PlanningRun>;
+  onSend: (message: string) => Promise<void>;
   onFinalize: () => void;
 }) {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const elapsed = useElapsedSeconds(sending);
   const finalizingElapsed = useElapsedSeconds(advancing);
-  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -1111,34 +1167,25 @@ function ChatInterview({
   }
 
   return (
-    <section className="card flex flex-col p-0">
-      <div className="border-b border-line px-5 py-3.5">
-        <h3 className="text-sm font-medium text-ink">Rejection Interview</h3>
-        <p className="mt-0.5 text-xs text-ink-faint">
-          Tell the Arbitrator what should change — once you&apos;re satisfied, finalize to regenerate.
-        </p>
+    <section className="card flex max-h-[32rem] flex-col p-0">
+      <header className="flex shrink-0 items-center gap-2.5 border-b border-line px-5 py-4">
+        <PenLine className="size-4 text-gold" />
+        <div>
+          <p className="text-sm font-medium text-ink">Rejection interview</p>
+          <p className="text-xs text-ink-faint">The Arbitrator&apos;s full conversation across this whole run — nothing here is ever cleared.</p>
+        </div>
+      </header>
+      <div ref={scrollRef} className="scroll-slim min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
+        {run.chatHistory.length === 0 && <p className="text-sm text-ink-faint">Tell the Arbitrator what to change about this unit.</p>}
+        {run.chatHistory.map((m, i) => (
+          <ChatBubble key={i} role={m.role} content={m.content} />
+        ))}
+        {sending && <ChatTypingIndicator />}
+        {sending && <LongRunningNote seconds={elapsed} />}
+        {advancing && <LongRunningNote seconds={finalizingElapsed} />}
       </div>
-
-      <div ref={scrollRef} className="scroll-slim max-h-[28rem] min-h-[10rem] overflow-y-auto px-5 py-4">
-        {run.chatHistory.length === 0 ? (
-          <p className="pt-8 text-center text-sm text-ink-faint">Say what should change to get started.</p>
-        ) : (
-          <div className="flex flex-col gap-4">
-            {run.chatHistory.map((m, i) => (
-              <ChatBubble key={i} role={m.role} content={m.content} />
-            ))}
-            {sending && (
-              <div className="flex flex-col items-start gap-1.5">
-                <ChatTypingIndicator />
-                <LongRunningNote seconds={elapsed} />
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      <div className="border-t border-line p-3.5">
-        <div className="flex items-end gap-2 rounded-xl border border-line bg-surface px-3 py-2">
+      <div className="shrink-0 border-t border-line p-3">
+        <div className="flex items-end gap-2">
           <textarea
             value={message}
             onChange={(e) => setMessage(e.target.value)}
@@ -1148,157 +1195,630 @@ function ChatInterview({
                 handleSend();
               }
             }}
+            placeholder="Type your message to the Arbitrator…"
             rows={1}
-            disabled={sending}
-            placeholder="What should change?"
-            className="max-h-32 min-h-[24px] flex-1 resize-none bg-transparent text-sm text-ink placeholder:text-ink-faint focus:outline-none disabled:opacity-50"
+            className="max-h-32 min-h-[2.25rem] flex-1 resize-none rounded-lg border border-line bg-transparent px-3 py-2 text-sm text-ink outline-none focus:border-line-strong"
           />
           <button
             type="button"
             aria-label="Send"
             onClick={handleSend}
             disabled={sending || !message.trim()}
-            className="grid size-7 shrink-0 place-items-center rounded-lg bg-gold text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-40"
+            className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-gold text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {sending ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
           </button>
         </div>
-
         <button
           type="button"
           onClick={onFinalize}
-          disabled={advancing || sending || run.chatHistory.length === 0}
-          className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-line px-4 py-2 text-sm font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
+          disabled={run.chatHistory.length === 0 || advancing || sending}
+          className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gold px-4 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
         >
           {advancing && <Loader2 className="size-4 animate-spin" />}
-          Finalize & Regenerate
+          Send Directive &amp; Regenerate
         </button>
-        {advancing && <LongRunningNote seconds={finalizingElapsed} />}
+        <p className="mt-1.5 text-center text-[0.7rem] text-ink-faint">This compiles the conversation into a directive and restarts the generate → critique → arbitrate cycle.</p>
       </div>
     </section>
   );
 }
 
-type IndexedEntity = ExtractedEntityCandidate & { index: number };
+// ---------------------------------------------------------------------
+// Pipeline — orchestrates Intake / Pipeline Map / Unit Detail for one run
+// ---------------------------------------------------------------------
 
-function EntityReview({
+function PipelineView({
   run,
-  advancing,
-  onConfirm,
+  bookId,
+  onOpenLedger,
+  onOpenEntities,
 }: {
   run: PlanningRun;
-  advancing: boolean;
-  onConfirm: (approvedIndexes: number[]) => void;
+  bookId: string;
+  onOpenLedger: () => void;
+  onOpenEntities: () => void;
 }) {
-  const entities = run.extractedEntities ?? [];
-  // Lazy initializer only — this component is remounted (keyed by run.id,
-  // see RunStatusPanel) whenever it's showing a different run, so there's
-  // no later point where `entities` changes out from under an already-
-  // mounted instance that would need an effect to re-sync.
-  const [checked, setChecked] = useState<Set<number>>(() => new Set(entities.map((_, i) => i)));
+  const [subView, setSubView] = useState<"map" | "unit">("map");
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [advancing, setAdvancing] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
+  const [confirmingDiscardRun, setConfirmingDiscardRun] = useState(false);
+  const [intakeSending, setIntakeSending] = useState(false);
+  const [intakeFinalizing, setIntakeFinalizing] = useState(false);
 
-  const indexed: IndexedEntity[] = entities.map((e, i) => ({ ...e, index: i }));
-  const characters = indexed.filter((e) => e.type === "codex_entry");
-  const worldCategories = indexed.filter((e) => e.type === "world_category");
-
-  function toggle(index: number) {
-    setChecked((prev) => {
-      const next = new Set(prev);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
-      return next;
-    });
+  async function handleIntakeSend(message: string, document?: { base64: string; mediaType: string }) {
+    setIntakeSending(true);
+    setActionError(null);
+    try {
+      await sendIntakeChatTurn(run.id, message, document);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't send that message.");
+      throw err;
+    } finally {
+      setIntakeSending(false);
+    }
   }
 
-  if (entities.length === 0) {
+  async function handleIntakeFinalize() {
+    setIntakeFinalizing(true);
+    setActionError(null);
+    try {
+      // Deliberately doesn't auto-chain into Generate — finalizing intake
+      // (or a rejection directive, below) is the writer's last input
+      // before a fresh 60-180s call, and it should be a deliberate next
+      // click, not a multi-minute wait sprung by the same click.
+      await finalizeIntakeConversation(run.id);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't start planning.");
+      throw err;
+    } finally {
+      setIntakeFinalizing(false);
+    }
+  }
+
+  async function handleAdvance() {
+    setAdvancing(true);
+    setActionError(null);
+    try {
+      const result = await runPipelineForward(run.id);
+      if (result.status === "failed" && result.lastError) setActionError(result.lastError);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Something went wrong running the pipeline.");
+    } finally {
+      setAdvancing(false);
+    }
+  }
+
+  async function handleApprove() {
+    setAdvancing(true);
+    setActionError(null);
+    const wasPartBeats = run.currentStage === "part_beats";
+    try {
+      await approvePlanningStage(run.id);
+      // A part_beats approval materializes real chapter_beats server-side
+      // — refresh the Outliner's own cache so the new beats show up there
+      // without the writer needing a manual page reload.
+      if (wasPartBeats) refreshOutline(bookId);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't approve this unit.");
+    } finally {
+      setAdvancing(false);
+    }
+  }
+
+  async function handleReject() {
+    setAdvancing(true);
+    setActionError(null);
+    try {
+      await rejectPlanningStage(run.id);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't reject this unit.");
+    } finally {
+      setAdvancing(false);
+    }
+  }
+
+  async function handleUnapprove() {
+    setAdvancing(true);
+    setActionError(null);
+    try {
+      await unapprovePlanningStage(run.id);
+    } catch (err) {
+      setActionError(
+        err instanceof ApiError && err.status === 409
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Couldn't undo the last approval.",
+      );
+    } finally {
+      setAdvancing(false);
+    }
+  }
+
+  async function handleDiscardStage() {
+    setAdvancing(true);
+    setActionError(null);
+    try {
+      await discardPlanningStage(run.id);
+    } catch (err) {
+      setActionError(
+        err instanceof ApiError && err.status === 409
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Couldn't discard this draft.",
+      );
+    } finally {
+      setAdvancing(false);
+    }
+  }
+
+  async function handleFinalizeDirective() {
+    setAdvancing(true);
+    setActionError(null);
+    try {
+      await finalizePlanningDirective(run.id);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't finalize the directive.");
+    } finally {
+      setAdvancing(false);
+    }
+  }
+
+  async function handleDiscardRun() {
+    setDiscarding(true);
+    try {
+      await deletePlanningRun(run.id);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't discard this plan.");
+    } finally {
+      setDiscarding(false);
+      setConfirmingDiscardRun(false);
+    }
+  }
+
+  const discardRunControl = (
+    <div className="mb-1 flex justify-end">
+      <button
+        type="button"
+        onClick={() => setConfirmingDiscardRun(true)}
+        disabled={discarding}
+        className="text-xs text-ink-faint underline-offset-2 transition-colors hover:text-danger hover:underline disabled:opacity-50"
+      >
+        Discard this plan
+      </button>
+    </div>
+  );
+
+  const confirmDiscardRunDialog = confirmingDiscardRun && (
+    <ConfirmDialog
+      title="Discard this plan?"
+      description="This removes the run's own conversation, artifacts, and reviews. It does NOT undo anything already written to your Outliner or Codex from a prior approval — those stay exactly as they are. This can't be undone."
+      confirmLabel="Discard"
+      onCancel={() => setConfirmingDiscardRun(false)}
+      onConfirm={handleDiscardRun}
+    />
+  );
+
+  const errorBanner = actionError && (
+    <p className="flex items-center gap-2 rounded-xl border border-danger/40 bg-danger/10 p-3 text-xs text-danger">
+      <AlertTriangle className="size-3.5 shrink-0" />
+      {actionError}
+    </p>
+  );
+
+  if (run.status === "intake_active") {
     return (
-      <div className="card p-6 text-center">
-        <p className="text-sm text-ink-muted">No new entities were found in the approved beats.</p>
-        <button
-          type="button"
-          onClick={() => onConfirm([])}
-          disabled={advancing}
-          className="mt-4 rounded-xl bg-gold px-4 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
-          Continue
-        </button>
+      <div className="mx-auto flex h-full max-w-2xl flex-col">
+        {discardRunControl}
+        {errorBanner}
+        <IntakeChat run={run} sending={intakeSending} finalizing={intakeFinalizing} onSend={handleIntakeSend} onFinalize={handleIntakeFinalize} />
+        {confirmDiscardRunDialog}
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-ink-muted">
-        Select which of these should actually be written to your Codex / World Categories — anything left unchecked
-        is discarded.
-      </p>
-      {characters.length > 0 && <EntityGroup title="Characters" items={characters} checked={checked} onToggle={toggle} />}
-      {worldCategories.length > 0 && (
-        <EntityGroup title="World Categories" items={worldCategories} checked={checked} onToggle={toggle} />
+    <div className="mx-auto max-w-4xl space-y-4">
+      {discardRunControl}
+      {errorBanner}
+      {subView === "map" || run.status === "done" ? (
+        <PipelineMap run={run} onOpenUnit={() => setSubView("unit")} onOpenLedger={onOpenLedger} onOpenEntities={onOpenEntities} />
+      ) : (
+        <UnitDetail
+          run={run}
+          advancing={advancing}
+          onBack={() => setSubView("map")}
+          onAdvance={handleAdvance}
+          onApprove={handleApprove}
+          onReject={handleReject}
+          onUnapprove={handleUnapprove}
+          onDiscardStage={handleDiscardStage}
+          onSendChat={async (message) => {
+            await sendPlanningChatTurn(run.id, message);
+          }}
+          onFinalizeDirective={handleFinalizeDirective}
+        />
       )}
-      <div className="flex justify-end">
+      {confirmDiscardRunDialog}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Run List — CORRECTION vs. the design mock: the mock showed multiple
+// DIFFERENT BOOKS' runs in one cross-project dashboard, but
+// GET /planning/runs?bookId= only ever returns runs for ONE book. This
+// is scoped to the current book's own run history, in practice usually
+// one active run (a book wouldn't normally have several concurrent
+// plans) plus any past done/discarded ones. A true cross-book dashboard
+// would need a new backend endpoint — flagged, not built here.
+// ---------------------------------------------------------------------
+
+function RunListView({
+  bookId,
+  activeRunId,
+  onOpenRun,
+  onStartNew,
+  starting,
+}: {
+  bookId: string;
+  activeRunId: string | null;
+  onOpenRun: (runId: string) => void;
+  onStartNew: () => void;
+  starting: boolean;
+}) {
+  const runs = useBookPlanningRuns(bookId);
+  const loadStatus = useBookPlanningRunsLoadStatus();
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleDelete(runId: string) {
+    try {
+      await deletePlanningRun(runId);
+      if (runId === activeRunId) onOpenRun("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't discard this plan.");
+    } finally {
+      setConfirmingDeleteId(null);
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-lg text-ink">Planning Runs</h2>
         <button
           type="button"
-          onClick={() => onConfirm([...checked])}
-          disabled={advancing}
-          className="inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
+          onClick={onStartNew}
+          disabled={starting}
+          className="inline-flex items-center gap-2 rounded-xl bg-gold px-3.5 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
         >
-          {advancing && <Loader2 className="size-4 animate-spin" />}
-          Confirm Selected ({checked.size})
+          {starting && <Loader2 className="size-3.5 animate-spin" />}
+          New Run
         </button>
+      </div>
+      {error && <p className="text-xs text-danger">{error}</p>}
+      {loadStatus === "loading" && runs.length === 0 && <p className="text-sm text-ink-muted">Loading…</p>}
+      {loadStatus === "loaded" && runs.length === 0 && <p className="text-sm text-ink-muted">No planning runs for this book yet.</p>}
+      <div className="space-y-2">
+        {runs.map((run) => {
+          const progress = computePlanningProgress(run);
+          return (
+            <div key={run.id} className={`card flex items-center gap-4 p-4 ${run.id === activeRunId ? "border-gold/50" : ""}`}>
+              <BookOpen className="size-5 shrink-0 text-ink-faint" />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <p className="truncate text-sm font-medium text-ink">
+                    {run.status === "done" ? "Complete plan" : PLANNING_RUN_STATUS_LABEL[run.status]}
+                  </p>
+                  {run.id === activeRunId && (
+                    <span className="rounded-full bg-gold/15 px-2 py-0.5 text-[0.6rem] font-medium text-gold">Active</span>
+                  )}
+                </div>
+                <p className="mt-0.5 text-xs text-ink-faint">
+                  Last updated {new Date(run.updatedAt).toLocaleString()} · {progress.approved} / {progress.total}
+                  {progress.totalIsFinal ? "" : "+"} units approved
+                </p>
+                <div className="mt-2 h-1.5 max-w-xs overflow-hidden rounded-full bg-surface-2">
+                  <div
+                    className="h-full rounded-full bg-gold"
+                    style={{ width: `${progress.total > 0 ? Math.min(100, (progress.approved / progress.total) * 100) : 0}%` }}
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onOpenRun(run.id)}
+                className="shrink-0 rounded-xl border border-line px-3.5 py-1.5 text-sm font-medium text-ink transition-colors hover:border-line-strong"
+              >
+                {run.id === activeRunId ? "Open" : "Resume"}
+              </button>
+              <OptionsMenu
+                items={[
+                  {
+                    label: "Discard this plan",
+                    Icon: Trash2,
+                    danger: true,
+                    onClick: () => setConfirmingDeleteId(run.id),
+                  },
+                ]}
+              />
+            </div>
+          );
+        })}
+      </div>
+      {confirmingDeleteId && (
+        <ConfirmDialog
+          title="Discard this plan?"
+          description="This removes the run's own conversation, artifacts, and reviews. It does NOT undo anything already written to your Outliner or Codex from a prior approval — those stay exactly as they are. This can't be undone."
+          confirmLabel="Discard"
+          onCancel={() => setConfirmingDeleteId(null)}
+          onConfirm={() => handleDelete(confirmingDeleteId)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Continuity Ledger — CORRECTION vs. the design mock: the mock showed a
+// "Type" (World/Character/Plot) column and a three-state "Status"
+// (Established/Tentative/Not yet in draft). The real ContinuityLedgerEntry
+// is only { fact, sourcedFrom: "plan"|"manuscript", unit } — no category,
+// no third status. Rendered here against exactly that shape: a two-state
+// badge derived directly from sourcedFrom, no Type column, no
+// category grouping (there's nothing in the data to group by).
+// ---------------------------------------------------------------------
+
+function ContinuityLedgerView({ run }: { run: PlanningRun }) {
+  const [query, setQuery] = useState("");
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return run.continuityLedger;
+    return run.continuityLedger.filter((e) => e.fact.toLowerCase().includes(q) || e.unit.toLowerCase().includes(q));
+  }, [run.continuityLedger, query]);
+
+  function handleExport() {
+    const text = run.continuityLedger.map((e) => `[${ledgerBadgeLabel(e.sourcedFrom)}] ${e.fact} (from ${e.unit})`).join("\n");
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "continuity-ledger.txt";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="font-display text-lg text-ink">Continuity Ledger</h2>
+          <p className="text-xs text-ink-muted">Every established fact across this book&apos;s plan. Use this to keep everything consistent.</p>
+        </div>
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={run.continuityLedger.length === 0}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-line px-3 py-1.5 text-xs font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-40"
+        >
+          <Download className="size-3.5" />
+          Export Ledger
+        </button>
+      </div>
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-ink-faint" />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search facts…"
+          className="w-full rounded-xl border border-line bg-transparent py-2 pl-8 pr-3 text-sm text-ink outline-none focus:border-line-strong"
+        />
+      </div>
+      {run.continuityLedger.length === 0 ? (
+        <p className="text-sm text-ink-muted">No ledger entries yet — these accumulate automatically once a Part&apos;s Beats are approved.</p>
+      ) : filtered.length === 0 ? (
+        <p className="text-sm text-ink-muted">No facts match &quot;{query}&quot;.</p>
+      ) : (
+        <div className="card divide-y divide-line">
+          {filtered.map((entry, i) => (
+            <LedgerRow key={i} entry={entry} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LedgerRow({ entry }: { entry: ContinuityLedgerEntry }) {
+  const label = ledgerBadgeLabel(entry.sourcedFrom);
+  return (
+    <div className="flex items-start gap-3 p-4">
+      <span
+        className={`mt-0.5 shrink-0 rounded-full border px-2 py-0.5 text-[0.65rem] font-medium ${
+          entry.sourcedFrom === "manuscript" ? "border-success/40 bg-success/10 text-success" : "border-info/40 bg-info/10 text-info"
+        }`}
+      >
+        {label}
+      </span>
+      <div className="min-w-0">
+        <p className="text-sm text-ink">{entry.fact}</p>
+        <p className="mt-0.5 text-xs text-ink-faint">from {entry.unit}</p>
       </div>
     </div>
   );
 }
 
-function EntityGroup({
-  title,
-  items,
-  checked,
-  onToggle,
-}: {
-  title: string;
-  items: IndexedEntity[];
-  checked: Set<number>;
-  onToggle: (index: number) => void;
-}) {
+// ---------------------------------------------------------------------
+// Entity Review — CORRECTION vs. the design mock: the mock showed a
+// "Confidence %" column and a per-candidate "Source" (originating unit)
+// column. The real entity_extractor contract is
+// [{ type, name, entryType, description }] — no confidence score, no
+// per-candidate source unit (extraction scans every approved beats chunk
+// concatenated in one call, so there's no way to attribute a candidate to
+// one specific chunk). Both dropped; grouping/filtering only by entryType
+// (real data). Extraction is on-demand — its own explicit action, never
+// tied to any approve click or to run.status.
+// ---------------------------------------------------------------------
+
+// Keyed by run.updatedAt at the call site (see PlanningPageInner) so this
+// whole component remounts fresh whenever the candidate set actually
+// changes (a new extraction, or a confirm clearing it) — the "reset via
+// remount" shape this app already uses elsewhere (e.g. PromptDraftEditor)
+// instead of an effect that calls setState synchronously on every change.
+function EntityReviewView({ run }: { run: PlanningRun }) {
+  const candidates = useMemo(() => run.extractedEntities ?? [], [run.extractedEntities]);
+  const actionStatus = useEntityActionStatus();
+  const actionError = useEntityActionError();
+  const [selected, setSelected] = useState<Set<number>>(() => new Set(candidates.map((_, i) => i)));
+  const [filter, setFilter] = useState<string>("all");
+
+  const entryTypes = useMemo(() => Array.from(new Set(candidates.map((c) => c.entryType ?? c.type))), [candidates]);
+
+  const visible = useMemo(
+    () => candidates.map((c, i) => ({ c, i })).filter(({ c }) => filter === "all" || (c.entryType ?? c.type) === filter),
+    [candidates, filter],
+  );
+
+  async function handleScan() {
+    try {
+      await extractPlanningEntities(run.id);
+    } catch {
+      // actionError banner below already shows this.
+    }
+  }
+
+  async function handleConfirm(indexes: number[]) {
+    try {
+      await confirmPlanningEntities(run.id, indexes);
+    } catch {
+      // actionError banner below already shows this.
+    }
+  }
+
   return (
-    <div className="card p-4">
-      <h4 className="label-caps text-[0.6rem]">{title}</h4>
-      <ul className="mt-2 divide-y divide-line">
-        {items.map((e) => (
-          <li key={e.index} className="flex items-start gap-3 py-2.5">
-            <input
-              type="checkbox"
-              checked={checked.has(e.index)}
-              onChange={() => onToggle(e.index)}
-              className="mt-0.5 accent-gold"
-            />
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-ink">
-                {e.name}
-                {e.entryType ? ` · ${e.entryType}` : ""}
-              </p>
-              {e.description && <p className="mt-0.5 text-xs text-ink-muted">{e.description}</p>}
+    <div className="mx-auto max-w-3xl space-y-4">
+      <div>
+        <h2 className="font-display text-lg text-ink">Entity Review</h2>
+        <p className="text-xs text-ink-muted">Scan every approved Part&apos;s Beats so far for new characters and world elements worth adding to your Codex.</p>
+      </div>
+      {actionError && <p className="text-xs text-danger">{actionError}</p>}
+      <button
+        type="button"
+        onClick={handleScan}
+        disabled={actionStatus === "loading"}
+        className="inline-flex items-center gap-2 rounded-xl border border-line px-4 py-2 text-sm font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
+      >
+        {actionStatus === "loading" && <Loader2 className="size-4 animate-spin" />}
+        Scan for New Entities
+      </button>
+
+      {candidates.length === 0 ? (
+        <p className="text-sm text-ink-muted">No candidates pending review. Run a scan to look for new characters or world elements.</p>
+      ) : (
+        <>
+          {entryTypes.length > 1 && (
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => setFilter("all")}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${filter === "all" ? "bg-gold text-gold-contrast" : "bg-surface-2 text-ink-muted hover:text-ink"}`}
+              >
+                All ({candidates.length})
+              </button>
+              {entryTypes.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setFilter(t)}
+                  className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition-colors ${filter === t ? "bg-gold text-gold-contrast" : "bg-surface-2 text-ink-muted hover:text-ink"}`}
+                >
+                  {t} ({candidates.filter((c) => (c.entryType ?? c.type) === t).length})
+                </button>
+              ))}
             </div>
-          </li>
-        ))}
-      </ul>
+          )}
+          <div className="card divide-y divide-line">
+            {visible.map(({ c, i }) => (
+              <EntityCandidateRow
+                key={i}
+                candidate={c}
+                checked={selected.has(i)}
+                onToggle={() =>
+                  setSelected((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(i)) next.delete(i);
+                    else next.add(i);
+                    return next;
+                  })
+                }
+              />
+            ))}
+          </div>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-ink-faint">{selected.size} selected</p>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => handleConfirm([])}
+                disabled={actionStatus === "loading"}
+                className="rounded-xl border border-line px-4 py-2 text-sm font-medium text-ink transition-colors hover:border-danger hover:text-danger disabled:opacity-50"
+              >
+                Reject All
+              </button>
+              <button
+                type="button"
+                onClick={() => handleConfirm(Array.from(selected))}
+                disabled={actionStatus === "loading" || selected.size === 0}
+                className="inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
+              >
+                {actionStatus === "loading" && <Loader2 className="size-4 animate-spin" />}
+                Approve Selected
+              </button>
+            </div>
+          </div>
+          <p className="text-[0.7rem] text-ink-faint">Approved entities are added to your Codex/World Categories. Anything not selected is discarded, never written.</p>
+        </>
+      )}
     </div>
   );
 }
 
+function EntityCandidateRow({
+  candidate,
+  checked,
+  onToggle,
+}: {
+  candidate: ExtractedEntityCandidate;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-start gap-3 p-4">
+      <input type="checkbox" checked={checked} onChange={onToggle} className="mt-1 size-4 accent-gold" />
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium text-ink">{candidate.name}</p>
+          <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[0.6rem] capitalize text-ink-muted">{candidate.entryType ?? candidate.type}</span>
+        </div>
+        {candidate.description && <p className="mt-0.5 text-xs text-ink-muted">{candidate.description}</p>}
+      </div>
+    </label>
+  );
+}
+
 // ---------------------------------------------------------------------
-// Prompt Editor
+// Prompt Editor (left nav: "Settings")
 // ---------------------------------------------------------------------
 
 /**
- * Real roles/stages, confirmed against production: `generator` is the
- * only role that actually varies by `stage_1_summary`/`stage_2_acts`/
- * `stage_3_beats` — the critic roles (`continuity_critic`, `pacing_critic`,
- * `craft_critic`), `arbitrator_panel`, and `entity_extractor` each have
- * exactly one active prompt at `"all"`,
- * and `arbitrator_chat`/`arbitrator_directive` each have two, one at
+ * `generator` is the only role that actually varies across all 4 real
+ * stages — the critic roles, `arbitrator_panel`, `entity_extractor`, and
+ * `ledger_extractor` each have exactly one active prompt at `"all"`, and
+ * `arbitrator_chat`/`arbitrator_directive` each have two, one at
  * `"intake"` and one at `"all"`. Switching Role while Stage still points
  * at wherever the *previous* role's prompt lived (most commonly the
  * default "Stage 1", which only Generator ever uses) filters `versions`
@@ -1334,8 +1854,7 @@ function PromptEditorView({ bookId }: { bookId: string }) {
   const isEmptyBook = listStatus === "loaded" && prompts.length === 0;
 
   // A timed subscription, not a synchronous setState-in-effect — the
-  // sanctioned effect shape (see EntityReview's comment above for the
-  // alternative "remount via key" shape used for the draft form below).
+  // sanctioned effect shape.
   useEffect(() => {
     if (!savedFlash) return;
     const timeout = window.setTimeout(() => setSavedFlash(false), 2000);
@@ -1352,11 +1871,9 @@ function PromptEditorView({ bookId }: { bookId: string }) {
   // present in this book's own fetched prompts that isn't in that fixed
   // list — defensive against the exact class of bug that hid 6 of 7 roles
   // here once already (this file's own git history): if the backend adds
-  // or renames a role (a prompt written some other way, e.g. the MCP tool
-  // surface, or this file simply not having caught up yet) before this
-  // file's AGENT_ROLES does, that role's prompt still shows up and is
-  // selectable — via roleLabel()'s derived-label fallback — instead of
-  // silently disappearing from the editor.
+  // or renames a role before this file catches up, that role's prompt
+  // still shows up and is selectable via roleLabel()'s derived-label
+  // fallback, instead of silently disappearing from the editor.
   const roleOptions = useMemo<AgentRole[]>(() => {
     const extra = Array.from(new Set(prompts.map((p) => p.agentRole))).filter((r) => !AGENT_ROLES.includes(r));
     return [...AGENT_ROLES, ...extra];
@@ -1390,12 +1907,7 @@ function PromptEditorView({ bookId }: { bookId: string }) {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      {isEmptyBook && !dismissedClonePrompt && (
-        <ClonePromptsCard
-          bookId={bookId}
-          onDismiss={() => setDismissedClonePrompt(true)}
-        />
-      )}
+      {isEmptyBook && !dismissedClonePrompt && <ClonePromptsCard bookId={bookId} onDismiss={() => setDismissedClonePrompt(true)} />}
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <label className="label-caps text-[0.6rem]">Role</label>
@@ -1468,9 +1980,7 @@ function PromptEditorView({ bookId }: { bookId: string }) {
                   <p className="flex flex-wrap items-center gap-2 text-sm text-ink">
                     v{v.version}
                     {v.isActive && (
-                      <span className="rounded-full bg-success/15 px-2 py-0.5 text-[0.6rem] font-semibold text-success">
-                        ACTIVE
-                      </span>
+                      <span className="rounded-full bg-success/15 px-2 py-0.5 text-[0.6rem] font-semibold text-success">ACTIVE</span>
                     )}
                     <AuthorBadge author={v.authoredBy} />
                   </p>
@@ -1496,11 +2006,11 @@ function PromptEditorView({ bookId }: { bookId: string }) {
 /**
  * Shown when this book has zero agent prompts of its own — a brand-new
  * book, since prompts are scoped per `book_id`. Offers reusing another of
- * the writer's own projects' prompts instead of writing all seven roles
- * from scratch. Not a hard gate: dismissible, and the normal role/stage
- * editor below is always available either way. Disappears on its own
- * once cloning succeeds, since `prompts.length` naturally goes from 0 to
- * 11 and `isEmptyBook` in the parent flips false — no separate "done"
+ * the writer's own projects' prompts instead of writing every role from
+ * scratch. Not a hard gate: dismissible, and the normal role/stage editor
+ * below is always available either way. Disappears on its own once
+ * cloning succeeds, since `prompts.length` naturally goes from 0 to real
+ * and `isEmptyBook` in the parent flips false — no separate "done"
  * callback needed.
  */
 function ClonePromptsCard({ bookId, onDismiss }: { bookId: string; onDismiss: () => void }) {
@@ -1547,16 +2057,10 @@ function ClonePromptsCard({ bookId, onDismiss }: { bookId: string; onDismiss: ()
         <div>
           <h3 className="text-sm font-medium text-ink">Copy prompts from another project</h3>
           <p className="mt-0.5 text-xs text-ink-faint">
-            This book has no agent prompts yet. Reuse another project&apos;s instead of writing all seven roles from
-            scratch.
+            This book has no agent prompts yet. Reuse another project&apos;s instead of writing every role from scratch.
           </p>
         </div>
-        <button
-          type="button"
-          aria-label="Dismiss"
-          onClick={onDismiss}
-          className="shrink-0 text-ink-faint transition-colors hover:text-ink"
-        >
+        <button type="button" aria-label="Dismiss" onClick={onDismiss} className="shrink-0 text-ink-faint transition-colors hover:text-ink">
           <X className="size-4" />
         </button>
       </div>
@@ -1591,11 +2095,8 @@ function ClonePromptsCard({ bookId, onDismiss }: { bookId: string; onDismiss: ()
  * Effort) for one role+stage. Remounted (via the `key` at its call site
  * in PromptEditorView, keyed by role+stage+active version id) whenever
  * any of those change, rather than an effect re-syncing local state to
- * `active` on every change — the same "reset via remount" shape the rest
- * of this app uses for an analogous case (EditorBody's `key={activeChapter.id}`
- * in the manuscript editor, see CLAUDE.md). `active` only ever seeds this
- * component's *initial* state; it's a draft from then on, so typing here
- * never fights a background refetch.
+ * `active` on every change. `active` only ever seeds this component's
+ * *initial* state; it's a draft from then on.
  */
 function PromptDraftEditor({
   bookId,
@@ -1620,12 +2121,10 @@ function PromptDraftEditor({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [confirmingOverwrite, setConfirmingOverwrite] = useState(false);
 
-  // Fixed for this component instance's lifetime — `active` only ever
-  // seeds initial state here (see the module comment above), so this
-  // reads the authorship of whatever was loaded, not whatever's active
-  // right now. Only "claude"-authored prompts get the edit warning/confirm
-  // below; once the writer has saved over one, the new version defaults
-  // to "writer"-authored server-side and this component remounts clean.
+  // Fixed for this component instance's lifetime — only "claude"-authored
+  // prompts get the edit warning/confirm below; once the writer has saved
+  // over one, the new version defaults to "writer"-authored server-side
+  // and this component remounts clean.
   const loadedFromClaude = (active?.authoredBy ?? "writer") === "claude";
 
   async function performSave() {
@@ -1633,9 +2132,6 @@ function PromptDraftEditor({
     setSaveError(null);
     try {
       await saveAgentPromptVersion(bookId, { agentRole: role, stage, systemPrompt, userPromptTemplate, model, effort });
-      // Success remounts this component fresh (the parent's `active` prop
-      // changes to the new version, changing this component's key) — no
-      // need to reset `saving` here.
       onSaved();
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Couldn't save this prompt.");
@@ -1649,11 +2145,6 @@ function PromptDraftEditor({
       return;
     }
     setSaveError(null);
-    // Only the specific moment of editing *over* a Claude-authored
-    // version needs a confirm — this is a real "are you sure" gate, not
-    // just a badge, per the writer's own request. Saving over a
-    // writer-authored version (theirs, or a prior edit of their own)
-    // proceeds immediately, same as before this feature existed.
     if (loadedFromClaude) {
       setConfirmingOverwrite(true);
       return;
@@ -1692,11 +2183,7 @@ function PromptDraftEditor({
         />
         <div className="mt-2 flex flex-wrap gap-1.5">
           {placeholders.map((p) => (
-            <span
-              key={p.token}
-              title={p.meaning}
-              className="rounded-md bg-surface-2 px-1.5 py-0.5 font-mono text-[0.65rem] text-ink-muted"
-            >
+            <span key={p.token} title={p.meaning} className="rounded-md bg-surface-2 px-1.5 py-0.5 font-mono text-[0.65rem] text-ink-muted">
               {p.token}
             </span>
           ))}

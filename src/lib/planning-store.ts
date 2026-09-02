@@ -16,22 +16,32 @@
  *    for one project.
  * 2. The active planning run — a true singleton, like the manuscript
  *    editor's chapter-body cache. Only one run is ever being driven at a
- *    time; its `id` is what the page persists in the URL to resume after
- *    a refresh (see planning/page.tsx).
+ *    time. Resolving WHICH run that is for a given book is `GET
+ *    /planning/runs?bookId=` (see `useBookPlanningRuns` below) — a real
+ *    backend endpoint, not a client-side fallback: an earlier version of
+ *    this store had no way to find a run without already knowing its id
+ *    (normally carried in the page's own `?run=` URL param), so closing
+ *    the browser and losing that query string made a fully intact run
+ *    look completely gone. That workaround (a per-browser localStorage
+ *    cache of the last-seen run id) is gone now that the real endpoint
+ *    exists.
  */
 
 import { useEffect, useSyncExternalStore } from "react";
 import { apiFetch, getUserId } from "@/lib/api-client";
-import type {
-  AgentPrompt,
-  AgentPromptAuthor,
-  AgentRole,
-  EffortLevel,
-  ExtractedEntityCandidate,
-  PlanningChatMessage,
-  PlanningRun,
-  PlanningRunStatus,
-  PlanningStage,
+import {
+  currentUnitKey,
+  type AgentPrompt,
+  type AgentPromptAuthor,
+  type AgentRole,
+  type ContinuityLedgerEntry,
+  type EffortLevel,
+  type ExtractedEntityCandidate,
+  type PartChapterRange,
+  type PlanningChatMessage,
+  type PlanningRun,
+  type PlanningRunStatus,
+  type PlanningStage,
 } from "@/lib/planning-data";
 
 export type LoadStatus = "idle" | "loading" | "loaded" | "error";
@@ -222,17 +232,25 @@ export async function clonePromptsFromBook(fromBookId: string, toBookId: string)
 // Planning run
 // ---------------------------------------------------------------------
 
+type PanelHistoryEntryRow = { panel_reviews: Record<string, unknown> | null; arbitrator_synthesis: unknown };
+
 type PlanningRunRow = {
   id: string;
   book_id: string;
   user_id: string;
-  current_stage: Exclude<PlanningStage, "all" | "intake">;
+  current_stage: PlanningStage;
   status: PlanningRunStatus;
-  stage_artifacts: Partial<Record<Exclude<PlanningStage, "all" | "intake">, string>>;
+  current_act: number | null;
+  current_part: number | null;
+  current_beat_chunk: number | null;
+  part_chapter_ranges: Record<string, PartChapterRange>;
+  continuity_ledger: ContinuityLedgerEntry[];
+  stage_artifacts: Record<string, string>;
   // Keyed by critic role — open, since the panel's composition isn't
   // hardcoded on either side (see the backend's own PlanningRun type).
   panel_reviews: Record<string, unknown> | null;
   arbitrator_synthesis: unknown;
+  stage_panel_history: Record<string, PanelHistoryEntryRow>;
   chat_history: PlanningChatMessage[];
   intake_chat_history: PlanningChatMessage[];
   final_delta_directive: string | null;
@@ -242,17 +260,28 @@ type PlanningRunRow = {
   updated_at: string;
 };
 type RunResponse = { run: PlanningRunRow };
+type RunsListResponse = { runs: PlanningRunRow[] };
 
 function mapRunRow(row: PlanningRunRow): PlanningRun {
+  const stagePanelHistory: PlanningRun["stagePanelHistory"] = {};
+  for (const [unit, entry] of Object.entries(row.stage_panel_history ?? {})) {
+    stagePanelHistory[unit] = { panelReviews: entry.panel_reviews, arbitratorSynthesis: entry.arbitrator_synthesis };
+  }
   return {
     id: row.id,
     bookId: row.book_id,
     userId: row.user_id,
     currentStage: row.current_stage,
     status: row.status,
+    currentAct: row.current_act,
+    currentPart: row.current_part,
+    currentBeatChunk: row.current_beat_chunk,
+    partChapterRanges: row.part_chapter_ranges ?? {},
+    continuityLedger: row.continuity_ledger ?? [],
     stageArtifacts: row.stage_artifacts ?? {},
     panelReviews: row.panel_reviews,
     arbitratorSynthesis: row.arbitrator_synthesis,
+    stagePanelHistory,
     chatHistory: row.chat_history ?? [],
     intakeChatHistory: row.intake_chat_history ?? [],
     finalDeltaDirective: row.final_delta_directive,
@@ -262,6 +291,92 @@ function mapRunRow(row: PlanningRunRow): PlanningRun {
     updatedAt: row.updated_at,
   };
 }
+
+// ---- Book-scoped run list — GET /planning/runs?bookId= ----
+//
+// Lets the frontend resolve "what run(s) does this book have" on its own
+// instead of depending on a specific run id surviving client-side. Same
+// bookId-scoped single-current-book pattern as notes-store.ts/
+// character-store.ts. Server-sorted most-recently-updated first, so
+// `runs[0]` is always "the run to resume" for a book with exactly one
+// (the common case — a book wouldn't normally have several concurrent
+// plans, though old done/discarded runs can still show up here for the
+// Run List screen).
+
+let bookRunRows: PlanningRunRow[] = [];
+let bookRunsBookId: string | null = null;
+let bookRunsStatus: LoadStatus = "idle";
+let bookRunsError: string | null = null;
+const bookRunsListeners = new Set<() => void>();
+function emitBookRuns() {
+  for (const l of bookRunsListeners) l();
+}
+function subscribeBookRuns(l: () => void) {
+  bookRunsListeners.add(l);
+  return () => bookRunsListeners.delete(l);
+}
+function getBookRunRowsSnapshot() {
+  return bookRunRows;
+}
+function getBookRunsStatusSnapshot() {
+  return bookRunsStatus;
+}
+function getBookRunsErrorSnapshot() {
+  return bookRunsError;
+}
+
+async function loadBookPlanningRuns(bookId: string): Promise<void> {
+  bookRunsBookId = bookId;
+  bookRunsStatus = "loading";
+  bookRunsError = null;
+  emitBookRuns();
+  try {
+    const res = await apiFetch<RunsListResponse>(`/planning/runs?bookId=${encodeURIComponent(bookId)}`);
+    bookRunRows = res.runs;
+    bookRunsStatus = "loaded";
+  } catch (err) {
+    bookRunsStatus = "error";
+    bookRunsError = err instanceof Error ? err.message : "Failed to load planning runs.";
+  }
+  emitBookRuns();
+}
+
+/** Force a re-fetch of this book's run list — e.g. after starting or deleting a run. */
+export function refreshBookPlanningRuns(bookId: string): void {
+  void loadBookPlanningRuns(bookId);
+}
+
+/** Every planning run for one book, most recently updated first (screen: Run List). */
+export function useBookPlanningRuns(bookId: string | undefined): PlanningRun[] {
+  useEffect(() => {
+    if (bookId && bookId !== bookRunsBookId) void loadBookPlanningRuns(bookId);
+  }, [bookId]);
+  const rows = useSyncExternalStore(subscribeBookRuns, getBookRunRowsSnapshot, getBookRunRowsSnapshot);
+  return rows.map(mapRunRow);
+}
+export function useBookPlanningRunsLoadStatus(): LoadStatus {
+  return useSyncExternalStore(subscribeBookRuns, getBookRunsStatusSnapshot, getBookRunsStatusSnapshot);
+}
+export function useBookPlanningRunsError(): string | null {
+  return useSyncExternalStore(subscribeBookRuns, getBookRunsErrorSnapshot, getBookRunsErrorSnapshot);
+}
+
+function patchBookRunCache(row: PlanningRunRow): void {
+  const idx = bookRunRows.findIndex((r) => r.id === row.id);
+  if (idx === -1) {
+    bookRunRows = [row, ...bookRunRows];
+  } else {
+    bookRunRows = bookRunRows.map((r, i) => (i === idx ? row : r));
+  }
+  emitBookRuns();
+}
+
+function removeFromBookRunCache(runId: string): void {
+  bookRunRows = bookRunRows.filter((r) => r.id !== runId);
+  emitBookRuns();
+}
+
+// ---- The single active/open run ----
 
 let activeRun: PlanningRun | null = null;
 let runStatus: LoadStatus = "idle";
@@ -275,54 +390,11 @@ function subscribeRun(l: () => void) {
   return () => runListeners.delete(l);
 }
 
-// The backend has no `GET /planning/runs?bookId=` — the only way to load a
-// run is by its own id (`GET /planning/runs/:id`), so the page persists
-// that id in its own `?run=` URL param to survive a refresh. But closing
-// the browser (or opening the Planning tab from a bookmark, the nav, or a
-// fresh tab rather than the back button) loses that query string entirely,
-// and with no server-side "does this book have a run" lookup to fall back
-// to, the writer's in-progress run looked completely gone even though the
-// row was untouched server-side. This is a per-browser localStorage
-// fallback of the same kind `getUserId()`/`writing-goal-store.ts` already
-// use for "real data, just not synced across devices": the last run id
-// seen for a book, so a bare `/projects/:id/planning` visit can still
-// resume it. The real fix — a backend list-by-book endpoint — is out of
-// this app's reach without backend push access; flagged to the user.
-const RUN_ID_STORAGE_PREFIX = "wa-planning-run:";
-
-function storeRunId(bookId: string, runId: string): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(`${RUN_ID_STORAGE_PREFIX}${bookId}`, runId);
-  } catch {
-    // Private/blocked storage contexts can throw here — losing the resume hint is a soft failure, not fatal.
-  }
-}
-
-function clearStoredRunId(bookId: string): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.removeItem(`${RUN_ID_STORAGE_PREFIX}${bookId}`);
-  } catch {
-    // Same as above.
-  }
-}
-
-/** The last run id this browser saw for `bookId`, if any — see the comment above `RUN_ID_STORAGE_PREFIX`. */
-export function getStoredRunId(bookId: string): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.localStorage.getItem(`${RUN_ID_STORAGE_PREFIX}${bookId}`);
-  } catch {
-    return null;
-  }
-}
-
 function setActiveRun(row: PlanningRunRow): PlanningRun {
   activeRun = mapRunRow(row);
   runStatus = "loaded";
   runError = null;
-  storeRunId(activeRun.bookId, activeRun.id);
+  patchBookRunCache(row);
   emitRun();
   return activeRun;
 }
@@ -347,20 +419,19 @@ export function clearActivePlanningRun(): void {
  * own bookkeeping row (intake/chat history, stage artifacts, panel
  * reviews). Confirmed by reading the backend's `deletePlanningRun()`
  * directly: it does NOT touch anything already materialized from a prior
- * Stage 3 approval — a `chapter_beats` row or `codex_entries` created
- * before this run was discarded stay exactly where they are. Clears the
- * active-run singleton if this was the one in view, so the caller can
- * drop back to the "Start Planning" card without a stale reference
- * lingering.
+ * approval — a `chapter_beats` row or `codex_entries` created before this
+ * run was discarded stay exactly where they are. Clears the active-run
+ * singleton if this was the one in view, and drops it from the book's run
+ * list cache too, so the caller can fall back to "Start Planning" (or the
+ * next run in the list) without a stale reference lingering.
  */
 export async function deletePlanningRun(runId: string): Promise<void> {
-  const bookId = activeRun?.id === runId ? activeRun.bookId : null;
   await apiFetch<void>(`/planning/runs/${runId}`, { method: "DELETE" });
   if (activeRun?.id === runId) clearActivePlanningRun();
-  if (bookId) clearStoredRunId(bookId);
+  removeFromBookRunCache(runId);
 }
 
-/** Load (or resume) a run by id — the only thing the page needs to persist client-side (its own `?run=` URL param) to pick a session back up after a refresh. */
+/** Load (or resume) a run by id. */
 export async function loadPlanningRun(runId: string): Promise<void> {
   runStatus = "loading";
   runError = null;
@@ -433,30 +504,33 @@ export async function finalizeIntakeConversation(runId: string): Promise<Plannin
   return setActiveRun(res.run);
 }
 
-// Real production bug: a `failed` run's retry heuristic used to infer
+// Real production bug (flat-model era, still just as real under the
+// Act/Part hierarchy): a `failed` run's retry heuristic used to infer
 // "critique already succeeded" from `panel_reviews` merely being non-null
 // — but the backend's critique step only ever *writes* `panel_reviews` on
 // success (`markFailed` on a critique error persists `status: "failed"`
 // and `last_error` only, leaving `panel_reviews` exactly as it was before
-// this attempt). On a revision cycle where an earlier draft's critique had
-// already succeeded, that field is never null — so a Critique call that
-// genuinely failed on the *new* artifact still read as "already critiqued"
-// on retry, and Arbitrate ran against a draft that was never actually
-// reviewed. `panel_reviews`/`stageArtifacts` presence can't be trusted as
-// a freshness signal at all; only a critique call that actually succeeded,
-// in this browser session, for this exact run+stage+artifact, may unlock
-// Arbitrate. Reset whenever a fresh server state is loaded (a reload can't
-// vouch for what happened in some earlier session) or a new artifact is
-// generated (a prior critique-success marker can't vouch for different
-// text) — set only inside `callCritique`'s own success path below.
-let lastCritiqueSuccess: { runId: string; stage: PlanningStage; artifact: string } | null = null;
+// this attempt). On a revision cycle for the SAME unit (reject ->
+// regenerate -> that critique call fails), `panel_reviews` still holds
+// the *previous* draft's real critique, non-null, so the stale field
+// fooled the heuristic into skipping straight to Arbitrate. Under the
+// Act/Part hierarchy this needs to key on the exact UNIT, not just
+// `current_stage` — many different units (every Part's outline, every
+// beats chunk) all share `current_stage: "part_outline"`/`"part_beats"`,
+// so stage alone isn't specific enough to say "critique succeeded for
+// THIS ONE". `currentUnitKey(run)` (planning-data.ts) is what actually
+// addresses a unit uniquely. Only a critique call that actually
+// succeeded, in this browser session, for this exact run+unit+artifact,
+// may unlock Arbitrate — never inferred from stale data.
+let lastCritiqueSuccess: { runId: string; unit: string; artifact: string } | null = null;
 
 function critiqueSucceededForCurrentArtifact(run: PlanningRun): boolean {
+  const unit = currentUnitKey(run);
   return (
     lastCritiqueSuccess !== null &&
     lastCritiqueSuccess.runId === run.id &&
-    lastCritiqueSuccess.stage === run.currentStage &&
-    lastCritiqueSuccess.artifact === (run.stageArtifacts[run.currentStage] ?? "")
+    lastCritiqueSuccess.unit === unit &&
+    lastCritiqueSuccess.artifact === (run.stageArtifacts[unit] ?? "")
   );
 }
 
@@ -468,7 +542,7 @@ async function callGenerate(runId: string): Promise<PlanningRun> {
 async function callCritique(runId: string): Promise<PlanningRun> {
   const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/critique`, { method: "POST" });
   const run = setActiveRun(res.run);
-  lastCritiqueSuccess = { runId: run.id, stage: run.currentStage, artifact: run.stageArtifacts[run.currentStage] ?? "" };
+  lastCritiqueSuccess = { runId: run.id, unit: currentUnitKey(run), artifact: run.stageArtifacts[currentUnitKey(run)] ?? "" };
   return run;
 }
 async function callArbitrate(runId: string): Promise<PlanningRun> {
@@ -481,10 +555,9 @@ async function callArbitrate(runId: string): Promise<PlanningRun> {
  * the run's own state, rather than a client-tracked "which step was in
  * flight" — this is what lets one function serve both the very first
  * "Generate" click (status starts at `generating`) and "Retry" after a
- * `failed` run (status alone doesn't say which step blew up). On a
- * `failed` run, Arbitrate is only ever offered once
+ * `failed` run. On a `failed` run, Arbitrate is only ever offered once
  * `critiqueSucceededForCurrentArtifact` confirms a real, in-session
- * Critique success for this exact artifact — never inferred from
+ * Critique success for this exact unit+artifact — never inferred from
  * `panelReviews` merely being present, which can be stale from an earlier
  * cycle (see the comment above `lastCritiqueSuccess`).
  */
@@ -493,7 +566,7 @@ function nextForwardStep(run: PlanningRun): "generate" | "critique" | "arbitrate
   if (run.status === "critiquing") return "critique";
   if (run.status === "awaiting_arbitration") return "arbitrate";
   if (run.status === "failed") {
-    if (!run.stageArtifacts[run.currentStage]) return "generate";
+    if (!run.stageArtifacts[currentUnitKey(run)]) return "generate";
     if (!critiqueSucceededForCurrentArtifact(run)) return "critique";
     return "arbitrate";
   }
@@ -504,10 +577,9 @@ function nextForwardStep(run: PlanningRun): "generate" | "critique" | "arbitrate
  * Drives the pipeline forward on its own — Generate, then Critique, then
  * Arbitrate — stopping the moment it needs a human (`awaiting_user_review`)
  * or hits a real error (`failed`). Backs a single "Generate"/"Retry"
- * button in the UI rather than three separate clicks per the backend
- * doc's own suggestion that auto-chaining is better UX; each underlying
- * call is still one bounded request, so nothing here risks a client-side
- * timeout regardless of how long an individual step takes.
+ * button in the UI; each underlying call is still one bounded request, so
+ * nothing here risks a client-side timeout regardless of how long an
+ * individual step takes (these can run a couple of minutes).
  */
 export async function runPipelineForward(runId: string): Promise<PlanningRun> {
   if (!activeRun || activeRun.id !== runId) await loadPlanningRun(runId);
@@ -524,19 +596,51 @@ export async function runPipelineForward(runId: string): Promise<PlanningRun> {
   return run;
 }
 
-/** The review gate's Approve action. On Stage 3 this also writes the approved beats into the real Outliner (chapter_beats) and kicks off entity extraction; on Stage 1/2 it just advances to the next stage's Generate step. */
+/**
+ * The review gate's Approve action. On `part_outline`, records the Part's
+ * committed chapter range. On `part_beats`, also materializes the chunk
+ * into the Outliner and reconciles the Continuity Ledger. Advances to the
+ * next unit per the fixed Act→Part→Beats sequence, or marks the run
+ * `done` once all 3 Acts' 9 Parts are fully planned.
+ */
 export async function approvePlanningStage(runId: string): Promise<PlanningRun> {
   const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/approve`, { method: "POST" });
   return setActiveRun(res.run);
 }
 
-/** The review gate's Reject action — opens the chat interview (status -> user_chat_active, chat history reset). */
+/** The review gate's Reject action — opens the chat interview (status -> user_chat_active). chat_history is never reset by this — the Arbitrator keeps continuous memory for the whole run. */
 export async function rejectPlanningStage(runId: string): Promise<PlanningRun> {
   const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/reject`, { method: "POST" });
   return setActiveRun(res.run);
 }
 
-/** One turn of the rejection interview. */
+/**
+ * Undoes approving whatever unit came immediately before the current one
+ * and reopens ITS rejection interview directly (not its review gate — the
+ * gate's job, approve or reject, was already answered), restoring that
+ * unit's real panel_reviews/arbitrator_synthesis from stage_panel_history.
+ * Throws (ApiError, status 409) if the current unit already has its own
+ * generated artifact (reverting would silently discard it — reject the
+ * current unit's own artifact instead), or if there's no previous unit.
+ */
+export async function unapprovePlanningStage(runId: string): Promise<PlanningRun> {
+  const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/unapprove`, { method: "POST" });
+  return setActiveRun(res.run);
+}
+
+/**
+ * Trashes the CURRENT unit's draft outright — unlike unapprove, allowed
+ * even when one already exists, that's the point — and falls back to the
+ * PREVIOUS unit's review gate (not its interview; there's nothing to
+ * discuss) ready to re-approve into a genuinely fresh generation. Throws
+ * (ApiError, status 409) if there's no previous unit to fall back to.
+ */
+export async function discardPlanningStage(runId: string): Promise<PlanningRun> {
+  const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/discard-stage`, { method: "POST" });
+  return setActiveRun(res.run);
+}
+
+/** One turn of the rejection interview. Every prior turn (intake + the WHOLE run's accumulated interview history, not just this cycle) is resent server-side — the Arbitrator is one continuous point of contact for the run, never a fresh stranger. */
 export async function sendPlanningChatTurn(runId: string, message: string): Promise<PlanningRun> {
   const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/chat`, {
     method: "POST",
@@ -545,17 +649,74 @@ export async function sendPlanningChatTurn(runId: string, message: string): Prom
   return setActiveRun(res.run);
 }
 
-/** Compiles the interview into a delta directive and loops back to Generating for the same stage. Callers should follow this with runPipelineForward() to keep driving until the next human gate, rather than leaving the run sitting at `generating` unattended. */
+/** Compiles the interview into a delta directive and loops back to Generating for the same unit. Callers should follow this with runPipelineForward() (via an explicit next click, not auto-chained — see planning/page.tsx) to keep driving until the next human gate. */
 export async function finalizePlanningDirective(runId: string): Promise<PlanningRun> {
   const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/finalize-directive`, { method: "POST" });
   return setActiveRun(res.run);
 }
 
-/** The entity batch-review screen's confirm action — only the listed indexes get written to real Codex/World Category rows server-side; everything else is discarded. Status becomes `done`. */
+// ---- Entity extraction — a side action, deliberately independent of the main pipeline's status/error state ----
+//
+// extractEntities/confirmEntities never touch a run's `status` server-side
+// (on-demand, callable whenever the writer wants — not tied to any one
+// beats-chunk approval) — an error extracting entities must never make
+// the run's real pipeline position look "failed". This state is kept
+// entirely separate from runStatus/runError for the same reason.
+
+let entityActionStatus: LoadStatus = "idle";
+let entityActionError: string | null = null;
+const entityActionListeners = new Set<() => void>();
+function emitEntityAction() {
+  for (const l of entityActionListeners) l();
+}
+function subscribeEntityAction(l: () => void) {
+  entityActionListeners.add(l);
+  return () => entityActionListeners.delete(l);
+}
+export function useEntityActionStatus(): LoadStatus {
+  return useSyncExternalStore(subscribeEntityAction, () => entityActionStatus, () => entityActionStatus);
+}
+export function useEntityActionError(): string | null {
+  return useSyncExternalStore(subscribeEntityAction, () => entityActionError, () => entityActionError);
+}
+
+/** On-demand entity scan — scans every approved Part Beats chunk in the run so far. Populates run.extractedEntities; does not change run.status. */
+export async function extractPlanningEntities(runId: string): Promise<PlanningRun> {
+  entityActionStatus = "loading";
+  entityActionError = null;
+  emitEntityAction();
+  try {
+    const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/entities/extract`, { method: "POST" });
+    const run = setActiveRun(res.run);
+    entityActionStatus = "loaded";
+    emitEntityAction();
+    return run;
+  } catch (err) {
+    entityActionStatus = "error";
+    entityActionError = err instanceof Error ? err.message : "Couldn't extract entities.";
+    emitEntityAction();
+    throw err;
+  }
+}
+
+/** The entity batch-review screen's confirm action — only the listed indexes get written to real Codex/World Category rows server-side; everything else is discarded. Does not change run.status. */
 export async function confirmPlanningEntities(runId: string, approvedIndexes: number[]): Promise<PlanningRun> {
-  const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/entities/confirm`, {
-    method: "POST",
-    body: JSON.stringify({ approvedIndexes }),
-  });
-  return setActiveRun(res.run);
+  entityActionStatus = "loading";
+  entityActionError = null;
+  emitEntityAction();
+  try {
+    const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/entities/confirm`, {
+      method: "POST",
+      body: JSON.stringify({ approvedIndexes }),
+    });
+    const run = setActiveRun(res.run);
+    entityActionStatus = "loaded";
+    emitEntityAction();
+    return run;
+  } catch (err) {
+    entityActionStatus = "error";
+    entityActionError = err instanceof Error ? err.message : "Couldn't save the selected entities.";
+    emitEntityAction();
+    throw err;
+  }
 }

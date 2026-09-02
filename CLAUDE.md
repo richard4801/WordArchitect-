@@ -2006,15 +2006,28 @@ in the app.
 **Live — backed by the real backend's `/agent-prompts` and `/planning/runs`
 on `claude/ai-fiction-platform-backend-qnvkm5` (see the backend repo's
 `src/routes/agentPrompts.ts` / `src/routes/planning.ts` and
-`src/services/planningEngine.ts`).** A pre-writing pipeline — Stage 1 Core
-Summary -> Stage 2 Act Outlines -> Stage 3 Chapter Beats — each stage
-written by a Generator agent, reviewed by two parallel Critics (Logic,
-Suspense), synthesized by an Arbitrator, and gated on the writer's
-explicit approval before advancing. This never writes manuscript prose —
-Generate/Hanami drafting is completely untouched; this is purely the
-pre-writing/planning phase. Types/metadata in `src/lib/planning-data.ts`;
-`src/lib/planning-store.ts` fetches/writes real data — no mock/seed
-predecessor existed for this domain, it shipped live from the start.
+`src/services/planningEngine.ts`).** Types/metadata in
+`src/lib/planning-data.ts`; `src/lib/planning-store.ts` fetches/writes
+real data — no mock/seed predecessor existed for this domain, it shipped
+live from the start.
+
+**The paragraphs immediately below (through the "Restructure the Scrutiny
+Panel" entry) describe the ORIGINAL flat 3-stage model
+(`stage_1_summary` → `stage_2_acts` → `stage_3_beats`, one Generator call
+per whole-book stage) — kept for historical trail, but superseded by the
+Act → Part → Beats hierarchy rebuild documented in the "Full rebuild"
+entry near the end of this section. Read that entry (and its own
+"Corrections vs. the design mock" list) for how the pipeline actually
+works today; treat everything about `stage_2_acts`/`stage_3_beats`,
+`logic_critic`/`suspense_critic`'s original 2-critic panel shape, and the
+one-card-per-run `awaiting_entity_review` flow below as describing a
+predecessor version, not current behavior.** A pre-writing pipeline —
+Stage 1 Core Summary -> Stage 2 Act Outlines -> Stage 3 Chapter Beats —
+each stage written by a Generator agent, reviewed by two parallel Critics
+(Logic, Suspense), synthesized by an Arbitrator, and gated on the
+writer's explicit approval before advancing. This never writes manuscript
+prose — Generate/Hanami drafting is completely untouched; this is purely
+the pre-writing/planning phase.
 
 **Every agent's behavior is a database row someone authors and saves —
 the backend contains zero prompt content of its own.** A run can't do
@@ -2656,6 +2669,192 @@ Wiring it in would let a fresh page load resolve a book's run without any
 client-side fallback at all, and would work across browsers/devices too.
 Not wired up in this pass — flagged for the next one.
 
+**Full rebuild: the backend replaced the flat 3-stage model with a
+strict Act → Part → Beats hierarchy, and the frontend was rebuilt from
+scratch against it, using a design mock for layout/visual design only.**
+The backend commit (`49114b8`, "Replace flat Stage 2/3 planning with a
+strict Act -> Part -> Beats hierarchy") confirmed live that a single call
+planning an entire book's Act structure — or Chapter Beats — at once
+produces real internal contradictions (a heist book's own stated numbers
+disagreeing with each other by arc 4-5, caught by the Continuity Critic).
+The fix: 3 fixed Acts, each with 3 fixed Parts (9 Parts total, always —
+never model-decided), each Part planned in two passes — an outline that
+commits to a real chapter range, then one or more Beats chunks (15
+chapters per call, `PART_BEATS_CHAPTER_WINDOW` in the backend's
+`planningEngine.ts`) — before the next Part unlocks. Every unit (Stage 1
+Summary, each Act Summary, each Part Outline, each Part's Beats chunks)
+goes through the identical generate → critique → arbitrate → approve
+cycle. New backend endpoints in the same pass: `GET /planning/runs?bookId=`
+(the list-by-book endpoint flagged as missing above — now wired in, see
+below), `POST .../unapprove` (undo a just-made approval), `POST
+.../discard-stage` (trash the current draft outright, unlike unapprove).
+A `ledger_extractor` agent role was added too — runs automatically after
+each Part's Beats are approved, extracting hard facts into a new
+Continuity Ledger, reconciled against real drafted chapters where they
+exist (`manuscript_chapters.paragraphs`, not the separate opt-in
+`manuscript_chunks` RAG index) and falling back to what the Beats claimed
+where they don't.
+
+**A design mock existed for this rebuild's visual layout — deliberately
+NOT trusted for its data shapes.** The user's own instructions were
+explicit that the mock was built before the real API existed and invented
+several fields; every correction below was verified against the actual
+backend source (`src/services/planningEngine.ts`, `src/types/domain.ts`,
+`src/routes/planning.ts`) before being applied, continuing this file's
+established discipline of reading real route/service code rather than
+trusting a summary — a real discrepancy caught in the process:
+`domain.ts`'s own inline comment claimed a Part's Beats chunks "accumulate
+JSON... rather than being overwritten per chunk" under one key, which is
+simply wrong — `unitKey()` in `planningEngine.ts` gives each chunk its
+own key (`act_1_part_2_beats_chunk_1`, `..._chunk_2`, etc., confirmed by
+reading the function directly), matching the backend's own CLAUDE.md
+table, not its domain-type comment. **Corrections vs. the mock, applied
+while building rather than after:**
+1. **Intake is a real multi-turn conversation, not a form.** The mock
+   showed a static premise/themes/ending/constraints form with one "Start
+   Planning" button that would have skipped straight to `intake-finalize`
+   with no round trip. `IntakeChat` (carried over from the pre-rebuild
+   version, since it was already built correctly) is a real chat thread —
+   every message is its own `intake-chat` call, the Arbitrator can ask
+   follow-ups, and `intake-finalize` is a separate explicit action only
+   enabled once at least one message exists.
+2. **A unit is never shown as both "Approved" and offering Approve/Reject
+   at once.** `UnitDetail` is only ever rendered for the run's CURRENT
+   unit (via `currentUnitKey()`) — never a historical one — so this
+   inconsistency is impossible by construction rather than needing extra
+   state to prevent it. Browsing a past unit read-only wasn't built; the
+   Pipeline Map shows every unit's locked/current/approved state visually,
+   but only the current one is clickable ("Open Unit").
+3. **A Part's Outline and its Beats chunk(s) are separate gated units,**
+   each with its own full cycle — never merged into one screen/action.
+   `UnitDetail` is one reusable component keyed by
+   `current_stage`/`current_act`/`current_part`/`current_beat_chunk`
+   (mirrored client-side via `UnitPosition`/`unitKeyForPosition` in
+   `planning-data.ts`, which exactly reproduce the backend's own
+   `unitKey()`/`nextPosition()`/`previousPosition()` — confirmed against
+   the source, not re-derived from guesswork), so a Part with, say, 2
+   Beats chunks shows as 2 distinct review gates in sequence on the
+   Pipeline Map, not one.
+4. **Continuity Ledger has no "Type" column and no three-state Status.**
+   The real `ContinuityLedgerEntry` is only `{ fact, sourcedFrom:
+   "plan"|"manuscript", unit }`. `ledgerBadgeLabel()` derives a two-state
+   badge directly from `sourcedFrom` ("Established" for `"manuscript"`,
+   "Planned" — not "Tentative" — for `"plan"`); no category column, no
+   grouping by type (nothing in the data to group by). A client-side
+   text search (over `fact`/`unit`, both real fields) and a plain
+   Blob-download "Export Ledger" were added since they don't require
+   fabricating anything.
+5. **Entity Review has no Confidence % or Source-unit column.** The real
+   `entity_extractor` contract is `[{type, name, entryType, description}]`
+   — no confidence score (extraction isn't a per-item probability the
+   backend computes), and no per-candidate source unit (extraction scans
+   every approved Beats chunk *concatenated together* in one call, so
+   there's no way to attribute a candidate to one specific chunk).
+   Grouping/filtering is by `entryType` only (real data). Extraction is
+   on-demand — a plain "Scan for New Entities" button, callable whenever,
+   never tied to any approve click or to `run.status` (confirmed reading
+   `extractEntities()`/`confirmEntities()` directly: neither ever touches
+   `status`, deliberately — a side action independent of the run's actual
+   pipeline position, so an extraction error can never make the real
+   pipeline position look "failed"). This is also why entity action
+   loading/error state (`useEntityActionStatus`/`useEntityActionError` in
+   `planning-store.ts`) is a completely separate store slice from the main
+   `runStatus`/`runError` — the same separation-of-concerns the store
+   already used for planning-run vs. agent-prompt state.
+6. **No "Clear All History" action on the rejection interview**, and no
+   per-unit grouping with a "Rejected N times" count either — both were
+   in the mock's screen design but don't correspond to real data.
+   `chat_history` is one flat array of `{role, content}` covering the
+   WHOLE run's rejection interviews, concatenated, with no per-turn unit
+   tag to group by, and deliberately never reset (confirmed reading
+   `rejectStage()`/`chatTurn()`: the Arbitrator is meant to be one
+   continuous point of contact for the run, not a fresh stranger at every
+   rejection). `RejectionInterview` renders it as one continuous thread —
+   render it all, never sliced to "this unit only" — with no clear-history
+   affordance of any kind, since there's no endpoint for it and it would
+   erase real, deliberate cross-run memory.
+7. **Progress ("N / M units approved") isn't a fixed constant.** A Part's
+   Beats-chunk count depends on its own committed chapter range, which
+   isn't knowable until that Part's outline is approved.
+   `computePlanningProgress()` (`planning-data.ts`) counts 13 guaranteed
+   units (1 Stage-1 Summary + 3 Act Summaries + 9 Part Outlines) plus real
+   chunk counts for every Part whose outline is approved so far, plus a
+   1-chunk placeholder for Parts not yet outlined, walking the exact same
+   `nextPlanningPosition()` sequence the Pipeline Map uses for its
+   locked/current/approved states — so the two can never disagree with
+   each other. The Pipeline Map shows a trailing "+" and an explanatory
+   note whenever `totalIsFinal` is false, rather than presenting a number
+   that will later silently change as if it were exact.
+8. **Run List is scoped to one book.** `GET /planning/runs?bookId=` only
+   ever returns one book's own runs (most-recently-updated first) — the
+   mock's cross-book dashboard doesn't correspond to any real endpoint.
+   `RunListView` shows this book's run history (in practice usually one
+   active run, occasionally past done/discarded ones), with per-run
+   "Resume"/"Open" and a delete option. A true cross-book "all my active
+   plans" view would need a new backend endpoint — flagged, not built.
+9. **Stage 1 is its own node on the Pipeline Map**, not folded into "Act
+   1" — it's a real gated unit with its own full cycle, approved before
+   Act 1 unlocks.
+
+**The store's `lastCritiqueSuccess` staleness-guard (see the "Real bug"
+entry above) had to be re-keyed for the hierarchy.** Under the flat
+model, `current_stage` alone was specific enough to identify "which unit
+is this." Under Act/Part/Beats, many different units share the same
+`current_stage` (`"part_outline"` for every one of 9 Parts,
+`"part_beats"` for every one of their chunks) — stage alone can no longer
+disambiguate "did critique succeed for THIS ONE." `nextForwardStep`'s
+`failed` branch and the success marker itself now key on
+`currentUnitKey(run)` (the exact same string `stageArtifacts`/
+`stagePanelHistory` use), not `run.currentStage` — otherwise a stale
+success marker from, say, Act 1 Part 1's Beats could have falsely
+validated Act 2 Part 3's Beats critique, since both units share
+`current_stage: "part_beats"`.
+
+**`GET /planning/runs?bookId=` is now actually wired in** (superseding
+the localStorage-fallback entry above): `useBookPlanningRuns(bookId)` in
+`planning-store.ts` is a new bookId-scoped store slice (same pattern as
+`notes-store.ts`), and `PlanningPageInner` resolves
+`targetRunId = runIdParam ?? runs[0]?.id ?? null` — the explicit `?run=`
+URL param if present, else the book's own most-recently-updated run from
+the real endpoint, else genuinely none (shows "Start Planning"). The
+`?run=` param is still written on every action (via `router.replace`) so
+a reload or a shared link still resumes through it directly, but nothing
+about resuming a run depends on that param surviving anymore — the
+`localStorage` fallback (`getStoredRunId`/`storeRunId`) was removed
+entirely, since the real endpoint makes it unnecessary and strictly
+better (works across browsers/devices, which the fallback never could).
+
+**Verified working** (against a new mock backend built to faithfully
+reproduce the real Act/Part/Beats state machine — `unitKey`/
+`nextPosition`/`previousPosition`/`chunksNeededForRange` ported directly
+from the backend source, not re-derived): drove a run through intake →
+Stage 1 approve → Act 1 Summary approve → Part 1 Outline approve
+(recording a real `startChapter`/`endChapter` range spanning 2 Beats
+chunks under the 15-chapter window) → both Beats chunks approved
+individually, confirming the run correctly stayed on `part_beats` chunk 2
+after chunk 1's approval (not skipping ahead to Part 2) and that the
+Continuity Ledger gained one entry per approved chunk; the Pipeline Map
+correctly showed Stage 1/Act 1 Summary/Part 1 (both units) as approved,
+Part 2 as "Up Next," and Parts/Acts beyond as locked; Unit Review for a
+freshly-generated Part Outline rendered its JSON artifact as labeled
+"Start Chapter"/"End Chapter"/"Outline" sections (no raw braces) plus all
+3 correctly-labeled critic cards and a real Arbitrator Verdict section;
+clicking "Undo last approval" right after an Approve (the one moment it's
+legitimately offered — the newly-current unit has no artifact yet)
+correctly reopened the previous unit's interview with its real historical
+critique restored from `stage_panel_history`, and confirmed the button
+correctly does NOT appear mid a reject → regenerate cycle on the same
+unit (whose own stale artifact is still present until the next Generate
+overwrites it); the Rejection Interview showed the full conversation with
+no clear-history control anywhere; finalize-directive landed on a plain
+Generate card with no auto-chain; the Continuity Ledger screen showed
+"Planned" (never "Tentative") badges with no Type column; Entity Review's
+scan button populated real candidates with no confidence/source columns,
+and confirming cleared them; the Run List showed exactly this book's own
+run, marked Active; and the Prompt Editor's Role dropdown listed "Ledger
+Extractor" alongside the other 8 roles. Zero console errors across the
+full pass.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance
@@ -3044,7 +3243,7 @@ export interface AiProvider {
 /projects/[id]/settings                      stub — <ComingSoon>, no data model
 /projects/[id]/chapters                      ManuscriptPart[] (live) + ChapterBody (live) + CommentThread[] (mock) (§4.5/§5) + BannedTermRow[] (live, §4.6) + ChatSessionRow[]/ChatMessage[] (live, AI tab, §4.7) + OutlineBeat[] (live read-only, Outline tab, §4.8)
 /projects/[id]/outlines                      OutlinePart[]/OutlineChapter[]/OutlineBeat[] (live, §4.8)
-/projects/[id]/planning                      AgentPrompt[]/PlanningRun (live, §4.10) — full-bleed Planning Engine workspace (Pipeline + Prompt Editor views)
+/projects/[id]/planning                      AgentPrompt[]/PlanningRun (live, §4.10) — full-bleed Planning Engine workspace (Pipeline Map, Run List, Continuity Ledger, Entity Review, Settings/Prompt Editor)
 /projects/[id]/assistant                     ChatSessionRow[]/ChatMessage[] (live, §4.7) — full-page AI Assistant workspace
 /projects/[id]/characters                    Character[] (live) + selected Character detail, Edit/Delete via options menu
 /projects/[id]/characters/all                Character[] (live), grid+pagination, Edit/Delete via options menu
