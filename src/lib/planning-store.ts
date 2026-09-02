@@ -769,21 +769,58 @@ export async function confirmPlanningEntities(runId: string, approvedIndexes: nu
 // Platform Craft Notes — a per-BOOK (not per-run) reference doc feeding
 // {{PLATFORM_TRENDS}} into the Contract Pipeline's codex_documentation/
 // hook_chapters_outline units. Backed by the real /platform-craft-notes
-// GET/PATCH/POST-research endpoints — see platformCraftNotes.ts on the
-// backend. Deliberately NOT a live/scheduled feed: PATCH is the only way
-// these notes ever actually get saved; POST /research returns a DRAFT
-// ONLY that the writer must explicitly review and save via PATCH — this
-// store never calls PATCH on the caller's behalf from inside `research()`.
-// bookId-scoped single-current-book, same pattern as Notes/Banned Terms.
+// GET/PATCH/POST-research(/discard) endpoints — see platformCraftNotes.ts
+// on the backend. Deliberately NOT a live/scheduled feed: PATCH is the
+// only way these notes ever actually get saved.
+//
+// A research pass is a detached background job, not a request/response
+// round trip — POST /research returns immediately (202) with
+// draftStatus: "running" already set; the real Claude+web_search/web_fetch
+// call keeps running server-side, independent of this tab, and its result
+// lands back on the same row (draft_content/draft_error) for a later GET
+// to pick up. So this store never treats a POST /research response as "the
+// draft" — it's just confirmation the job started — and the UI is expected
+// to poll GET while draftStatus is "running" (see
+// usePlatformCraftNotesPolling below). Saving via PATCH resets draftStatus
+// to "idle" server-side (a draft is either accepted into `content` or
+// explicitly discarded, never left as a stale "ready" banner) — this store
+// just reflects whatever row PATCH/discard hand back, no separate reset
+// needed client-side. bookId-scoped single-current-book, same pattern as
+// Notes/Banned Terms.
 // ---------------------------------------------------------------------
 
-export type PlatformCraftNotes = { bookId: string; content: string; updatedAt: string | null };
-type PlatformCraftNotesRow = { book_id: string; content: string; updated_at: string | null };
+export type PlatformResearchStatus = "idle" | "running" | "ready" | "failed";
+
+export type PlatformCraftNotes = {
+  bookId: string;
+  content: string;
+  updatedAt: string | null;
+  draftStatus: PlatformResearchStatus;
+  draftContent: string | null;
+  draftError: string | null;
+  draftUpdatedAt: string | null;
+};
+type PlatformCraftNotesRow = {
+  book_id: string;
+  content: string;
+  updated_at: string | null;
+  draft_status?: PlatformResearchStatus;
+  draft_content?: string | null;
+  draft_error?: string | null;
+  draft_updated_at?: string | null;
+};
 type PlatformCraftNotesResponse = { notes: PlatformCraftNotesRow };
-type PlatformCraftNotesResearchResponse = { draft: string };
 
 function mapPlatformCraftNotesRow(row: PlatformCraftNotesRow): PlatformCraftNotes {
-  return { bookId: row.book_id, content: row.content, updatedAt: row.updated_at };
+  return {
+    bookId: row.book_id,
+    content: row.content,
+    updatedAt: row.updated_at,
+    draftStatus: row.draft_status ?? "idle",
+    draftContent: row.draft_content ?? null,
+    draftError: row.draft_error ?? null,
+    draftUpdatedAt: row.draft_updated_at ?? null,
+  };
 }
 
 let platformNotes: PlatformCraftNotes | null = null;
@@ -815,7 +852,12 @@ async function loadPlatformCraftNotes(bookId: string): Promise<void> {
   emitPlatformNotes();
 }
 
-/** The book's saved Platform Craft Notes — `content: ""` for a book that's never saved any. */
+/** Force a re-fetch of this book's Platform Craft Notes — e.g. while polling a running research job, or after save/discard. */
+export function refreshPlatformCraftNotes(bookId: string): void {
+  void loadPlatformCraftNotes(bookId);
+}
+
+/** The book's saved Platform Craft Notes plus any in-flight/ready/failed research draft state — `content: ""`/`draftStatus: "idle"` for a book that's never saved or researched any. */
 export function usePlatformCraftNotes(bookId: string | undefined): PlatformCraftNotes | null {
   useEffect(() => {
     if (bookId && bookId !== platformNotesBookId) void loadPlatformCraftNotes(bookId);
@@ -829,7 +871,7 @@ export function usePlatformCraftNotesError(): string | null {
   return useSyncExternalStore(subscribePlatformNotes, () => platformNotesError, () => platformNotesError);
 }
 
-/** The only way these notes actually get saved — whether the content came from editing a research draft or writing it directly. */
+/** The only way these notes actually get saved — whether the content came from editing a research draft or writing it directly. Also resets draftStatus to "idle" server-side. */
 export async function savePlatformCraftNotes(bookId: string, content: string): Promise<PlatformCraftNotes> {
   const res = await apiFetch<PlatformCraftNotesResponse>("/platform-craft-notes", {
     method: "PATCH",
@@ -843,15 +885,53 @@ export async function savePlatformCraftNotes(bookId: string, content: string): P
 }
 
 /**
- * An on-demand, billed research pass (Claude + web search/fetch) —
- * returns a DRAFT STRING ONLY. Never touches the saved-notes cache and
- * never calls PATCH itself; the caller must show the draft for review and
- * call `savePlatformCraftNotes` explicitly if the writer wants to keep it.
+ * Starts an on-demand, billed research pass (Claude + web search/fetch) as
+ * a detached background job — returns almost immediately with
+ * draftStatus: "running" already reflected in the cache. Does NOT return
+ * the eventual draft text; the caller must poll (`refreshPlatformCraftNotes`
+ * on an interval, or `usePlatformCraftNotesPolling` below) until
+ * draftStatus becomes "ready" (draftContent populated) or "failed"
+ * (draftError populated). The backend itself refuses to start a second
+ * job while one's already running for this book and just returns the
+ * existing in-flight state, so calling this again mid-run is harmless.
  */
-export async function researchPlatformCraftNotes(bookId: string): Promise<string> {
-  const res = await apiFetch<PlatformCraftNotesResearchResponse>("/platform-craft-notes/research", {
+export async function startPlatformCraftNotesResearch(bookId: string): Promise<PlatformCraftNotes> {
+  const res = await apiFetch<PlatformCraftNotesResponse>("/platform-craft-notes/research", {
     method: "POST",
     body: JSON.stringify({ bookId }),
   });
-  return res.draft;
+  platformNotes = mapPlatformCraftNotesRow(res.notes);
+  platformNotesBookId = bookId;
+  platformNotesStatus = "loaded";
+  emitPlatformNotes();
+  return platformNotes;
+}
+
+/** Discards a "ready" or "failed" draft without saving it — resets draftStatus to "idle" server-side. Leaves the last actually-saved `content` untouched. */
+export async function discardPlatformCraftNotesDraft(bookId: string): Promise<PlatformCraftNotes> {
+  const res = await apiFetch<PlatformCraftNotesResponse>("/platform-craft-notes/research/discard", {
+    method: "POST",
+    body: JSON.stringify({ bookId }),
+  });
+  platformNotes = mapPlatformCraftNotesRow(res.notes);
+  platformNotesBookId = bookId;
+  platformNotesStatus = "loaded";
+  emitPlatformNotes();
+  return platformNotes;
+}
+
+/**
+ * Polls GET /platform-craft-notes on an interval while `active` — this
+ * call is cheap/free (a plain row read, no LLM call), so polling every
+ * ~7s while a research job is running is harmless. The sanctioned
+ * "subscribe, then act in a callback" effect shape (never setState
+ * synchronously in the effect body) — same pattern useElapsedSeconds uses
+ * elsewhere in this codebase for the same React Compiler lint reason.
+ */
+export function usePlatformCraftNotesPolling(bookId: string | undefined, active: boolean): void {
+  useEffect(() => {
+    if (!active || !bookId) return;
+    const interval = window.setInterval(() => refreshPlatformCraftNotes(bookId), 7000);
+    return () => window.clearInterval(interval);
+  }, [bookId, active]);
 }

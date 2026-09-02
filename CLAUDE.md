@@ -3063,6 +3063,79 @@ the full pre-existing Act/Part/Beats Playwright pass unchanged afterward
 to confirm zero regression to the "full" pipeline. Zero console errors
 across the full pass.
 
+**Live bug: Platform Craft Notes treated every research response as a
+draft ready to review.** The backend changed the research pass from a
+synchronous `{draft: "..."}` response into a detached background job
+(commit `98e9ae6`, "Make Platform Craft Notes research survive closing
+the tab") — `POST /platform-craft-notes/research` now returns almost
+immediately with the row's `draftStatus` already `"running"`, and the
+real Claude + web_search/web_fetch call keeps going server-side,
+independent of the tab, landing its result on the same row
+(`draftContent` on success, `draftError` on failure) for a later `GET` to
+pick up — the same "poll while running" pattern the Planning Engine's own
+run already uses. The frontend hadn't caught up: `researchPlatformCraftNotes()`
+still awaited the POST as if it returned the finished draft, so clicking
+"Run Research Pass" immediately flipped into the "fresh draft — Save or
+Discard" banner with the textarea bound to `content` (the last actually
+*saved* notes, still empty on a first run) instead of where the result
+would eventually land — showing a real draft as available before any
+research had actually happened.
+
+Fixed by driving the whole panel off `draftStatus` (`PlatformCraftNotes`
+gained `draftStatus`/`draftContent`/`draftError`/`draftUpdatedAt`,
+mirroring the backend's row exactly), four states:
+- **`idle`** — nothing in flight; the textarea is bound to `content`,
+  editable, with a normal Save (`PATCH`) and "Run Research Pass" enabled.
+- **`running`** — a job is in progress; a loading state ("Researching
+  current hook/platform trends…"), no editable textarea, "Run Research
+  Pass" disabled (a second click would just return the same in-flight
+  state anyway per the backend's own duplicate-job guard, so disabling is
+  purely to avoid a pointless click, not to prevent a real error).
+  `usePlatformCraftNotesPolling(bookId, draftStatus === "running")`
+  (`planning-store.ts`) polls the cheap/free `GET` every 7s until the
+  status changes — the sanctioned "subscribe, then act in a callback"
+  effect shape, same as `useElapsedSeconds` elsewhere in this file.
+- **`ready`** — a completed draft is waiting; THIS is the only state that
+  shows the "fresh draft — review it" banner, textarea now bound to
+  `draftContent` (not `content`). Save (`PATCH` with the textarea's
+  current value — accepting it into `content` and resetting
+  `draftStatus` to `"idle"` server-side) or Discard (`POST
+  /platform-craft-notes/research/discard` — clears the draft, leaves
+  `content` untouched).
+- **`failed`** — shows `draftError` plainly plus a "Try Again" action
+  that just calls `startPlatformCraftNotesResearch()` again.
+
+`startPlatformCraftNotesResearch()` replaces the old
+`researchPlatformCraftNotes()` — it returns the *row* (reflecting
+`draftStatus: "running"`), never a draft string, and the caller is
+expected to poll rather than await a result. New
+`PlatformNotesEditor` child component owns the editable textarea/Save/
+Discard for whichever "source" is currently showing (`content` on idle,
+`draftContent` on ready), keyed by the parent on
+`` `${draftStatus}:${...UpdatedAt}` `` so switching between idle/ready (or
+a fresh save/discard) remounts it with a freshly-seeded `useState`
+initializer — the same "reset via remount" shape this file already uses
+for `PromptDraftEditor`/`EntityReviewView`, instead of an effect
+re-syncing local state to a prop.
+
+**Verified working** (mock backend extended to model the same detached-
+job shape — `POST /research` returns 202 with `draft_status: "running"`
+immediately, then resolves to `"ready"`/`"failed"` via a real `setTimeout`
+independent of the response already having been sent, plus a
+`POST /platform-craft-notes/research/discard` endpoint and a
+`/__test__/force-research-failure` hook): idle shows the empty-state
+placeholder and a working Save with a real "Last saved" caption; clicking
+Run Research Pass immediately shows the running/loading state, NOT the
+ready banner; once the job resolves (confirmed via polling, not an
+instant response) the ready banner appears with the textarea genuinely
+bound to `draftContent`; Discard clears the draft and restores the
+untouched saved `content`; Save on a ready draft accepts the (optionally
+edited) text into `content` and returns to idle; a forced failure shows
+"Research failed: {draftError}" with a working Try Again that restarts
+the job. Re-ran the full Contract Pipeline and Act/Part/Beats Playwright
+passes afterward to confirm no regression elsewhere. Zero console errors
+across the full pass.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance

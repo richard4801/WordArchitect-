@@ -86,19 +86,20 @@ import {
   deleteAgentPromptVersion,
   deletePlanningRun,
   discardPlanningStage,
+  discardPlatformCraftNotesDraft,
   extractPlanningEntities,
   finalizeIntakeConversation,
   finalizePlanningDirective,
   loadPlanningRun,
   promoteContractRunToFull,
   rejectPlanningStage,
-  researchPlatformCraftNotes,
   runPipelineForward,
   saveAgentPromptVersion,
   savePlatformCraftNotes,
   sendIntakeChatTurn,
   sendPlanningChatTurn,
   startPlanningRun,
+  startPlatformCraftNotesResearch,
   unapprovePlanningStage,
   updateAgentPromptVersion,
   useActivePlanningRun,
@@ -112,6 +113,7 @@ import {
   usePlatformCraftNotes,
   usePlatformCraftNotesError,
   usePlatformCraftNotesLoadStatus,
+  usePlatformCraftNotesPolling,
 } from "@/lib/planning-store";
 import { refreshCharacters } from "@/lib/character-store";
 import { refreshWorld } from "@/lib/worldbuilding-store";
@@ -2055,69 +2057,50 @@ function RunListView({
 // ---------------------------------------------------------------------
 // Platform Craft Notes — a per-BOOK (not per-run) reference doc feeding
 // {{PLATFORM_TRENDS}} into the Contract Pipeline's codex_documentation/
-// hook_chapters_outline units. PATCH is the only save path; POST /research
-// is an on-demand, billed pass that returns a DRAFT ONLY — never
-// auto-saved. The writer must explicitly review the draft and click Save.
+// hook_chapters_outline units. PATCH is the only save path.
+//
+// A research pass is a detached background job, not a request/response
+// round trip — POST /research returns almost immediately with
+// draftStatus: "running" already set; the real result lands later on the
+// same row (draftContent on success, draftError on failure), picked up by
+// polling GET while "running". Driven entirely off `draftStatus`, four
+// states: "idle" (nothing in flight — edit/save the saved `content`
+// directly), "running" (job in progress — loading state, no editable
+// textarea, Run Research Pass disabled), "ready" (a completed draft is
+// waiting — THIS is the review-it banner, textarea bound to
+// `draftContent`, Save or Discard), "failed" (show `draftError`, offer
+// Try Again). Never bind the textarea to `content` while a draft is
+// "ready" — that was the original bug report: showing the review banner
+// immediately on click, bound to the (still-empty) saved content instead
+// of where the research result actually lands.
 // ---------------------------------------------------------------------
 
 function PlatformCraftNotesView({ bookId }: { bookId: string }) {
   const notes = usePlatformCraftNotes(bookId);
   const loadStatus = usePlatformCraftNotesLoadStatus();
   const loadError = usePlatformCraftNotesError();
-
-  const [draft, setDraft] = useState<string | null>(null);
-  const [editing, setEditing] = useState(false);
-  const [researching, setResearching] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [startingResearch, setStartingResearch] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [savedFlash, setSavedFlash] = useState(false);
 
-  useEffect(() => {
-    if (!savedFlash) return;
-    const timeout = window.setTimeout(() => setSavedFlash(false), 2000);
-    return () => window.clearTimeout(timeout);
-  }, [savedFlash]);
+  const draftStatus = notes?.draftStatus ?? "idle";
+  // Cheap/free row read — polling every ~7s while a job is running is
+  // harmless, and picks up "ready"/"failed" whenever the backend finishes,
+  // independent of whether this is the same tab that started the job.
+  usePlatformCraftNotesPolling(bookId, draftStatus === "running");
 
-  const savedContent = notes?.content ?? "";
-  // Editing state is either a fresh research draft (set explicitly by
-  // handleResearch) or the writer's own in-progress edit of the saved
-  // content — `draft` stays null until one of those starts.
-  const value = draft ?? savedContent;
-
-  async function handleResearch() {
-    setResearching(true);
+  async function handleStartResearch() {
+    setStartingResearch(true);
     setActionError(null);
     try {
-      const result = await researchPlatformCraftNotes(bookId);
-      setDraft(result);
-      setEditing(true);
+      await startPlatformCraftNotesResearch(bookId);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Couldn't run a research pass.");
+      setActionError(err instanceof Error ? err.message : "Couldn't start a research pass.");
     } finally {
-      setResearching(false);
+      setStartingResearch(false);
     }
   }
 
-  async function handleSave() {
-    setSaving(true);
-    setActionError(null);
-    try {
-      await savePlatformCraftNotes(bookId, value);
-      setDraft(null);
-      setEditing(false);
-      setSavedFlash(true);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Couldn't save Platform Craft Notes.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function handleDiscardDraft() {
-    setDraft(null);
-    setEditing(false);
-    setActionError(null);
-  }
+  const researchBusy = startingResearch || draftStatus === "running";
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
@@ -2137,64 +2120,162 @@ function PlatformCraftNotesView({ bookId }: { bookId: string }) {
       <div className="card p-5">
         <div className="flex items-center justify-between gap-3">
           <h3 className="label-caps text-[0.65rem] text-ink-faint">Notes</h3>
-          <div className="flex items-center gap-3">
-            {savedFlash && <span className="text-xs text-success">Saved</span>}
-            <button
-              type="button"
-              onClick={handleResearch}
-              disabled={researching}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-line px-3 py-1.5 text-xs font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
-            >
-              {researching ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-              {researching ? "Researching…" : "Run Research Pass"}
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={handleStartResearch}
+            disabled={researchBusy}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-line px-3 py-1.5 text-xs font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
+          >
+            {researchBusy ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+            {researchBusy ? "Researching…" : "Run Research Pass"}
+          </button>
         </div>
 
-        {draft !== null && (
+        {draftStatus === "running" && (
+          <div className="mt-3 flex items-center gap-2 rounded-xl border border-line bg-surface-2 p-3 text-xs text-ink-muted">
+            <Loader2 className="size-3.5 shrink-0 animate-spin" />
+            Researching current hook/platform trends — this runs in the background and can take a couple of minutes.
+            Feel free to leave this page; the result will be here when you come back.
+          </div>
+        )}
+
+        {draftStatus === "failed" && (
+          <div className="mt-3 rounded-xl border border-danger/40 bg-danger/10 p-3 text-xs text-danger">
+            <p>Research failed: {notes?.draftError ?? "Unknown error."}</p>
+            <button
+              type="button"
+              onClick={handleStartResearch}
+              disabled={researchBusy}
+              className="mt-2 rounded-lg border border-danger/40 px-2.5 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger/10 disabled:opacity-50"
+            >
+              Try Again
+            </button>
+          </div>
+        )}
+
+        {draftStatus === "ready" && (
           <p className="mt-3 rounded-xl border border-gold/40 bg-gold/10 p-3 text-xs text-ink-muted">
             This is a fresh research draft — nothing is saved yet. Review it below, edit anything you want to change,
             then Save to keep it, or Discard to drop it.
           </p>
         )}
 
-        <textarea
-          value={value}
-          onChange={(e) => {
-            setDraft(e.target.value);
-            setEditing(true);
-          }}
-          placeholder="No notes saved yet. Write your own, or run a research pass to get a starting draft."
-          rows={16}
-          className="scroll-slim mt-3 w-full resize-y rounded-xl border border-line bg-surface-2 p-3 text-sm text-ink outline-none focus:border-gold/60"
-        />
-
-        {editing && (
-          <div className="mt-3 flex items-center gap-3">
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saving}
-              className="inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
-            >
-              {saving && <Loader2 className="size-4 animate-spin" />}
-              Save
-            </button>
-            <button
-              type="button"
-              onClick={handleDiscardDraft}
-              disabled={saving}
-              className="text-xs text-ink-faint underline-offset-2 hover:text-danger hover:underline disabled:opacity-50"
-            >
-              Discard changes
-            </button>
-          </div>
-        )}
-
-        {notes?.updatedAt && draft === null && (
-          <p className="mt-3 text-[0.7rem] text-ink-faint">Last saved {new Date(notes.updatedAt).toLocaleString()}</p>
+        {(draftStatus === "idle" || draftStatus === "ready") && (
+          <PlatformNotesEditor
+            key={`${draftStatus}:${draftStatus === "ready" ? notes?.draftUpdatedAt : notes?.updatedAt}`}
+            bookId={bookId}
+            isDraft={draftStatus === "ready"}
+            initialValue={draftStatus === "ready" ? (notes?.draftContent ?? "") : (notes?.content ?? "")}
+            savedAt={notes?.updatedAt ?? null}
+          />
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Owns the editable textarea plus Save/Discard for one "source" — either
+ * the saved `content` (idle) or a ready draft's `draftContent`. Keyed by
+ * the parent on `${draftStatus}:${...UpdatedAt}` so switching between
+ * idle/ready (or a fresh save/discard) remounts this with a freshly-seeded
+ * `useState` initializer instead of an effect re-syncing local state to a
+ * prop — the same "reset via remount" shape this file already uses for
+ * PromptDraftEditor/EntityReviewView.
+ */
+function PlatformNotesEditor({
+  bookId,
+  isDraft,
+  initialValue,
+  savedAt,
+}: {
+  bookId: string;
+  isDraft: boolean;
+  initialValue: string;
+  savedAt: string | null;
+}) {
+  const [value, setValue] = useState(initialValue);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [savedFlash, setSavedFlash] = useState(false);
+
+  useEffect(() => {
+    if (!savedFlash) return;
+    const timeout = window.setTimeout(() => setSavedFlash(false), 2000);
+    return () => window.clearTimeout(timeout);
+  }, [savedFlash]);
+
+  async function handleSave() {
+    setSaving(true);
+    setActionError(null);
+    try {
+      await savePlatformCraftNotes(bookId, value);
+      setDirty(false);
+      setSavedFlash(true);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't save Platform Craft Notes.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDiscard() {
+    setDiscarding(true);
+    setActionError(null);
+    try {
+      await discardPlatformCraftNotesDraft(bookId);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't discard this draft.");
+    } finally {
+      setDiscarding(false);
+    }
+  }
+
+  return (
+    <div>
+      {actionError && <p className="mt-3 text-xs text-danger">{actionError}</p>}
+      <textarea
+        value={value}
+        onChange={(e) => {
+          setValue(e.target.value);
+          setDirty(true);
+        }}
+        placeholder="No notes saved yet. Write your own, or run a research pass to get a starting draft."
+        rows={16}
+        className="scroll-slim mt-3 w-full resize-y rounded-xl border border-line bg-surface-2 p-3 text-sm text-ink outline-none focus:border-gold/60"
+      />
+
+      <div className="mt-3 flex items-center gap-3">
+        {(isDraft || dirty) && (
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || discarding}
+            className="inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {saving && <Loader2 className="size-4 animate-spin" />}
+            Save
+          </button>
+        )}
+        {isDraft && (
+          <button
+            type="button"
+            onClick={handleDiscard}
+            disabled={saving || discarding}
+            className="text-xs text-ink-faint underline-offset-2 hover:text-danger hover:underline disabled:opacity-50"
+          >
+            {discarding && <Loader2 className="mr-1 inline size-3 animate-spin" />}
+            Discard
+          </button>
+        )}
+        {savedFlash && <span className="text-xs text-success">Saved</span>}
+      </div>
+
+      {savedAt && !isDraft && !dirty && (
+        <p className="mt-3 text-[0.7rem] text-ink-faint">Last saved {new Date(savedAt).toLocaleString()}</p>
+      )}
     </div>
   );
 }
