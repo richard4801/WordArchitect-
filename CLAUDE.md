@@ -2855,6 +2855,67 @@ run, marked Active; and the Prompt Editor's Role dropdown listed "Ledger
 Extractor" alongside the other 8 roles. Zero console errors across the
 full pass.
 
+**Second pass on the same rebuild: visual fidelity to the design mock,
+not just correct data.** User feedback on the first pass, directly: the
+UI "looks nothing like" the mock. Fair — the first pass got every data
+correction right but rendered them inside the app's plainest generic
+`card` boxes with default spacing, never actually matching the mock's
+layout/spacing/color/component-shape the way the brief asked for. Fixed
+per screen, real data unchanged throughout:
+- **Sidebar** — a branded icon (`Sparkles` in a gold tile) + "Planning
+  Engine" label header, an icon per nav item (`GitBranch`/`ListChecks`/
+  `BookOpen`/`Users`/`Cog`), and a book-identity footer card, instead of a
+  plain text-only nav list.
+- **Pipeline Map** — a real progress card (percentage + bar + the
+  not-final note), a Locked/Current/Approved dot legend, and each Part
+  card now shows a genuine per-unit dot row (one dot for the outline, one
+  per real/placeholder beats chunk, colored by state) above the existing
+  text status lines, plus a connecting line between Act cards. "Up Next"
+  vs. "In Progress" is now a real distinction (`partIsFresh`): "Up Next"
+  only when the part's outline has zero artifact yet, matching the mock's
+  own example (a fresh Part reading "0/3 approved").
+- **Unit Review** — the header now carries a real `RunStatusBadge`
+  (colored per `run.status`, e.g. gold "Generating," info "Awaiting Your
+  Review," warn "Rejection Interview"); the Context panel became a real
+  custom collapsible (chevron rotates, no native disclosure triangle)
+  instead of a bare `<details>`; `ReviewGate` is now a genuine two-column
+  layout (wide artifact + a narrower Critics/Verdict rail, matching the
+  mock's proportions) instead of a full-width stack — each critic card
+  gets a colored identity dot (cycling gold/info/purple, so a future 4th
+  critic still gets a distinct color with no code change) and a real
+  "N/10" score badge pulled from the critic's own `score` field; the
+  Arbitrator Verdict card gained the mock's circular icon treatment
+  (green thumbs-up circle for `recommendation: "approve"`, amber
+  thumbs-down otherwise) with the recommendation deduplicated out of the
+  body text below it.
+- **Rejection Interview** — a colored icon avatar and a real "In
+  Interview" status pill in the header, taller panel (matching the mock's
+  proportion, not a cramped 32rem cap) — the flat, ungrouped
+  `chat_history` itself is unchanged (still the correct call per the
+  no-fabricated-structure correction above).
+- **Continuity Ledger** — rebuilt from a card-list into an actual
+  `<table>` (#, Fact, Status, Introduced In columns) with real pagination
+  once entries exceed one page, matching the mock's tabular density —
+  still exactly the real two-state badge and no Type column.
+- **Entity Review** — the pill-style type filter became underlined tabs
+  (gold active-tab border, matching the mock's Characters/Places/Lore
+  tab strip) and the row list became a real `<table>` (checkbox/Entity/
+  Type columns) — still no confidence or source column, since neither
+  exists in the real data.
+- **Run List** — each row's icon became a proper square cover-tile, and
+  the active run's action button is now the filled gold "Resume" the mock
+  uses (every other row keeps the plain outline "Open"), instead of every
+  row sharing one outline button style regardless of active state.
+
+**Verified working**: re-ran the exact same Playwright pass above against
+the redesigned components — every prior assertion (state machine
+transitions, no raw JSON, no fabricated fields, correct badges) still
+passed unchanged, confirming this was a presentation-layer pass only, no
+regression to the verified data/store logic. Screenshots of the Pipeline
+Map, Unit Review, Continuity Ledger, and Entity Review compared side by
+side with the design mock to confirm the layout/spacing/color/component-
+shape correspondence the brief originally asked for. Zero console errors.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance

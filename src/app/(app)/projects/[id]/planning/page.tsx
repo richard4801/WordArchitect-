@@ -6,9 +6,13 @@ import {
   Bot,
   Check,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   Circle,
+  Cog,
   Download,
+  GitBranch,
+  ListChecks,
   Lock,
   Loader2,
   Paperclip,
@@ -16,8 +20,11 @@ import {
   Search,
   Send,
   Sparkles,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
   Undo2,
+  Users,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -56,6 +63,7 @@ import {
   type ContinuityLedgerEntry,
   type EffortLevel,
   type PlanningRun,
+  type PlanningRunStatus,
   type PlanningStage,
   type UnitPosition,
   roleLabel,
@@ -373,12 +381,12 @@ export default function PlanningPage() {
 
 type PlanningView = "pipeline" | "runs" | "ledger" | "entities" | "prompts";
 
-const NAV_ITEMS: { key: PlanningView; label: string }[] = [
-  { key: "pipeline", label: "Pipeline Map" },
-  { key: "runs", label: "Run List" },
-  { key: "ledger", label: "Continuity Ledger" },
-  { key: "entities", label: "Entity Review" },
-  { key: "prompts", label: "Settings" },
+const NAV_ITEMS: { key: PlanningView; label: string; Icon: typeof GitBranch }[] = [
+  { key: "pipeline", label: "Pipeline Map", Icon: GitBranch },
+  { key: "runs", label: "Run List", Icon: ListChecks },
+  { key: "ledger", label: "Continuity Ledger", Icon: BookOpen },
+  { key: "entities", label: "Entity Review", Icon: Users },
+  { key: "prompts", label: "Settings", Icon: Cog },
 ];
 
 function PlanningPageInner() {
@@ -443,33 +451,52 @@ function PlanningPageInner() {
 
   return (
     <div className="flex h-dvh overflow-hidden">
-      <aside className="flex w-56 shrink-0 flex-col border-r border-line bg-surface-1 p-3">
+      <aside className="flex w-60 shrink-0 flex-col border-r border-line bg-surface-1 p-4">
         <Link
           href={`/projects/${project.id}`}
-          className="mb-4 flex items-center gap-1.5 px-1 text-sm text-ink-muted transition-colors hover:text-ink"
+          className="mb-5 flex items-center gap-1.5 text-xs text-ink-muted transition-colors hover:text-ink"
         >
-          <ChevronLeft className="size-4" />
+          <ChevronLeft className="size-3.5" />
           Back to Project
         </Link>
-        <p className="mb-1 truncate px-1 text-sm font-medium text-ink">{project.title}</p>
-        <p className="mb-4 px-1 text-xs text-ink-faint">Planning Engine</p>
-        <nav className="space-y-0.5">
+        <div className="mb-6 flex items-center gap-2">
+          <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-gold/15 text-gold">
+            <Sparkles className="size-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="label-caps text-[0.6rem] text-ink-faint">Planning Engine</p>
+            <p className="truncate text-sm font-medium text-ink">{project.title}</p>
+          </div>
+        </div>
+        <nav className="space-y-1">
           {NAV_ITEMS.map((item) => (
             <button
               key={item.key}
               type="button"
               onClick={() => setView(item.key)}
               disabled={item.key !== "runs" && item.key !== "prompts" && !targetRunId}
-              className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
                 view === item.key ? "bg-gold text-gold-contrast" : "text-ink-muted hover:bg-surface-2 hover:text-ink"
               }`}
             >
+              <item.Icon className="size-4 shrink-0" />
               {item.label}
             </button>
           ))}
         </nav>
+        <div className="mt-auto pt-4">
+          <div className="card-2 flex items-center gap-2.5 p-3">
+            <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-surface-2 text-ink-faint">
+              <BookOpen className="size-4" />
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-xs font-medium text-ink">{project.title}</p>
+              <p className="truncate text-[0.7rem] text-ink-faint">{project.genre}</p>
+            </div>
+          </div>
+        </div>
       </aside>
-      <div className="scroll-slim min-h-0 flex-1 overflow-y-auto p-5 sm:p-6">
+      <div className="scroll-slim min-h-0 flex-1 overflow-y-auto p-6 sm:p-8">
         {stillResolvingRuns ? null : !targetRunId ? (
           <StartPlanningCard onStart={handleStart} starting={starting} error={startError} />
         ) : view === "prompts" ? (
@@ -588,10 +615,45 @@ function unitLabel(pos: UnitPosition, run: PlanningRun): string {
   }
 }
 
+const STATE_DOT_COLOR: Record<UnitState, string> = {
+  locked: "var(--ink-faint)",
+  current: "var(--gold)",
+  approved: "var(--success)",
+};
+
 function StatusIcon({ state }: { state: UnitState }) {
   if (state === "approved") return <CheckCircle2 className="size-4 text-success" />;
   if (state === "current") return <Circle className="size-4 fill-gold text-gold" />;
   return <Lock className="size-3.5 text-ink-faint" />;
+}
+
+function LegendDot({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="flex items-center gap-1.5 text-xs text-ink-muted">
+      <span className="size-2 rounded-full" style={{ background: color }} />
+      {label}
+    </span>
+  );
+}
+
+/** What the next click on "Continue"/"Generate" will actually do, for the Current Unit bar's "What's Next" line. */
+function whatsNextFor(run: PlanningRun): string {
+  switch (run.status) {
+    case "generating":
+      return "Generate → Critique → Arbitrate → Your Review";
+    case "critiquing":
+      return "Critique → Arbitrate → Your Review";
+    case "awaiting_arbitration":
+      return "Arbitrate → Your Review";
+    case "awaiting_user_review":
+      return "Awaiting your review";
+    case "user_chat_active":
+      return "Rejection interview in progress";
+    case "failed":
+      return "Needs a retry";
+    default:
+      return "";
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -613,84 +675,113 @@ function PipelineMap({
   const progress = useMemo(() => computePlanningProgress(run), [run]);
   const currentPos = currentUnitPosition(run);
   const isDone = run.status === "done";
+  const percent = progress.total > 0 ? Math.min(100, Math.round((progress.approved / progress.total) * 100)) : 0;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div className="card p-5">
         <div className="flex items-center justify-between">
-          <h3 className="label-caps text-[0.65rem]">Book Progress</h3>
-          <span className="text-xs text-ink-muted">
-            {progress.approved} / {progress.total}
-            {progress.totalIsFinal ? "" : "+"} units approved
-          </span>
+          <h3 className="label-caps text-[0.65rem] text-ink-faint">Book Progress</h3>
+          <span className="font-num text-sm text-ink">{percent}%</span>
         </div>
-        <div className="mt-2 h-2 overflow-hidden rounded-full bg-surface-2">
+        <div className="mt-2.5 h-2 overflow-hidden rounded-full bg-surface-2">
           <div
-            className="h-full rounded-full bg-gold transition-all"
-            style={{ width: `${progress.total > 0 ? Math.min(100, (progress.approved / progress.total) * 100) : 0}%` }}
+            className="h-full rounded-full bg-gradient-to-r from-gold/70 to-gold transition-all"
+            style={{ width: `${percent}%` }}
           />
         </div>
-        {!progress.totalIsFinal && (
-          <p className="mt-1.5 text-[0.7rem] text-ink-faint">
-            Final count depends on chapter ranges not yet set — grows and refines as each Part&apos;s outline is approved.
+        <div className="mt-1.5 flex items-center justify-between">
+          <p className="text-xs text-ink-muted">
+            {progress.approved} / {progress.total}
+            {progress.totalIsFinal ? "" : "+"} units approved
           </p>
-        )}
+          {!progress.totalIsFinal && (
+            <p className="text-[0.7rem] text-ink-faint">Final count grows as each Part&apos;s outline is approved</p>
+          )}
+        </div>
       </div>
 
-      <UnitRow
-        label={unitLabel(FIRST_UNIT_POSITION, run)}
-        state={unitStateFor(FIRST_UNIT_POSITION, sequence, run)}
-      />
+      <div className="flex flex-wrap items-center gap-4 rounded-xl border border-line px-4 py-2.5">
+        <LegendDot color={STATE_DOT_COLOR.locked} label="Locked" />
+        <LegendDot color={STATE_DOT_COLOR.current} label="Current" />
+        <LegendDot color={STATE_DOT_COLOR.approved} label="Approved" />
+      </div>
 
-      {Array.from({ length: ACTS_PER_BOOK }, (_, i) => i + 1).map((act) => {
+      <UnitRow label={unitLabel(FIRST_UNIT_POSITION, run)} state={unitStateFor(FIRST_UNIT_POSITION, sequence, run)} />
+
+      {Array.from({ length: ACTS_PER_BOOK }, (_, i) => i + 1).map((act, actIdx) => {
         const actSummaryPos: UnitPosition = { stage: "act_summary", act, part: null, beatChunk: null };
+        const actSummaryState = unitStateFor(actSummaryPos, sequence, run);
         return (
-          <div key={act} className="card space-y-3 p-5">
-            <UnitRow label={unitLabel(actSummaryPos, run)} state={unitStateFor(actSummaryPos, sequence, run)} compact />
-            <div className="grid gap-3 sm:grid-cols-3">
-              {Array.from({ length: PARTS_PER_ACT }, (_, i) => i + 1).map((part) => {
-                const outlinePos: UnitPosition = { stage: "part_outline", act, part, beatChunk: null };
-                const outlineState = unitStateFor(outlinePos, sequence, run);
-                const range = run.partChapterRanges[partRangeKey(act, part)];
-                const totalChunks = range ? chunksNeededForRange(range) : 1;
-                const beatStates = Array.from({ length: totalChunks }, (_, i) => {
-                  const pos: UnitPosition = { stage: "part_beats", act, part, beatChunk: i + 1 };
-                  return unitStateFor(pos, sequence, run);
-                });
-                const beatsApproved = beatStates.filter((s) => s === "approved" || (isDone && s !== "locked")).length;
-                const partIsCurrent = outlineState === "current" || beatStates.includes("current");
-                const partIsLocked = outlineState === "locked" && beatStates.every((s) => s === "locked");
+          <div key={act} className="relative">
+            {actIdx > 0 && <div className="absolute -top-5 left-6 h-5 w-px bg-line" />}
+            <div className={`card space-y-4 p-5 ${actSummaryState === "current" ? "border-gold/50" : ""}`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <span className="label-caps text-[0.6rem] text-gold">Act {act}</span>
+                  <UnitRow label={unitLabel(actSummaryPos, run)} state={actSummaryState} compact />
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                {Array.from({ length: PARTS_PER_ACT }, (_, i) => i + 1).map((part) => {
+                  const outlinePos: UnitPosition = { stage: "part_outline", act, part, beatChunk: null };
+                  const outlineState = unitStateFor(outlinePos, sequence, run);
+                  const range = run.partChapterRanges[partRangeKey(act, part)];
+                  const totalChunks = range ? chunksNeededForRange(range) : 1;
+                  const beatStates = Array.from({ length: totalChunks }, (_, i) => {
+                    const pos: UnitPosition = { stage: "part_beats", act, part, beatChunk: i + 1 };
+                    return unitStateFor(pos, sequence, run);
+                  });
+                  const beatsApproved = beatStates.filter((s) => s === "approved" || (isDone && s !== "locked")).length;
+                  const partIsCurrent = outlineState === "current" || beatStates.includes("current");
+                  const partIsLocked = outlineState === "locked" && beatStates.every((s) => s === "locked");
+                  const partIsFresh = partIsCurrent && outlineState === "current" && !run.stageArtifacts[unitKeyForPosition(outlinePos)];
 
-                return (
-                  <div
-                    key={part}
-                    className={`rounded-xl border p-3 ${
-                      partIsCurrent ? "border-gold/60 bg-gold/5" : partIsLocked ? "border-line opacity-60" : "border-line"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-ink">Part {part}</span>
-                      {partIsCurrent && (
-                        <span className="rounded-full bg-gold/15 px-2 py-0.5 text-[0.6rem] font-medium text-gold">Up Next</span>
-                      )}
+                  return (
+                    <div
+                      key={part}
+                      className={`rounded-xl border p-3.5 transition-colors ${
+                        partIsCurrent ? "border-gold/60 bg-gold/5" : partIsLocked ? "border-line/70 opacity-60" : "border-line"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-ink">Part {part}</span>
+                        {partIsCurrent && (
+                          <span className="rounded-full bg-gold/15 px-2 py-0.5 text-[0.6rem] font-medium text-gold">
+                            {partIsFresh ? "Up Next" : "In Progress"}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-2.5 flex items-center gap-1">
+                        <span
+                          className="size-2 rounded-full"
+                          style={{ background: STATE_DOT_COLOR[outlineState] }}
+                          title="Outline"
+                        />
+                        {beatStates.map((s, i) => (
+                          <span key={i} className="size-2 rounded-full" style={{ background: STATE_DOT_COLOR[s] }} title={`Beats chunk ${i + 1}`} />
+                        ))}
+                      </div>
+                      <div className="mt-2 space-y-1 text-[0.7rem] text-ink-muted">
+                        <div className="flex items-center gap-1.5">
+                          <StatusIcon state={outlineState} />
+                          Outline
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {range ? <StatusIcon state={beatStates[0]} /> : <Lock className="size-3.5 text-ink-faint" />}
+                          Beats {range ? `(${beatsApproved}/${totalChunks})` : "(chapter range TBD)"}
+                        </div>
+                      </div>
                     </div>
-                    <div className="mt-2 flex items-center gap-1.5 text-xs text-ink-muted">
-                      <StatusIcon state={outlineState} />
-                      Outline
-                    </div>
-                    <div className="mt-1 flex items-center gap-1.5 text-xs text-ink-muted">
-                      {range ? <StatusIcon state={beatStates[0]} /> : <Lock className="size-3.5 text-ink-faint" />}
-                      Beats {range ? `(${beatsApproved}/${totalChunks} approved)` : "(chapter range TBD)"}
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           </div>
         );
       })}
 
-      <div className="card flex flex-wrap items-center justify-between gap-3 p-5">
+      <div className="card flex flex-wrap items-center justify-between gap-4 p-5">
         {isDone ? (
           <div>
             <p className="text-sm font-medium text-ink">Planning complete — every Act and Part is fully mapped.</p>
@@ -709,8 +800,12 @@ function PipelineMap({
         ) : (
           <div>
             <p className="label-caps text-[0.6rem] text-ink-faint">Current Unit</p>
-            <p className="mt-1 text-sm font-medium text-ink">{unitLabel(currentPos, run)}</p>
-            <p className="mt-0.5 text-xs text-ink-muted">{PLANNING_RUN_STATUS_LABEL[run.status]}</p>
+            <p className="mt-1 font-display text-base text-ink">{unitLabel(currentPos, run)}</p>
+            <p className="mt-1 text-xs text-ink-muted">
+              <span className="font-medium text-ink">{PLANNING_RUN_STATUS_LABEL[run.status]}</span>
+              {" · What's Next: "}
+              {whatsNextFor(run)}
+            </p>
           </div>
         )}
         {!isDone && (
@@ -884,6 +979,42 @@ function IntakeChat({
 // both on screen" is satisfied by construction, not by extra state.
 // ---------------------------------------------------------------------
 
+const STATUS_BADGE_CLASS: Record<PlanningRunStatus, string> = {
+  intake_active: "border-line text-ink-muted",
+  generating: "border-gold/40 bg-gold/10 text-gold",
+  critiquing: "border-gold/40 bg-gold/10 text-gold",
+  awaiting_arbitration: "border-gold/40 bg-gold/10 text-gold",
+  awaiting_user_review: "border-info/40 bg-info/10 text-info",
+  user_chat_active: "border-warn/40 bg-warn/10 text-warn",
+  done: "border-success/40 bg-success/10 text-success",
+  failed: "border-danger/40 bg-danger/10 text-danger",
+};
+
+function RunStatusBadge({ status }: { status: PlanningRunStatus }) {
+  return (
+    <span className={`rounded-full border px-2.5 py-0.5 text-[0.65rem] font-medium ${STATUS_BADGE_CLASS[status]}`}>
+      {PLANNING_RUN_STATUS_LABEL[status]}
+    </span>
+  );
+}
+
+function ContextPanel({ label, text }: { label: string; text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="card p-4">
+      <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between gap-2 text-left">
+        <span className="label-caps text-[0.6rem] text-ink-faint">Context — {label}</span>
+        <ChevronDown className={`size-3.5 shrink-0 text-ink-faint transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div className="scroll-slim mt-3 max-h-56 overflow-y-auto text-sm text-ink-muted">
+          <ArtifactContent artifact={text} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function parentArtifactFor(run: PlanningRun): { label: string; text: string } | null {
   const pos = currentUnitPosition(run);
   if (pos.stage === "stage_1_summary") return null;
@@ -942,16 +1073,12 @@ function UnitDetail({
         )}
       </div>
 
-      <h2 className="font-display text-lg text-ink">{unitLabel(currentUnitPosition(run), run)}</h2>
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="font-display text-xl text-ink">{unitLabel(currentUnitPosition(run), run)}</h2>
+        <RunStatusBadge status={run.status} />
+      </div>
 
-      {parent && parent.text && (
-        <details className="card p-4 text-sm text-ink-muted">
-          <summary className="cursor-pointer text-xs font-medium text-ink-faint">Context — {parent.label}</summary>
-          <div className="scroll-slim mt-3 max-h-56 overflow-y-auto">
-            <ArtifactContent artifact={parent.text} />
-          </div>
-        </details>
-      )}
+      {parent && parent.text && <ContextPanel label={parent.label} text={parent.text} />}
 
       {(run.status === "generating" || run.status === "critiquing" || run.status === "awaiting_arbitration") && (
         <div className="card p-6 text-center">
@@ -1032,6 +1159,8 @@ function UnitDetail({
   );
 }
 
+const CRITIC_DOT_COLORS = ["var(--gold)", "var(--info)", "var(--purple)"];
+
 function ReviewGate({
   run,
   unit,
@@ -1052,31 +1181,36 @@ function ReviewGate({
   onDiscardStage: () => void;
 }) {
   const artifact = run.stageArtifacts[unit] ?? "";
+  const reviewEntries = run.panelReviews ? Object.entries(run.panelReviews) : [];
+  const hasVerdict = run.arbitratorSynthesis !== null && run.arbitratorSynthesis !== undefined;
+
   return (
     <div className="space-y-4">
-      <div className="card p-5">
-        <h3 className="label-caps text-[0.65rem]">Artifact</h3>
-        <div className="scroll-slim mt-3 max-h-96 overflow-y-auto text-sm text-ink">
-          <ArtifactContent artifact={artifact} />
-        </div>
-      </div>
-      {run.panelReviews && Object.keys(run.panelReviews).length > 0 && (
-        // One card per key actually present in panel_reviews, not a fixed
-        // pair — the Scrutiny Panel's composition (currently 3 critics)
-        // isn't hardcoded here, so it can change again without another
-        // frontend change to this display.
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {Object.entries(run.panelReviews).map(([role, value]) => (
-            <ReviewCard key={role} title={roleLabel(role)} value={value} />
-          ))}
-        </div>
-      )}
-      {run.arbitratorSynthesis !== null && run.arbitratorSynthesis !== undefined && (
+      <div className="grid gap-4 lg:grid-cols-[1fr_320px] lg:items-start">
         <div className="card p-5">
-          <h3 className="label-caps text-[0.65rem]">Arbitrator Verdict</h3>
-          <JsonBlock value={run.arbitratorSynthesis} />
+          <h3 className="label-caps text-[0.65rem] text-ink-faint">Artifact</h3>
+          <div className="scroll-slim mt-3 max-h-[32rem] overflow-y-auto text-sm text-ink">
+            <ArtifactContent artifact={artifact} />
+          </div>
         </div>
-      )}
+
+        {(reviewEntries.length > 0 || hasVerdict) && (
+          <div className="space-y-4">
+            {reviewEntries.length > 0 && (
+              <div>
+                <h3 className="label-caps mb-2 text-[0.6rem] text-ink-faint">Critics</h3>
+                <div className="space-y-3">
+                  {reviewEntries.map(([role, value], i) => (
+                    <ReviewCard key={role} title={roleLabel(role)} value={value} dotColor={CRITIC_DOT_COLORS[i % CRITIC_DOT_COLORS.length]} />
+                  ))}
+                </div>
+              </div>
+            )}
+            {hasVerdict && <ArbitratorVerdictCard synthesis={run.arbitratorSynthesis} />}
+          </div>
+        )}
+      </div>
+
       <div className="flex items-center justify-between gap-3">
         {!isFirstUnit && hasOwnArtifact ? (
           <button type="button" onClick={onDiscardStage} className="text-xs text-ink-faint underline-offset-2 hover:text-danger hover:underline">
@@ -1109,12 +1243,50 @@ function ReviewGate({
   );
 }
 
-function ReviewCard({ title, value }: { title: string; value: unknown }) {
+function scoreOf(value: unknown): string | null {
+  if (value && typeof value === "object" && "score" in value) {
+    const s = (value as { score: unknown }).score;
+    if (typeof s === "number" || typeof s === "string") return String(s);
+  }
+  return null;
+}
+
+function ReviewCard({ title, value, dotColor }: { title: string; value: unknown; dotColor: string }) {
   if (value === undefined) return null;
+  const score = scoreOf(value);
   return (
     <div className="card p-4">
-      <h4 className="label-caps text-[0.6rem]">{title}</h4>
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="flex items-center gap-2 text-sm font-medium text-ink">
+          <span className="size-2 shrink-0 rounded-full" style={{ background: dotColor }} />
+          {title}
+        </h4>
+        {score && <span className="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[0.65rem] font-medium text-ink">{score}/10</span>}
+      </div>
       <JsonBlock value={value} />
+    </div>
+  );
+}
+
+function ArbitratorVerdictCard({ synthesis }: { synthesis: unknown }) {
+  const isObject = synthesis !== null && typeof synthesis === "object" && !Array.isArray(synthesis);
+  const recommendation = isObject && "recommendation" in (synthesis as object) ? String((synthesis as { recommendation: unknown }).recommendation) : null;
+  const approves = recommendation === "approve";
+  // Strip the field already surfaced prominently above (icon + headline)
+  // so it isn't shown twice in the generic body render below.
+  const rest = isObject ? Object.fromEntries(Object.entries(synthesis as Record<string, unknown>).filter(([k]) => k !== "recommendation")) : synthesis;
+  return (
+    <div className="card p-4">
+      <h3 className="label-caps mb-3 text-[0.6rem] text-ink-faint">Arbitrator Verdict</h3>
+      <div className="flex items-center gap-2.5">
+        <span className={`grid size-8 shrink-0 place-items-center rounded-full ${approves ? "bg-success/15 text-success" : "bg-warn/15 text-warn"}`}>
+          {approves ? <ThumbsUp className="size-4" /> : <ThumbsDown className="size-4" />}
+        </span>
+        <p className="text-sm font-medium text-ink">{approves ? "Recommend Approve" : recommendation ? `Recommend ${fieldLabel(recommendation)}` : "Verdict"}</p>
+      </div>
+      <div className="mt-3">
+        <JsonBlock value={rest} />
+      </div>
     </div>
   );
 }
@@ -1167,11 +1339,16 @@ function RejectionInterview({
   }
 
   return (
-    <section className="card flex max-h-[32rem] flex-col p-0">
+    <section className="card flex h-[36rem] flex-col p-0">
       <header className="flex shrink-0 items-center gap-2.5 border-b border-line px-5 py-4">
-        <PenLine className="size-4 text-gold" />
-        <div>
-          <p className="text-sm font-medium text-ink">Rejection interview</p>
+        <span className="grid size-8 shrink-0 place-items-center rounded-full bg-warn/15 text-warn">
+          <PenLine className="size-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="flex items-center gap-2 text-sm font-medium text-ink">
+            Rejection Interview
+            <span className="rounded-full border border-warn/40 bg-warn/10 px-2 py-0.5 text-[0.6rem] font-medium text-warn">In Interview</span>
+          </p>
           <p className="text-xs text-ink-faint">The Arbitrator&apos;s full conversation across this whole run — nothing here is ever cleared.</p>
         </div>
       </header>
@@ -1508,7 +1685,9 @@ function RunListView({
           const progress = computePlanningProgress(run);
           return (
             <div key={run.id} className={`card flex items-center gap-4 p-4 ${run.id === activeRunId ? "border-gold/50" : ""}`}>
-              <BookOpen className="size-5 shrink-0 text-ink-faint" />
+              <div className="grid size-12 shrink-0 place-items-center rounded-lg bg-surface-2 text-ink-faint">
+                <BookOpen className="size-5" />
+              </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <p className="truncate text-sm font-medium text-ink">
@@ -1532,9 +1711,13 @@ function RunListView({
               <button
                 type="button"
                 onClick={() => onOpenRun(run.id)}
-                className="shrink-0 rounded-xl border border-line px-3.5 py-1.5 text-sm font-medium text-ink transition-colors hover:border-line-strong"
+                className={
+                  run.id === activeRunId
+                    ? "shrink-0 rounded-xl bg-gold px-3.5 py-1.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
+                    : "shrink-0 rounded-xl border border-line px-3.5 py-1.5 text-sm font-medium text-ink transition-colors hover:border-line-strong"
+                }
               >
-                {run.id === activeRunId ? "Open" : "Resume"}
+                {run.id === activeRunId ? "Resume" : "Open"}
               </button>
               <OptionsMenu
                 items={[
@@ -1573,13 +1756,20 @@ function RunListView({
 // category grouping (there's nothing in the data to group by).
 // ---------------------------------------------------------------------
 
+const LEDGER_PAGE_SIZE = 8;
+
 function ContinuityLedgerView({ run }: { run: PlanningRun }) {
   const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return run.continuityLedger;
     return run.continuityLedger.filter((e) => e.fact.toLowerCase().includes(q) || e.unit.toLowerCase().includes(q));
   }, [run.continuityLedger, query]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / LEDGER_PAGE_SIZE));
+  const clampedPage = Math.min(page, pageCount - 1);
+  const pageStart = clampedPage * LEDGER_PAGE_SIZE;
+  const paged = filtered.slice(pageStart, pageStart + LEDGER_PAGE_SIZE);
 
   function handleExport() {
     const text = run.continuityLedger.map((e) => `[${ledgerBadgeLabel(e.sourcedFrom)}] ${e.fact} (from ${e.unit})`).join("\n");
@@ -1593,10 +1783,10 @@ function ContinuityLedgerView({ run }: { run: PlanningRun }) {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
+    <div className="mx-auto max-w-4xl space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="font-display text-lg text-ink">Continuity Ledger</h2>
+          <h2 className="font-display text-xl text-ink">Continuity Ledger</h2>
           <p className="text-xs text-ink-muted">Every established fact across this book&apos;s plan. Use this to keep everything consistent.</p>
         </div>
         <button
@@ -1613,7 +1803,10 @@ function ContinuityLedgerView({ run }: { run: PlanningRun }) {
         <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-ink-faint" />
         <input
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setPage(0);
+          }}
           placeholder="Search facts…"
           className="w-full rounded-xl border border-line bg-transparent py-2 pl-8 pr-3 text-sm text-ink outline-none focus:border-line-strong"
         />
@@ -1623,32 +1816,68 @@ function ContinuityLedgerView({ run }: { run: PlanningRun }) {
       ) : filtered.length === 0 ? (
         <p className="text-sm text-ink-muted">No facts match &quot;{query}&quot;.</p>
       ) : (
-        <div className="card divide-y divide-line">
-          {filtered.map((entry, i) => (
-            <LedgerRow key={i} entry={entry} />
-          ))}
+        <div className="card overflow-hidden">
+          <div className="scroll-slim overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-line text-[0.65rem] uppercase tracking-wide text-ink-faint">
+                  <th className="w-10 px-4 py-2.5 font-medium">#</th>
+                  <th className="px-4 py-2.5 font-medium">Fact</th>
+                  <th className="w-32 px-4 py-2.5 font-medium">Status</th>
+                  <th className="w-48 px-4 py-2.5 font-medium">Introduced In</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paged.map((entry, i) => (
+                  <LedgerRow key={pageStart + i} index={pageStart + i + 1} entry={entry} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {pageCount > 1 && (
+            <div className="flex items-center justify-between border-t border-line px-4 py-3 text-xs text-ink-faint">
+              <span>
+                {pageStart + 1}-{Math.min(pageStart + LEDGER_PAGE_SIZE, filtered.length)} of {filtered.length}
+              </span>
+              <div className="flex items-center gap-1">
+                {Array.from({ length: pageCount }, (_, i) => i).map((i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setPage(i)}
+                    className={`grid size-7 place-items-center rounded-lg transition-colors ${
+                      i === clampedPage ? "bg-gold text-gold-contrast" : "text-ink-muted hover:bg-surface-2 hover:text-ink"
+                    }`}
+                  >
+                    {i + 1}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function LedgerRow({ entry }: { entry: ContinuityLedgerEntry }) {
+function LedgerRow({ index, entry }: { index: number; entry: ContinuityLedgerEntry }) {
   const label = ledgerBadgeLabel(entry.sourcedFrom);
   return (
-    <div className="flex items-start gap-3 p-4">
-      <span
-        className={`mt-0.5 shrink-0 rounded-full border px-2 py-0.5 text-[0.65rem] font-medium ${
-          entry.sourcedFrom === "manuscript" ? "border-success/40 bg-success/10 text-success" : "border-info/40 bg-info/10 text-info"
-        }`}
-      >
-        {label}
-      </span>
-      <div className="min-w-0">
-        <p className="text-sm text-ink">{entry.fact}</p>
-        <p className="mt-0.5 text-xs text-ink-faint">from {entry.unit}</p>
-      </div>
-    </div>
+    <tr className="border-b border-line last:border-0">
+      <td className="px-4 py-3 align-top text-xs text-ink-faint">{index}</td>
+      <td className="px-4 py-3 align-top text-ink">{entry.fact}</td>
+      <td className="px-4 py-3 align-top">
+        <span
+          className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[0.65rem] font-medium ${
+            entry.sourcedFrom === "manuscript" ? "border-success/40 bg-success/10 text-success" : "border-info/40 bg-info/10 text-info"
+          }`}
+        >
+          {label}
+        </span>
+      </td>
+      <td className="px-4 py-3 align-top text-xs text-ink-faint">{entry.unit}</td>
+    </tr>
   );
 }
 
@@ -1700,32 +1929,36 @@ function EntityReviewView({ run }: { run: PlanningRun }) {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
-      <div>
-        <h2 className="font-display text-lg text-ink">Entity Review</h2>
-        <p className="text-xs text-ink-muted">Scan every approved Part&apos;s Beats so far for new characters and world elements worth adding to your Codex.</p>
+    <div className="mx-auto max-w-4xl space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="font-display text-xl text-ink">Entity Review</h2>
+          <p className="text-xs text-ink-muted">We scan everything approved so far and surface potential entities worth adding to your Codex.</p>
+        </div>
+        <button
+          type="button"
+          onClick={handleScan}
+          disabled={actionStatus === "loading"}
+          className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-line px-4 py-2 text-sm font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
+        >
+          {actionStatus === "loading" && <Loader2 className="size-4 animate-spin" />}
+          Scan for New Entities
+        </button>
       </div>
       {actionError && <p className="text-xs text-danger">{actionError}</p>}
-      <button
-        type="button"
-        onClick={handleScan}
-        disabled={actionStatus === "loading"}
-        className="inline-flex items-center gap-2 rounded-xl border border-line px-4 py-2 text-sm font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
-      >
-        {actionStatus === "loading" && <Loader2 className="size-4 animate-spin" />}
-        Scan for New Entities
-      </button>
 
       {candidates.length === 0 ? (
         <p className="text-sm text-ink-muted">No candidates pending review. Run a scan to look for new characters or world elements.</p>
       ) : (
         <>
           {entryTypes.length > 1 && (
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex gap-5 border-b border-line">
               <button
                 type="button"
                 onClick={() => setFilter("all")}
-                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${filter === "all" ? "bg-gold text-gold-contrast" : "bg-surface-2 text-ink-muted hover:text-ink"}`}
+                className={`border-b-2 pb-2.5 text-sm font-medium transition-colors ${
+                  filter === "all" ? "border-gold text-gold" : "border-transparent text-ink-muted hover:text-ink"
+                }`}
               >
                 All ({candidates.length})
               </button>
@@ -1734,38 +1967,59 @@ function EntityReviewView({ run }: { run: PlanningRun }) {
                   key={t}
                   type="button"
                   onClick={() => setFilter(t)}
-                  className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition-colors ${filter === t ? "bg-gold text-gold-contrast" : "bg-surface-2 text-ink-muted hover:text-ink"}`}
+                  className={`border-b-2 pb-2.5 text-sm font-medium capitalize transition-colors ${
+                    filter === t ? "border-gold text-gold" : "border-transparent text-ink-muted hover:text-ink"
+                  }`}
                 >
                   {t} ({candidates.filter((c) => (c.entryType ?? c.type) === t).length})
                 </button>
               ))}
             </div>
           )}
-          <div className="card divide-y divide-line">
-            {visible.map(({ c, i }) => (
-              <EntityCandidateRow
-                key={i}
-                candidate={c}
-                checked={selected.has(i)}
-                onToggle={() =>
-                  setSelected((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(i)) next.delete(i);
-                    else next.add(i);
-                    return next;
-                  })
-                }
-              />
-            ))}
+          <div className="card overflow-hidden">
+            <div className="scroll-slim overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-line text-[0.65rem] uppercase tracking-wide text-ink-faint">
+                    <th className="w-10 px-4 py-2.5 font-medium" />
+                    <th className="px-4 py-2.5 font-medium">Entity</th>
+                    <th className="w-32 px-4 py-2.5 font-medium">Type</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.map(({ c, i }) => (
+                    <EntityCandidateRow
+                      key={i}
+                      candidate={c}
+                      checked={selected.has(i)}
+                      onToggle={() =>
+                        setSelected((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(i)) next.delete(i);
+                          else next.add(i);
+                          return next;
+                        })
+                      }
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
           <div className="flex items-center justify-between">
-            <p className="text-xs text-ink-faint">{selected.size} selected</p>
+            <div className="flex items-center gap-3 text-xs text-ink-faint">
+              <span>{selected.size} selected</span>
+              <button type="button" onClick={() => setSelected(new Set(candidates.map((_, i) => i)))} className="text-gold hover:opacity-80">
+                Select All
+              </button>
+            </div>
             <div className="flex items-center gap-3">
               <button
                 type="button"
                 onClick={() => handleConfirm([])}
                 disabled={actionStatus === "loading"}
                 className="rounded-xl border border-line px-4 py-2 text-sm font-medium text-ink transition-colors hover:border-danger hover:text-danger disabled:opacity-50"
+                title="Confirming writes only checked candidates — there's no separate per-item reject call, so this discards the whole batch instead."
               >
                 Reject All
               </button>
@@ -1797,16 +2051,18 @@ function EntityCandidateRow({
   onToggle: () => void;
 }) {
   return (
-    <label className="flex cursor-pointer items-start gap-3 p-4">
-      <input type="checkbox" checked={checked} onChange={onToggle} className="mt-1 size-4 accent-gold" />
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <p className="text-sm font-medium text-ink">{candidate.name}</p>
-          <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[0.6rem] capitalize text-ink-muted">{candidate.entryType ?? candidate.type}</span>
-        </div>
+    <tr className="cursor-pointer border-b border-line last:border-0 hover:bg-surface-2" onClick={onToggle}>
+      <td className="px-4 py-3 align-top" onClick={(e) => e.stopPropagation()}>
+        <input type="checkbox" checked={checked} onChange={onToggle} className="size-4 accent-gold" />
+      </td>
+      <td className="px-4 py-3 align-top">
+        <p className="text-sm font-medium text-ink">{candidate.name}</p>
         {candidate.description && <p className="mt-0.5 text-xs text-ink-muted">{candidate.description}</p>}
-      </div>
-    </label>
+      </td>
+      <td className="px-4 py-3 align-top">
+        <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[0.65rem] capitalize text-ink-muted">{candidate.entryType ?? candidate.type}</span>
+      </td>
+    </tr>
   );
 }
 
