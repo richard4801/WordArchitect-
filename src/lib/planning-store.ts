@@ -827,7 +827,19 @@ let platformNotes: PlatformCraftNotes | null = null;
 let platformNotesStatus: LoadStatus = "idle";
 let platformNotesError: string | null = null;
 const platformNotesListeners = new Set<() => void>();
+// TEMPORARY diagnostic logging — investigating a production report where
+// GET genuinely returns draftStatus "ready" with real draftContent (backend
+// confirmed via curl) but the editor still renders empty. Every static
+// check (parse, emit, useSyncExternalStore wiring, cache write sites) reads
+// correct on inspection, so this pins the exact boundary — parse, emit, or
+// render — where the value is actually lost, directly from production
+// console output. Remove once resolved.
 function emitPlatformNotes() {
+  console.log("[pcn-debug] emit", {
+    draftStatus: platformNotes?.draftStatus,
+    draftContentLength: platformNotes?.draftContent?.length ?? null,
+    listenerCount: platformNotesListeners.size,
+  });
   for (const l of platformNotesListeners) l();
 }
 function subscribePlatformNotes(l: () => void) {
@@ -841,7 +853,17 @@ async function loadPlatformCraftNotes(bookId: string): Promise<void> {
   emitPlatformNotes();
   try {
     const res = await apiFetch<PlatformCraftNotesResponse>(`/platform-craft-notes?bookId=${encodeURIComponent(bookId)}`);
+    // TEMPORARY — see emitPlatformNotes comment above.
+    console.log("[pcn-debug] raw GET response", {
+      draft_status: res.notes?.draft_status,
+      draft_content_length: res.notes?.draft_content?.length ?? null,
+      keys: res.notes ? Object.keys(res.notes) : null,
+    });
     platformNotes = mapPlatformCraftNotesRow(res.notes);
+    console.log("[pcn-debug] parsed", {
+      draftStatus: platformNotes.draftStatus,
+      draftContentLength: platformNotes.draftContent?.length ?? null,
+    });
     platformNotesStatus = "loaded";
   } catch (err) {
     platformNotesStatus = "error";
