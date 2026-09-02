@@ -21,6 +21,10 @@ const FULL_BLEED_WORKSPACES = [
   // is a different path than "/projects/[id]/assistant" and the generic
   // `pathname.startsWith(item.href)` check below can't bridge that on its own.
   { pattern: /^\/projects\/[^/]+\/assistant/, href: "/assistant" },
+  // Covers the book-scoped Main/Contract chooser AND both pipeline
+  // sections themselves (/projects/[id]/planning/main|contract) — same
+  // "different path than the top-level nav href" bridging as above.
+  { pattern: /^\/projects\/[^/]+\/planning/, href: "/planning" },
 ];
 
 /**

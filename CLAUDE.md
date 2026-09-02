@@ -3136,6 +3136,95 @@ the job. Re-ran the full Contract Pipeline and Act/Part/Beats Playwright
 passes afterward to confirm no regression elsewhere. Zero console errors
 across the full pass.
 
+**Navigation restructure: the two pipelines are now two separate
+sections, each with its own menu, plus a real global entry point.** User
+report: both pipelines shared one mixed workspace and one sidebar menu
+(Pipeline Map/Run List/Continuity Ledger/Entity Review/Platform Craft
+Notes/Settings) regardless of which type of run was actually open —
+Platform Craft Notes showed even for a Main-pipeline run, where it means
+nothing. There was also no way into the Planning Engine without already
+being inside a project; the only entry point was the "Planning" tab on a
+project's own page.
+
+- **`PlanningWorkspace(bookId, pipelineType)`** (`PlanningWorkspace.tsx`,
+  new file) is the old mixed workspace's entire component tree, now
+  parameterized by `pipelineType` instead of driving everything off
+  whichever run happened to be `?run=`-active. `navItemsFor(pipelineType)`
+  builds the sidebar menu per section — Platform Craft Notes is appended
+  only for `"contract"`, the one item that isn't shared. `useBookPlanningRuns(bookId)`
+  is filtered to `r.pipelineType === pipelineType` before anything else
+  reads it, so a Main section's Run List can never show a Contract run or
+  vice versa — each section's Run List header reads "Main Pipeline Runs"
+  / "Contract Pipeline Runs" accordingly, and the old dual "New Full Run"/
+  "New Contract Run" buttons collapsed into a single "New Run" (the type
+  is already fixed by which section you're in). `StartPlanningCard` lost
+  its inline Main/Contract picker for the same reason — the type is fixed
+  by the route now, so it just shows that one type's description and a
+  single Start Planning button.
+- **Two real routes per book**: `/projects/[id]/planning/main` and
+  `/projects/[id]/planning/contract` (new `main/page.tsx` /
+  `contract/page.tsx`, both thin wrappers rendering `<PlanningWorkspace
+  bookId={id} pipelineType="full"|"contract" />`). `/projects/[id]/planning`
+  itself is no longer the workspace — it's now just the Main/Contract fork
+  (`PlanningChooserPage`, rewritten), book already known from the URL so
+  it skips straight to the two-card choice. Both pages share one
+  `PipelineTypeChooser` component (`src/components/pipeline-type-chooser.tsx`)
+  so the fork always looks and reads identically wherever it appears.
+- **A run created by Promote-to-Full or Branch can genuinely belong to
+  the OTHER section** — e.g. promoting a Contract run produces a `"full"`
+  run, which has no business in the Contract section's own menu.
+  `PlanningWorkspaceInner`'s `goToRun(run)` checks `run.pipelineType`
+  against the current section: same type just updates `?run=` in place
+  (`router.replace`, unchanged behavior); a different type does a real
+  cross-section navigation (`router.push` to the other section's own
+  route) instead of trying to render a foreign-type run in the wrong
+  workspace. Threaded through as the one `onOpenRun` callback both
+  `RunListView` (open/resume, and its own Promote/Branch handlers) and
+  `PipelineView` (the Pipeline Map's own Promote-to-Full button) call —
+  neither has to know or care whether the run it just got back is
+  same-section or not.
+- **New global entry point**: `/planning` (new `src/app/(app)/planning/page.tsx`)
+  — a "Planning" item now exists in the top-level sidebar (`nav.ts`) for
+  the first time; there was previously no way into the Planning Engine
+  without already being inside a project. Two steps on one page: pick
+  Main or Contract (the same shared `PipelineTypeChooser`), then pick
+  which book from `useProjects()` — selecting one navigates straight into
+  that book's own section. `sidebar.tsx`'s `FULL_BLEED_WORKSPACES` map
+  gained a `/projects/[^/]+/planning` → `/planning` entry (mirroring the
+  existing Writing/Outliner/Characters/etc. entries) so being anywhere
+  under a project's planning routes correctly lights up the top-level
+  "Planning" nav item instead of "Projects".
+- **"Switch Pipeline"** — a new link in each section's own sidebar,
+  alongside the existing "Back to Project", that returns to the
+  book-scoped chooser (`/projects/[id]/planning`) rather than requiring a
+  full back-out through the project page.
+
+**Verified working** (mock backend extended with no new endpoints — this
+is a pure frontend routing/IA change over the existing `GET /planning/runs?bookId=`,
+filtered client-side): the top-level sidebar's "Planning" item navigates
+to `/planning` and is confirmed active (`aria-current`) while anywhere
+under a project's planning routes; `/planning` shows the Main/Contract
+choice before any book is picked, then a real book list after; picking a
+book lands directly in that book's own section; the book-scoped chooser
+at `/projects/[id]/planning` shows the same fork with no book list (book
+already known); Contract section's own sidebar menu includes Platform
+Craft Notes, Main section's does not; "Switch Pipeline" returns to the
+book-scoped chooser; Start Planning shows no type picker in either
+section, just that section's own fixed type and a single button; the
+full Contract Pipeline flow (intake → Stage 1 → Codex Documentation →
+Hook Chapters → done) still works end-to-end inside `/planning/contract`;
+Promote-to-Full genuinely navigates the browser from `/planning/contract`
+to `/planning/main` with the new run open, while Contract's own Run List
+still shows the original (now-promoted) contract run with its own
+Promote shortcut still offered, and Main's Run List shows only the new
+run, correctly scoped. Re-ran the full pre-existing Act/Part/Beats
+Playwright pass and the Platform Craft Notes async-job pass afterward to
+confirm zero regression to either. Zero console errors across the full
+pass (one pre-existing, unrelated hydration-mismatch warning from the
+global `ThemeToggle` component was observed on ordinary page loads
+throughout this session's testing — present before this change, not
+caused by it, not fixed here).
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance
@@ -3524,7 +3613,9 @@ export interface AiProvider {
 /projects/[id]/settings                      stub — <ComingSoon>, no data model
 /projects/[id]/chapters                      ManuscriptPart[] (live) + ChapterBody (live) + CommentThread[] (mock) (§4.5/§5) + BannedTermRow[] (live, §4.6) + ChatSessionRow[]/ChatMessage[] (live, AI tab, §4.7) + OutlineBeat[] (live read-only, Outline tab, §4.8)
 /projects/[id]/outlines                      OutlinePart[]/OutlineChapter[]/OutlineBeat[] (live, §4.8)
-/projects/[id]/planning                      AgentPrompt[]/PlanningRun (live, §4.10) — full-bleed Planning Engine workspace (Pipeline Map, Run List, Continuity Ledger, Entity Review, Settings/Prompt Editor)
+/projects/[id]/planning                      book-scoped Main/Contract chooser (PipelineTypeChooser) — no workspace of its own, just picks which section below
+/projects/[id]/planning/main                 AgentPrompt[]/PlanningRun (live, §4.10, pipelineType "full") — full-bleed Main Pipeline workspace (Pipeline Map, Run List, Continuity Ledger, Entity Review, Settings/Prompt Editor)
+/projects/[id]/planning/contract             AgentPrompt[]/PlanningRun (live, §4.10, pipelineType "contract") — full-bleed Contract Pipeline workspace, same menu as Main plus Platform Craft Notes
 /projects/[id]/assistant                     ChatSessionRow[]/ChatMessage[] (live, §4.7) — full-page AI Assistant workspace
 /projects/[id]/characters                    Character[] (live) + selected Character detail, Edit/Delete via options menu
 /projects/[id]/characters/all                Character[] (live), grid+pagination, Edit/Delete via options menu
@@ -3533,6 +3624,7 @@ export interface AiProvider {
 /projects/[id]/world                         WorldCategoryMeta[] (live) + WorldEntry[] (live read, no in-app create — §3.5/§4.3) + WORLD_TIMELINE/WORLD_OVERVIEW/PINNED_WORLD_ITEMS (mock)
 /projects/[id]/world/new-category            submits NewCategoryInput
 /projects/[id]/notes                         Note[] (live)
+/planning                                    global entry point — Main/Contract chooser, then a real book picker (useProjects()) → navigates into that book's /projects/[id]/planning/main|contract
 /writing /outlines /characters /worldbuilding /notes /assistant   redirect-only pages → most-recently-active project's real workspace, no data of their own
 /goals /analytics /settings /timeline /templates /help   stubs — <ComingSoon>, no data model
 /api/ai                                      POST — see §6

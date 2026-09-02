@@ -12,6 +12,7 @@ import {
   Settings,
   Sparkles,
   User,
+  Workflow,
 } from "lucide-react";
 
 export type NavItem = {
@@ -26,6 +27,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Projects", href: "/projects", icon: Folder },
   { label: "Writing", href: "/writing", icon: Pencil },
   { label: "Outliner", href: "/outlines", icon: List },
+  { label: "Planning", href: "/planning", icon: Workflow },
   { label: "Characters", href: "/characters", icon: User },
   { label: "Worldbuilding", href: "/worldbuilding", icon: Globe },
   { label: "Timeline", href: "/timeline", icon: Clock },
