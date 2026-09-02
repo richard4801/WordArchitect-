@@ -2107,16 +2107,6 @@ function PlatformCraftNotesView({ bookId }: { bookId: string }) {
   const [researchConflict, setResearchConflict] = useState(false);
 
   const draftStatus = notes?.draftStatus ?? "idle";
-  // TEMPORARY — see the matching debug logs in planning-store.ts. Logs on
-  // every render of this view so the render-time value can be compared
-  // against the parse-time/emit-time values logged there. Remove once
-  // resolved.
-  console.log("[pcn-debug] render", {
-    bookId,
-    draftStatus,
-    draftContentLength: notes?.draftContent?.length ?? null,
-    contentLength: notes?.content?.length ?? null,
-  });
   // Cheap/free row read — polling every ~7s while a job is running is
   // harmless, and picks up "ready"/"failed" whenever the backend finishes,
   // independent of whether this is the same tab that started the job.

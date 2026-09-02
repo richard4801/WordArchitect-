@@ -800,26 +800,42 @@ export type PlatformCraftNotes = {
   draftError: string | null;
   draftUpdatedAt: string | null;
 };
+// Unlike every other domain's response shape in this app (books.ts,
+// codex.ts, notes.ts all return the raw snake_case Postgres row untouched),
+// this route's service layer (toPlatformCraftNotes in the backend's
+// platformCraftNotes.ts) converts the DB row into the backend's own
+// camelCase `PlatformCraftNotes` domain type BEFORE the route ships it —
+// `res.json({ notes: await getPlatformCraftNotes(bookId) })` sends that
+// already-camelCased object directly, not the raw row. Confirmed by
+// reading that file directly after a production report (GET consistently
+// returning draftStatus "idle"/draftContent null despite the backend's own
+// internal conflict-check independently confirming a real "ready" row
+// exists) turned out to be this exact mismatch — every field this store
+// was reading under a snake_case name was silently `undefined` the whole
+// time. So, uniquely for this one domain, the response really is
+// camelCase — don't "fix" this back to snake_case if some other part of
+// this backend later gets read and looks inconsistent; this route is the
+// actual exception, confirmed against its live source.
 type PlatformCraftNotesRow = {
-  book_id: string;
+  bookId: string;
   content: string;
-  updated_at: string | null;
-  draft_status?: PlatformResearchStatus;
-  draft_content?: string | null;
-  draft_error?: string | null;
-  draft_updated_at?: string | null;
+  updatedAt: string | null;
+  draftStatus?: PlatformResearchStatus;
+  draftContent?: string | null;
+  draftError?: string | null;
+  draftUpdatedAt?: string | null;
 };
 type PlatformCraftNotesResponse = { notes: PlatformCraftNotesRow };
 
 function mapPlatformCraftNotesRow(row: PlatformCraftNotesRow): PlatformCraftNotes {
   return {
-    bookId: row.book_id,
+    bookId: row.bookId,
     content: row.content,
-    updatedAt: row.updated_at,
-    draftStatus: row.draft_status ?? "idle",
-    draftContent: row.draft_content ?? null,
-    draftError: row.draft_error ?? null,
-    draftUpdatedAt: row.draft_updated_at ?? null,
+    updatedAt: row.updatedAt,
+    draftStatus: row.draftStatus ?? "idle",
+    draftContent: row.draftContent ?? null,
+    draftError: row.draftError ?? null,
+    draftUpdatedAt: row.draftUpdatedAt ?? null,
   };
 }
 
@@ -827,19 +843,7 @@ let platformNotes: PlatformCraftNotes | null = null;
 let platformNotesStatus: LoadStatus = "idle";
 let platformNotesError: string | null = null;
 const platformNotesListeners = new Set<() => void>();
-// TEMPORARY diagnostic logging — investigating a production report where
-// GET genuinely returns draftStatus "ready" with real draftContent (backend
-// confirmed via curl) but the editor still renders empty. Every static
-// check (parse, emit, useSyncExternalStore wiring, cache write sites) reads
-// correct on inspection, so this pins the exact boundary — parse, emit, or
-// render — where the value is actually lost, directly from production
-// console output. Remove once resolved.
 function emitPlatformNotes() {
-  console.log("[pcn-debug] emit", {
-    draftStatus: platformNotes?.draftStatus,
-    draftContentLength: platformNotes?.draftContent?.length ?? null,
-    listenerCount: platformNotesListeners.size,
-  });
   for (const l of platformNotesListeners) l();
 }
 function subscribePlatformNotes(l: () => void) {
@@ -853,17 +857,7 @@ async function loadPlatformCraftNotes(bookId: string): Promise<void> {
   emitPlatformNotes();
   try {
     const res = await apiFetch<PlatformCraftNotesResponse>(`/platform-craft-notes?bookId=${encodeURIComponent(bookId)}`);
-    // TEMPORARY — see emitPlatformNotes comment above.
-    console.log("[pcn-debug] raw GET response", {
-      draft_status: res.notes?.draft_status,
-      draft_content_length: res.notes?.draft_content?.length ?? null,
-      keys: res.notes ? Object.keys(res.notes) : null,
-    });
     platformNotes = mapPlatformCraftNotesRow(res.notes);
-    console.log("[pcn-debug] parsed", {
-      draftStatus: platformNotes.draftStatus,
-      draftContentLength: platformNotes.draftContent?.length ?? null,
-    });
     platformNotesStatus = "loaded";
   } catch (err) {
     platformNotesStatus = "error";

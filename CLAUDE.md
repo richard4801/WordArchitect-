@@ -3414,6 +3414,89 @@ Zero console errors beyond the browser's own unsuppressable
 response itself (not a JS exception — every browser logs this for any
 non-2xx fetch regardless of how the app handles it).
 
+**Live production bug, the real one underneath all of the above: this
+route's response is camelCase, not snake_case like every other domain in
+this app.** Follow-up report on the same book: even after the 409-conflict
+fix shipped, a completely bare hard reload — no click, no POST, backend
+independently confirmed via `curl` to hold a real `"ready"` draft with
+real `draftContent` at that exact moment — still rendered the plain empty
+idle state. Every static check on this store (parse, emit,
+`useSyncExternalStore` wiring, all four cache-write sites) read correct on
+inspection, and a faithful local reproduction (a real `"ready"` row seeded
+server-side with zero browser involvement, then a fresh navigation)
+rendered correctly end to end — so the bug wasn't reproducible from first
+principles or from this repo's own mock alone. Added temporary
+`[pcn-debug]` console logging at the GET response, the parsed object, the
+emit, and the render read, specifically so the *next* real reproduction
+would produce actual console output instead of another description.
+
+The very first production console capture settled it: every
+`raw GET response` log showed `draft_status: undefined` — but `keys:
+Array(7)`. If the field were genuinely missing, `Object.keys()` would
+report 6 keys, not 7; if the value were genuinely present under that name,
+it wouldn't log `undefined`. Present-but-wrong-name means one thing: the
+response isn't using the key names this store was reading. Re-reading the
+real backend's `src/services/platformCraftNotes.ts` (already cloned
+earlier in this investigation) with that specific question found it
+immediately: `toPlatformCraftNotes()` converts the raw snake_case
+`platform_craft_notes` DB row into the backend's own **camelCase**
+`PlatformCraftNotes` domain type (`bookId`, `draftStatus`, `draftContent`,
+...), and the route ships that already-camelCased object directly —
+`res.json({ notes: await getPlatformCraftNotes(bookId) })` — never
+converting back to snake_case. This is genuinely different from every
+other domain integrated in this app: `books.ts`/`codex.ts`/`notes.ts` all
+query and return the raw Postgres row untouched, which is the entire
+reason this codebase's own "read the route source, don't trust field
+names" discipline (§3.5, established from the very first Projects
+integration bug) exists — and this route is the one place so far where
+that discipline would have caught something the summary/convention alone
+couldn't. `planning-store.ts`'s `PlatformCraftNotesRow` type and
+`mapPlatformCraftNotesRow()` were written assuming the same snake_case
+convention as everywhere else, so every field access (`row.draft_status`,
+`row.draft_content`, ...) was silently reading a key that was never
+there — always falling back to its `?? "idle"` / `?? null` default,
+regardless of what the backend actually had. This explains every
+symptom precisely: the POST guard's own internal `existing` check reads
+the DB row directly and correctly saw `"ready"`, while GET's *response
+body* used field names this store never looked for — a "disagreement"
+that was never about caching, timing, or a race at all, just two
+different reads of the same correct data being interpreted through one
+wrong key-name assumption.
+
+Fixed by changing `PlatformCraftNotesRow`'s type and
+`mapPlatformCraftNotesRow()` to read the real camelCase keys
+(`row.bookId`, `row.draftStatus`, `row.draftContent`, `row.draftError`,
+`row.draftUpdatedAt`, `row.updatedAt`) instead of snake_case — this one
+function is shared by all four endpoints (GET, PATCH, POST research, POST
+discard), so fixing it here fixes every call site at once. The temporary
+`[pcn-debug]` logging was removed once the root cause was confirmed and
+fixed, rather than left in.
+
+**A real gap this exposed in this session's own verification harness:**
+the local mock server had modeled this domain as snake_case in its
+responses this entire time, matching every other domain's convention but
+never actually verified against the real route's live behavior — meaning
+every "verified working" Playwright pass earlier in this Platform Craft
+Notes saga (the stuck-loading fix, the Edit/Preview toggle, the
+409/`force` guard) was self-consistently testing against a mock that had
+the *same* wrong assumption the frontend code did, so it could never have
+caught this. Fixed the mock to match: internal storage stays snake_case
+(matches a DB row, consistent with every other mocked table), but a new
+`toPlatformCraftNotesResponse()` helper — mirroring the real backend's
+`toPlatformCraftNotes()` exactly — is now applied at all four response
+sites, so the mock's wire format now genuinely matches production instead
+of just being internally consistent with its own wrong assumption.
+
+**Verified working**: re-ran the full pre-existing Platform Craft Notes
+Playwright suite (state machine, Edit/Preview toggle, the 409/`force`
+conflict pass, the away-and-back staleness pass) against the
+now-camelCase-correct mock — every existing assertion still passes
+unchanged, confirming the fix and proving the corrected mock is now
+actually exercising the real contract rather than a self-consistent wrong
+one. Re-ran the full Contract Pipeline and Act/Part/Beats regression
+suites to confirm zero collateral damage elsewhere. `tsc --noEmit`,
+`eslint`, and `npm run build` all clean.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance
