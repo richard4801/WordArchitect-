@@ -3497,6 +3497,62 @@ one. Re-ran the full Contract Pipeline and Act/Part/Beats regression
 suites to confirm zero collateral damage elsewhere. `tsc --noEmit`,
 `eslint`, and `npm run build` all clean.
 
+**Live production bug: the Unit Review screen's short Artifact column
+left a large dead-empty gap next to a long Critics rail, forcing far more
+scrolling than the actual content needed.** User report: on the
+Generate/Critique/Arbitrate review screen ("the Material and critique"),
+too much empty space before reaching the bottom of the page. Measured
+directly (Playwright, a real run driven through to `awaiting_user_review`
+with 3 real critic reviews + a verdict): the page's actual scroll
+container was 1922px tall against a 900px viewport (2.14x) — real content,
+not a phantom bug — but the "Artifact" heading sat at the top next to a
+"Critics" column whose reviews and Arbitrator Verdict together ran to
+~1900px, while the Artifact card itself measured only 228px. Screenshot
+confirmed a large, genuinely empty gap under the short Artifact card for
+the rest of that scroll.
+
+Root cause: `ReviewGate`'s two-column layout is `grid
+lg:grid-cols-[1fr_320px] lg:items-start` — a single-row CSS Grid, so the
+row's height auto-sizes to its *tallest* item (the Critics rail)
+regardless of `items-start`, which only controls how the *shorter* item
+is positioned within that row, not the row's own height. The Artifact
+card, top-aligned in a row nearly 1700px taller than its own content, left
+that difference as literal empty grid-cell space. Not fixable by capping
+the Critics column's own height instead — already tried and reverted (see
+`JsonBlock`'s own comment): a nested scrollbar there previously read as
+truncated content, not scrollable, and produced its own bug report.
+
+Fixed by making the Artifact column `position: sticky` so it stays
+filling that space as the reader scrolls through Critics, instead of
+leaving it blank. A real, non-obvious CSS bug surfaced while doing this:
+putting `lg:sticky lg:top-6` directly on the Artifact's own `.card` div
+did **not** work — `lg:top-6` took effect (confirmed via computed style:
+`top: 24px`) but `position` stayed `relative`. Root cause: `.card`
+(`globals.css`) sets an unconditional `position: relative` *inside the
+same `@layer utilities` block Tailwind's own generated utility classes
+use*, positioned later in that merged layer than `lg:sticky`'s generated
+rule — so for any element carrying both classes, `.card`'s unconditional
+rule silently wins the cascade at every viewport width, `lg:` breakpoint
+active or not, with no error or warning of any kind. Fixed by keeping
+`lg:sticky lg:top-6` off the `.card` element entirely — a plain wrapping
+`<div>` around the `.card` div carries the sticky positioning instead,
+sidestepping the collision rather than touching `.card`'s own shared,
+load-bearing CSS (which countless other cards across the app depend on
+keeping exactly as-is).
+
+**Verified working** (Playwright, a real run driven to the exact
+Generate→Critique→Arbitrate review state via direct API calls, a
+1440×900 viewport): confirmed via computed style that the wrapper (not
+`.card`) actually resolves to `position: sticky`; scrolled the review
+container by 800px and confirmed the Artifact card's on-screen position
+was unchanged (top/bottom identical before and after, not just
+coincidentally still in view) while the Critics content behind it visibly
+scrolled past — screenshots before and after confirm the Artifact stays
+pinned near the top instead of leaving a blank gap. Re-ran the full
+Act/Part/Beats and Contract Pipeline Playwright suites (both exercise
+this same `ReviewGate` component) plus the Platform Craft Notes suite —
+zero regressions. `tsc --noEmit`, `eslint`, and `npm run build` all clean.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance

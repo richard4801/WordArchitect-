@@ -1400,10 +1400,36 @@ function ReviewGate({
   return (
     <div className="space-y-4">
       <div className="grid gap-4 lg:grid-cols-[1fr_320px] lg:items-start">
-        <div className="card p-5">
-          <h3 className="label-caps text-[0.65rem] text-ink-faint">Artifact</h3>
-          <div className="scroll-slim mt-3 max-h-[32rem] overflow-y-auto text-sm text-ink">
-            {unit === "codex_documentation" ? <CodexEntryCards artifact={artifact} /> : <ArtifactContent artifact={artifact} />}
+        {/*
+          A CSS Grid row auto-sizes to its tallest item regardless of
+          align-items, so a short Artifact next to a long Critics rail
+          (real critiques with several issues each can run well past the
+          viewport) left a large genuinely-empty gap under the Artifact
+          card while the page kept scrolling through Critics beside it —
+          the actual "too much space to scroll through" production report.
+          Not fixable by capping the Critics column's own height instead
+          (already tried and reverted — see JsonBlock's comment: a nested
+          scrollbar there read as truncated content, not scrollable).
+          Sticky keeps the Artifact filling that space as the reader
+          scrolls, rather than leaving it blank; harmless on narrower
+          layouts where the columns stack (no sticky ancestor scroll
+          context to speak of there anyway).
+
+          The sticky/top utilities live on a plain wrapper, not on the
+          `.card` div itself — `.card` (globals.css) sets an unconditional
+          `position: relative` inside the same `@layer utilities` Tailwind's
+          own generated classes use, later in the merged layer, so it
+          silently wins the cascade over `lg:sticky` on the same element
+          (confirmed live: `lg:top-6` took effect, `lg:sticky` didn't).
+          Keeping them on a separate ancestor sidesteps the collision
+          entirely instead of touching `.card`'s shared, load-bearing CSS.
+        */}
+        <div className="lg:sticky lg:top-6">
+          <div className="card p-5">
+            <h3 className="label-caps text-[0.65rem] text-ink-faint">Artifact</h3>
+            <div className="scroll-slim mt-3 max-h-[32rem] overflow-y-auto text-sm text-ink">
+              {unit === "codex_documentation" ? <CodexEntryCards artifact={artifact} /> : <ArtifactContent artifact={artifact} />}
+            </div>
           </div>
         </div>
 
