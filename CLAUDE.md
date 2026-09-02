@@ -3225,6 +3225,60 @@ global `ThemeToggle` component was observed on ordinary page loads
 throughout this session's testing — present before this change, not
 caused by it, not fixed here).
 
+**Live bug: Platform Craft Notes got stuck showing "Researching…"
+forever if you navigated away from the panel while a research job was
+running and came back after it had already finished server-side.** User
+report, independently confirmed against the real backend that the job
+genuinely did resolve (`draftStatus: "ready"` with real `draftContent`)
+while the UI stayed stuck. Root cause was in `usePlatformCraftNotes`
+(`planning-store.ts`): its mount effect only fetched fresh data the
+*first* time a given `bookId` was seen —
+`if (bookId && bookId !== platformNotesBookId) void loadPlatformCraftNotes(bookId)`
+— guarded by a module-level `platformNotesBookId` singleton that, once
+set, never let a later mount for the *same* book trigger another fetch.
+Combined with `usePlatformCraftNotesPolling`'s interval being torn down
+whenever `PlatformCraftNotesView` unmounts (switching to another nav
+item inside the same Planning workspace unmounts it, since only one view
+renders at a time), the sequence was: start research → navigate away
+(interval dies) → job finishes server-side with nobody polling to notice
+→ navigate back → remount skips the fetch (same `bookId` already
+"seen") → renders off the stale cached `draftStatus: "running"` → the
+*newly*-started polling interval (correctly restarted, since stale
+`draftStatus` was still `"running"`) would still eventually catch up
+within one more 7s tick, but that's not what "always do a fresh GET on
+mount" requires, and in practice reports came in as "stuck."
+
+Fixed by removing the guard entirely: `usePlatformCraftNotes`'s effect
+now unconditionally re-fetches on every mount (`if (bookId) void
+loadPlatformCraftNotes(bookId)`), so every time the panel becomes
+visible — including navigating away and back within the same
+session — the very first thing that happens is a real `GET
+/platform-craft-notes`, not a decision based on whether this `bookId`
+was already cached. `usePlatformCraftNotesPolling` itself was already
+correct (a genuine repeating `setInterval`, not a one-shot follow-up —
+ruled out as the bug) and needed no changes: once the fresh mount-time
+GET resolves, `draftStatus` updates reactively and the polling hook's
+`active` flag (`draftStatus === "running"`) recomputes correctly from
+real data — polling starts if still running, or never starts at all if
+the fresh GET already shows `"ready"`/`"failed"`. The now-write-only
+`platformNotesBookId` singleton (nothing reads it anymore) was deleted
+outright rather than left as dead state.
+
+**Verified working** (mock backend already modeled the real detached-job
+shape from the prior pass — `setTimeout`-resolved, independent of
+whether a client is still listening): reproduced the exact reported
+scenario end-to-end — click "Run Research Pass," navigate to Run List
+(unmounting the panel, killing its polling interval) within 300ms of
+starting the job, wait 32 real seconds away, independently confirm via a
+direct API call that the job finished server-side while away
+(`draftStatus: "ready"`, real `draftContent`), then navigate back to
+Platform Craft Notes and confirm — with no additional wait — that the
+finished draft banner and populated textarea appear immediately, not a
+stuck "Researching…" spinner. Re-ran the full existing Platform Craft
+Notes state-machine pass (idle/running/ready/failed, Save/Discard/Try
+Again) and the full Contract Pipeline pass afterward to confirm zero
+regression. Zero console errors across the full pass.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance

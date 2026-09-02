@@ -824,7 +824,6 @@ function mapPlatformCraftNotesRow(row: PlatformCraftNotesRow): PlatformCraftNote
 }
 
 let platformNotes: PlatformCraftNotes | null = null;
-let platformNotesBookId: string | null = null;
 let platformNotesStatus: LoadStatus = "idle";
 let platformNotesError: string | null = null;
 const platformNotesListeners = new Set<() => void>();
@@ -837,7 +836,6 @@ function subscribePlatformNotes(l: () => void) {
 }
 
 async function loadPlatformCraftNotes(bookId: string): Promise<void> {
-  platformNotesBookId = bookId;
   platformNotesStatus = "loading";
   platformNotesError = null;
   emitPlatformNotes();
@@ -857,10 +855,27 @@ export function refreshPlatformCraftNotes(bookId: string): void {
   void loadPlatformCraftNotes(bookId);
 }
 
-/** The book's saved Platform Craft Notes plus any in-flight/ready/failed research draft state — `content: ""`/`draftStatus: "idle"` for a book that's never saved or researched any. */
+/**
+ * The book's saved Platform Craft Notes plus any in-flight/ready/failed
+ * research draft state — `content: ""`/`draftStatus: "idle"` for a book
+ * that's never saved or researched any.
+ *
+ * Fetches fresh on EVERY mount, not just the first time this bookId is
+ * seen — real bug this fixed: a `bookId !== platformNotesBookId` guard
+ * here meant navigating away from the panel and back (unmounting and
+ * remounting `PlatformCraftNotesView` for the same book) skipped the
+ * fetch entirely, since the module-level `platformNotesBookId` singleton
+ * still matched. The panel then rendered off whatever was last cached —
+ * often still `draftStatus: "running"` from before the research job
+ * actually finished server-side — with no polling interval running to
+ * ever refresh it (that interval died when the component unmounted; see
+ * `usePlatformCraftNotesPolling` below). GET is the only source of truth
+ * for a detached background job like this one, so it must be re-checked
+ * every time the panel becomes visible, not just once per bookId.
+ */
 export function usePlatformCraftNotes(bookId: string | undefined): PlatformCraftNotes | null {
   useEffect(() => {
-    if (bookId && bookId !== platformNotesBookId) void loadPlatformCraftNotes(bookId);
+    if (bookId) void loadPlatformCraftNotes(bookId);
   }, [bookId]);
   return useSyncExternalStore(subscribePlatformNotes, () => platformNotes, () => platformNotes);
 }
@@ -878,7 +893,6 @@ export async function savePlatformCraftNotes(bookId: string, content: string): P
     body: JSON.stringify({ bookId, content }),
   });
   platformNotes = mapPlatformCraftNotesRow(res.notes);
-  platformNotesBookId = bookId;
   platformNotesStatus = "loaded";
   emitPlatformNotes();
   return platformNotes;
@@ -901,7 +915,6 @@ export async function startPlatformCraftNotesResearch(bookId: string): Promise<P
     body: JSON.stringify({ bookId }),
   });
   platformNotes = mapPlatformCraftNotesRow(res.notes);
-  platformNotesBookId = bookId;
   platformNotesStatus = "loaded";
   emitPlatformNotes();
   return platformNotes;
@@ -914,7 +927,6 @@ export async function discardPlatformCraftNotesDraft(bookId: string): Promise<Pl
     body: JSON.stringify({ bookId }),
   });
   platformNotes = mapPlatformCraftNotesRow(res.notes);
-  platformNotesBookId = bookId;
   platformNotesStatus = "loaded";
   emitPlatformNotes();
   return platformNotes;
