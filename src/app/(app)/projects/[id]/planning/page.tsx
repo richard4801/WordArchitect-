@@ -237,6 +237,73 @@ function ArtifactContent({ artifact }: { artifact: string }) {
   return <div className="text-ink">{renderMarkdown(artifact)}</div>;
 }
 
+type CodexDocumentationEntry = {
+  name?: string;
+  entryType?: string;
+  description?: string;
+  aliases?: string[];
+  tier?: string;
+  personalityTraits?: string[];
+  motivations?: string[];
+};
+
+function EntryTagRow({ label, values }: { label: string; values?: string[] }) {
+  if (!values || values.length === 0) return null;
+  return (
+    <div className="mt-2.5">
+      <h5 className="label-caps text-[0.6rem] text-ink-faint">{label}</h5>
+      <div className="mt-1 flex flex-wrap gap-1.5">
+        {values.map((v, i) => (
+          <span key={i} className="rounded-full border border-line px-2 py-0.5 text-[0.7rem] text-ink-muted">
+            {v}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The codex_documentation unit's `{"entries": [...]}` artifact rendered as
+ * real Codex-style entry cards, per the original build spec — falls back
+ * to the generic ArtifactContent/StructuredValue renderer (a flat labeled
+ * field list) if the artifact isn't valid JSON with an `entries` array,
+ * so a malformed draft still shows *something* readable rather than
+ * nothing at all.
+ */
+function CodexEntryCards({ artifact }: { artifact: string }) {
+  let entries: CodexDocumentationEntry[] | null = null;
+  try {
+    const parsed = JSON.parse(artifact) as { entries?: unknown };
+    if (Array.isArray(parsed.entries)) entries = parsed.entries as CodexDocumentationEntry[];
+  } catch {
+    entries = null;
+  }
+
+  if (!entries) return <ArtifactContent artifact={artifact} />;
+  if (entries.length === 0) return <p className="text-sm text-ink-faint">No entries in this draft.</p>;
+
+  return (
+    <div className="space-y-3">
+      {entries.map((entry, i) => (
+        <div key={i} className="card-2 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+            <h4 className="font-display text-base text-ink">{entry.name || "Untitled entry"}</h4>
+            <span className="label-caps shrink-0 rounded-full bg-gold/15 px-2 py-0.5 text-[0.6rem] text-gold">
+              {entry.entryType || "character"}
+            </span>
+          </div>
+          {entry.tier && <p className="mt-0.5 text-[0.7rem] capitalize text-ink-faint">{entry.tier}</p>}
+          {entry.description && <p className="mt-2.5 text-sm leading-relaxed text-ink-muted">{entry.description}</p>}
+          <EntryTagRow label="Aliases" values={entry.aliases} />
+          <EntryTagRow label="Personality Traits" values={entry.personalityTraits} />
+          <EntryTagRow label="Motivations" values={entry.motivations} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 const BULLET_TONE: Record<string, string> = {
   mustFix: "bg-danger",
   worthConsidering: "bg-gold",
@@ -339,8 +406,13 @@ function StructuredValue({ value, toneKey }: { value: unknown; toneKey?: string 
 
 /** panel_reviews / arbitrator_synthesis have no fixed schema — renders defensively rather than assuming any particular field. */
 function JsonBlock({ value, toneKey }: { value: unknown; toneKey?: string }) {
+  // No inner max-height/scroll — the review column already sits inside the
+  // page's own scroll region, and a second nested scrollbar was clipping
+  // critic issues/verdict text mid-sentence with no visible "there's more"
+  // affordance (real production report: a 16rem cap on a 320px-wide column
+  // reads as a truncation bug, not a scrollable one).
   return (
-    <div className="scroll-slim mt-2 max-h-64 overflow-y-auto text-xs text-ink-muted">
+    <div className="mt-2 text-xs text-ink-muted">
       <StructuredValue value={value} toneKey={toneKey} />
     </div>
   );
@@ -1304,7 +1376,7 @@ function ReviewGate({
         <div className="card p-5">
           <h3 className="label-caps text-[0.65rem] text-ink-faint">Artifact</h3>
           <div className="scroll-slim mt-3 max-h-[32rem] overflow-y-auto text-sm text-ink">
-            <ArtifactContent artifact={artifact} />
+            {unit === "codex_documentation" ? <CodexEntryCards artifact={artifact} /> : <ArtifactContent artifact={artifact} />}
           </div>
         </div>
 
