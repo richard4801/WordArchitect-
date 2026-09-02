@@ -3279,6 +3279,54 @@ Notes state-machine pass (idle/running/ready/failed, Save/Discard/Try
 Again) and the full Contract Pipeline pass afterward to confirm zero
 regression. Zero console errors across the full pass.
 
+**Platform Craft Notes' editor gained a real Edit/Preview toggle, so
+saved markdown no longer reads as raw `##`/`**`/`*` clutter.** Prior to
+this, `PlatformNotesEditor` was a single always-visible `<textarea>` —
+correct as an editable field for *writing* markdown, but a bad reading
+experience once a research draft (which the backend genuinely returns as
+markdown — headers, bold, italics) landed in it: the panel showed the
+literal syntax characters instead of formatted text, whether reviewing a
+fresh research draft or reopening previously-saved notes.
+
+Fixed with a small local `mode: "edit" | "preview"` toggle (two tab
+buttons, `PenLine`/`Eye` icons) rather than replacing the textarea
+outright — the field still needs to stay a plain markdown source a writer
+can type into, per the explicit "edit as raw text" decision. **Edit**
+shows the original raw `<textarea>` unchanged; **Preview** renders the
+same string through `renderMarkdown()` (the app's existing dependency-free
+markdown renderer already used by `ArtifactContent` and the AI Assistant's
+`ChatBubble` — no new dependency, same "no `dangerouslySetInnerHTML`"
+discipline) inside a read-only `<div>`. Defaults to **Preview** whenever
+there's real content to show (`initialValue.trim()` non-empty) so a
+research draft or previously-saved notes open already readable, with
+nothing jarring flashed first; defaults to **Edit** on a genuinely empty
+document, since there's nothing to preview yet. The toggle is local
+`PlatformNotesEditor` state, so it resets to that same default logic every
+time the component remounts — which it already does on every real state
+transition (idle ↔ ready ↔ after-save), via its existing `key` on
+`` `${draftStatus}:${...UpdatedAt}` `` — so switching from a stale draft to
+a freshly-saved one, or discarding a draft back to the saved content,
+always re-evaluates the default rather than carrying over a stale toggle
+choice from a different piece of content.
+
+**Verified working** (against the same local mock backend, extended with
+bold/italic markdown in the mock's own research draft text specifically
+to exercise this): a fresh empty document opens in Edit mode (nothing to
+preview); running research and letting the draft resolve to "ready" opens
+in Preview mode by default with a real rendered `<h2>` heading, `<strong>`
+bold, and `<em>` italic — confirmed no literal `##` or `**word**`/`*word*`
+text appears anywhere on the page; switching to Edit shows the exact raw
+markdown source (confirmed `##`/`**`/`*` characters are present there,
+since that's the actual editable field); switching back to Preview
+manually works; saving a reviewed draft lands back in Preview mode with no
+raw markdown visible. Re-ran the full pre-existing Platform Craft Notes
+state-machine pass (idle/running/ready/failed, Save/Discard/Try Again,
+updated to toggle into Edit mode before each textarea interaction — a test
+change only, not an app behavior change) and the full Contract Pipeline
+and Act/Part/Beats Playwright passes afterward to confirm zero regression.
+`tsc --noEmit`, `eslint`, and `npm run build` all clean. Zero console
+errors across the full pass.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance

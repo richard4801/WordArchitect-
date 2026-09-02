@@ -11,6 +11,7 @@ import {
   Circle,
   Cog,
   Download,
+  Eye,
   GitBranch,
   GitFork,
   ListChecks,
@@ -2217,6 +2218,12 @@ function PlatformNotesEditor({
   const [discarding, setDiscarding] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
+  // Default to a rendered preview when there's already something to read
+  // (a saved doc, or a fresh research draft) rather than dropping the
+  // writer straight into raw "## Hook Conventions" / "*italic*" markdown
+  // syntax — that's the whole complaint this toggle fixes. An empty doc
+  // has nothing to preview, so start in Edit instead.
+  const [mode, setMode] = useState<"edit" | "preview">(initialValue.trim() ? "preview" : "edit");
 
   useEffect(() => {
     if (!savedFlash) return;
@@ -2253,16 +2260,50 @@ function PlatformNotesEditor({
   return (
     <div>
       {actionError && <p className="mt-3 text-xs text-danger">{actionError}</p>}
-      <textarea
-        value={value}
-        onChange={(e) => {
-          setValue(e.target.value);
-          setDirty(true);
-        }}
-        placeholder="No notes saved yet. Write your own, or run a research pass to get a starting draft."
-        rows={16}
-        className="scroll-slim mt-3 w-full resize-y rounded-xl border border-line bg-surface-2 p-3 text-sm text-ink outline-none focus:border-gold/60"
-      />
+
+      <div className="mt-3 flex w-fit items-center gap-1 rounded-lg border border-line p-1">
+        <button
+          type="button"
+          onClick={() => setMode("edit")}
+          className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+            mode === "edit" ? "bg-surface-2 text-ink" : "text-ink-faint hover:text-ink"
+          }`}
+        >
+          <PenLine className="size-3.5" />
+          Edit
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("preview")}
+          className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+            mode === "preview" ? "bg-surface-2 text-ink" : "text-ink-faint hover:text-ink"
+          }`}
+        >
+          <Eye className="size-3.5" />
+          Preview
+        </button>
+      </div>
+
+      {mode === "edit" ? (
+        <textarea
+          value={value}
+          onChange={(e) => {
+            setValue(e.target.value);
+            setDirty(true);
+          }}
+          placeholder="No notes saved yet. Write your own, or run a research pass to get a starting draft."
+          rows={16}
+          className="scroll-slim mt-2 w-full resize-y rounded-xl border border-line bg-surface-2 p-3 text-sm text-ink outline-none focus:border-gold/60"
+        />
+      ) : (
+        <div className="scroll-slim mt-2 min-h-[24rem] max-h-[32rem] overflow-y-auto rounded-xl border border-line bg-surface-2 p-4 text-sm">
+          {value.trim() ? (
+            <div className="text-ink">{renderMarkdown(value)}</div>
+          ) : (
+            <p className="text-ink-faint">Nothing to preview yet — switch to Edit to write something.</p>
+          )}
+        </div>
+      )}
 
       <div className="mt-3 flex items-center gap-3">
         {(isDraft || dirty) && (
