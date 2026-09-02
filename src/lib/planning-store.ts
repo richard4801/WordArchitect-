@@ -908,11 +908,20 @@ export async function savePlatformCraftNotes(bookId: string, content: string): P
  * (draftError populated). The backend itself refuses to start a second
  * job while one's already running for this book and just returns the
  * existing in-flight state, so calling this again mid-run is harmless.
+ *
+ * Also refuses (409) to start a fresh pass while an unsaved "ready" draft
+ * is still waiting for review — pass `force: true` to discard that draft
+ * and start over anyway (equivalent to calling
+ * `discardPlatformCraftNotesDraft` first). On any failure — including this
+ * 409 — the caller should re-fetch (`refreshPlatformCraftNotes`) rather
+ * than trust the cache: a 409 here specifically means the backend's row
+ * already differs from whatever this store last cached (real content is
+ * sitting there waiting), and unrelated failures might too.
  */
-export async function startPlatformCraftNotesResearch(bookId: string): Promise<PlatformCraftNotes> {
+export async function startPlatformCraftNotesResearch(bookId: string, force = false): Promise<PlatformCraftNotes> {
   const res = await apiFetch<PlatformCraftNotesResponse>("/platform-craft-notes/research", {
     method: "POST",
-    body: JSON.stringify({ bookId }),
+    body: JSON.stringify({ bookId, force }),
   });
   platformNotes = mapPlatformCraftNotesRow(res.notes);
   platformNotesStatus = "loaded";

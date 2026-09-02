@@ -3327,6 +3327,93 @@ and Act/Part/Beats Playwright passes afterward to confirm zero regression.
 `tsc --noEmit`, `eslint`, and `npm run build` all clean. Zero console
 errors across the full pass.
 
+**Live production bug: a real backend guard against overwriting an
+unsaved draft made that same draft invisible.** User report, with a
+screenshot: Platform Craft Notes showed a plain empty "No notes saved
+yet" idle state, but clicking "Run Research Pass" produced a red error —
+"An unsaved research draft is already waiting for review for this book —
+save or discard it before running research again, or pass force to
+discard it and start a fresh pass." Two separate diagnoses were floated
+and both checked out as already-handled in this repo's own code (the
+mount-refetch fix from the entry above, and the "reset via remount" `key`
+on `PlatformNotesEditor`) — so this wasn't a repeat of either earlier bug.
+That the error fired at all was the real signal: it doesn't exist unless
+the backend's own `draft_status` for this book is genuinely `"ready"`
+with real content sitting in it, which meant GET *should* have returned
+the same thing — but the panel was rendering `idle`, not `ready`.
+
+Root cause, confirmed by cloning the real backend repo
+(`richard4801/WordArchitect-Backend-`, branch
+`claude/ai-fiction-platform-backend-qnvkm5`) and reading
+`platformCraftNotes.ts` directly rather than guessing from the error text
+alone: a same-day backend commit (`c93c716`, landed *after* this
+session's first clone — caught only by re-fetching before concluding the
+guard didn't exist) added exactly this check to
+`startPlatformResearchJob`:
+```ts
+if (existing?.draftStatus === "ready" && !force) {
+  throw new Error("An unsaved research draft is already waiting for review...");
+}
+```
+returned as a real `409` by the route (`message.includes("unsaved
+research draft") ? 409 : 502`). The bug was entirely on this frontend's
+side: `PlatformCraftNotesView`'s `handleStartResearch` only ever updated
+the cached `platformNotes` on a *successful* POST — its `catch` block set
+`actionError` and stopped there, never re-fetching. So the one scenario
+where this 409 can fire (a real `"ready"` draft already exists
+server-side) was also the one scenario where the cache never got told
+about it — the writer was left staring at a stale `idle`/empty render
+next to an error describing a draft the UI gave them no way to actually
+see, review, or discard.
+
+Fixed in `handleStartResearch`: on any start-research failure, immediately
+call `refreshPlatformCraftNotes(bookId)` — not just for this 409, since
+any failure could mean the cache and the backend's row have drifted, and
+GET is always the cheap, correct way to resync. Once that refetch lands,
+the existing `draftStatus === "ready"` render branch (built in the prior
+pass) picks it up automatically — the real draft, its content, and
+Save/Discard all appear with no other UI change needed. Two small
+correctness fixes landed in the same pass: `startPlatformCraftNotesResearch`
+(`planning-store.ts`) gained the matching `force` parameter (`POST
+{bookId, force}`, mirroring the real request body); and three `<button
+onClick={handleStartResearch}>` call sites (the main button, "Try Again",
+and the new conflict-recovery button below) all had to become
+`onClick={() => handleStartResearch()}` — passing the handler directly
+would silently forward the click's `SyntheticEvent` as the new `force`
+argument, which is truthy, turning every ordinary click into an implicit
+force-discard. A `researchConflict` flag (set only when the caught error
+is an `ApiError` with `status === 409`, via the `ApiError` class
+`api-client.ts` already exports for exactly this kind of branch) drives a
+new "Discard it and start a fresh pass" button inside the error banner
+itself — the backend's own error text names `force` as the intended
+recovery path, so this wires that up as a real one-click action
+(`handleStartResearch(true)`) instead of leaving the writer to manually
+find Discard once the now-visible draft renders.
+
+**Verified working** (mock backend extended to replicate the real
+409/`force` guard exactly — refuses a fresh research pass when
+`draft_status` is `"ready"` unless `force: true` is sent): reproduced the
+exact bug — a `"ready"` draft existing server-side while this browser's
+own cache still thought `idle` (simulating "created by another tab/session
+between this page's load and the click") — and confirmed clicking "Run
+Research Pass" hits the real 409, the error text renders, and immediately
+after, the panel *also* renders the real existing draft (banner, real
+content, Save/Discard) rather than leaving it invisible; the new "Discard
+it and start a fresh pass" button correctly resends with `force: true`
+and starts a genuine new job. A control case (a fresh page load with a
+real `"ready"` draft already sitting server-side, no stale cache involved)
+confirmed GET-driven rendering was never the problem on its own. Re-ran
+the full pre-existing Platform Craft Notes Playwright suite (state
+machine, Edit/Preview toggle, and the away-and-back staleness pass — the
+last one needed the same "click Edit before reading the textarea" test
+update the Edit/Preview pass required elsewhere) plus the full Contract
+Pipeline and Act/Part/Beats regression suites afterward — zero
+regressions. `tsc --noEmit`, `eslint`, and `npm run build` all clean.
+Zero console errors beyond the browser's own unsuppressable
+"Failed to load resource: 409" network-panel log for the real 409
+response itself (not a JS exception — every browser logs this for any
+non-2xx fetch regardless of how the app handles it).
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance

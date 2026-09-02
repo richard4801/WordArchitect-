@@ -92,6 +92,7 @@ import {
   finalizePlanningDirective,
   loadPlanningRun,
   promoteContractRunToFull,
+  refreshPlatformCraftNotes,
   rejectPlanningStage,
   runPipelineForward,
   saveAgentPromptVersion,
@@ -2099,6 +2100,11 @@ function PlatformCraftNotesView({ bookId }: { bookId: string }) {
   const loadError = usePlatformCraftNotesError();
   const [startingResearch, setStartingResearch] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Specifically the backend's 409 "an unsaved ready draft already exists"
+  // guard, as opposed to any other start-research failure — only this one
+  // has a real one-click recovery (force: true, discarding the existing
+  // draft and starting over).
+  const [researchConflict, setResearchConflict] = useState(false);
 
   const draftStatus = notes?.draftStatus ?? "idle";
   // Cheap/free row read — polling every ~7s while a job is running is
@@ -2106,13 +2112,22 @@ function PlatformCraftNotesView({ bookId }: { bookId: string }) {
   // independent of whether this is the same tab that started the job.
   usePlatformCraftNotesPolling(bookId, draftStatus === "running");
 
-  async function handleStartResearch() {
+  async function handleStartResearch(force = false) {
     setStartingResearch(true);
     setActionError(null);
+    setResearchConflict(false);
     try {
-      await startPlatformCraftNotesResearch(bookId);
+      await startPlatformCraftNotesResearch(bookId, force);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Couldn't start a research pass.");
+      setResearchConflict(err instanceof ApiError && err.status === 409);
+      // A failed start — most commonly this 409 — often means the
+      // backend's row already differs from whatever this store last
+      // cached (the 409 specifically only fires because a real "ready"
+      // draft already exists server-side). Re-fetch so the UI reflects
+      // reality instead of leaving the writer staring at a stale empty
+      // box next to an error describing a draft they can't actually see.
+      refreshPlatformCraftNotes(bookId);
     } finally {
       setStartingResearch(false);
     }
@@ -2133,14 +2148,28 @@ function PlatformCraftNotesView({ bookId }: { bookId: string }) {
       </div>
 
       {loadStatus === "error" && <p className="text-xs text-danger">{loadError}</p>}
-      {actionError && <p className="text-xs text-danger">{actionError}</p>}
+      {actionError && (
+        <div className="rounded-xl border border-danger/40 bg-danger/10 p-3 text-xs text-danger">
+          <p>{actionError}</p>
+          {researchConflict && (
+            <button
+              type="button"
+              onClick={() => handleStartResearch(true)}
+              disabled={researchBusy}
+              className="mt-2 rounded-lg border border-danger/40 px-2.5 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger/10 disabled:opacity-50"
+            >
+              Discard it and start a fresh pass
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="card p-5">
         <div className="flex items-center justify-between gap-3">
           <h3 className="label-caps text-[0.65rem] text-ink-faint">Notes</h3>
           <button
             type="button"
-            onClick={handleStartResearch}
+            onClick={() => handleStartResearch()}
             disabled={researchBusy}
             className="inline-flex items-center gap-1.5 rounded-xl border border-line px-3 py-1.5 text-xs font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
           >
@@ -2162,7 +2191,7 @@ function PlatformCraftNotesView({ bookId }: { bookId: string }) {
             <p>Research failed: {notes?.draftError ?? "Unknown error."}</p>
             <button
               type="button"
-              onClick={handleStartResearch}
+              onClick={() => handleStartResearch()}
               disabled={researchBusy}
               className="mt-2 rounded-lg border border-danger/40 px-2.5 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger/10 disabled:opacity-50"
             >
