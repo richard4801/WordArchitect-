@@ -12,11 +12,15 @@ import {
   Cog,
   Download,
   GitBranch,
+  GitFork,
   ListChecks,
   Lock,
   Loader2,
+  Newspaper,
   Paperclip,
   PenLine,
+  RefreshCw,
+  Rocket,
   Search,
   Send,
   Sparkles,
@@ -55,6 +59,8 @@ import {
   outputShapeHint,
   partRangeKey,
   PARTS_PER_ACT,
+  PIPELINE_TYPE_META,
+  PIPELINE_TYPES,
   placeholdersFor,
   PLANNING_RUN_STATUS_LABEL,
   PLANNING_STAGE_META,
@@ -62,6 +68,7 @@ import {
   type AgentRole,
   type ContinuityLedgerEntry,
   type EffortLevel,
+  type PipelineType,
   type PlanningRun,
   type PlanningRunStatus,
   type PlanningStage,
@@ -73,6 +80,7 @@ import {
 } from "@/lib/planning-data";
 import {
   approvePlanningStage,
+  branchPlanningRun,
   clonePromptsFromBook,
   confirmPlanningEntities,
   deleteAgentPromptVersion,
@@ -82,9 +90,12 @@ import {
   finalizeIntakeConversation,
   finalizePlanningDirective,
   loadPlanningRun,
+  promoteContractRunToFull,
   rejectPlanningStage,
+  researchPlatformCraftNotes,
   runPipelineForward,
   saveAgentPromptVersion,
+  savePlatformCraftNotes,
   sendIntakeChatTurn,
   sendPlanningChatTurn,
   startPlanningRun,
@@ -98,7 +109,13 @@ import {
   useBookPlanningRunsLoadStatus,
   useEntityActionError,
   useEntityActionStatus,
+  usePlatformCraftNotes,
+  usePlatformCraftNotesError,
+  usePlatformCraftNotesLoadStatus,
 } from "@/lib/planning-store";
+import { refreshCharacters } from "@/lib/character-store";
+import { refreshWorld } from "@/lib/worldbuilding-store";
+import { refreshManuscript } from "@/lib/manuscript-store";
 import { useProject, useProjects } from "@/lib/project-store";
 
 /**
@@ -379,13 +396,14 @@ export default function PlanningPage() {
   );
 }
 
-type PlanningView = "pipeline" | "runs" | "ledger" | "entities" | "prompts";
+type PlanningView = "pipeline" | "runs" | "ledger" | "entities" | "platform-notes" | "prompts";
 
 const NAV_ITEMS: { key: PlanningView; label: string; Icon: typeof GitBranch }[] = [
   { key: "pipeline", label: "Pipeline Map", Icon: GitBranch },
   { key: "runs", label: "Run List", Icon: ListChecks },
   { key: "ledger", label: "Continuity Ledger", Icon: BookOpen },
   { key: "entities", label: "Entity Review", Icon: Users },
+  { key: "platform-notes", label: "Platform Craft Notes", Icon: Newspaper },
   { key: "prompts", label: "Settings", Icon: Cog },
 ];
 
@@ -420,11 +438,11 @@ function PlanningPageInner() {
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
 
-  async function handleStart() {
+  async function handleStart(pipelineType?: PipelineType) {
     setStarting(true);
     setStartError(null);
     try {
-      const newRun = await startPlanningRun(bookId);
+      const newRun = await startPlanningRun(bookId, pipelineType);
       onRunIdChange(newRun.id);
       setView("pipeline");
     } catch (err) {
@@ -474,7 +492,7 @@ function PlanningPageInner() {
               key={item.key}
               type="button"
               onClick={() => setView(item.key)}
-              disabled={item.key !== "runs" && item.key !== "prompts" && !targetRunId}
+              disabled={item.key !== "runs" && item.key !== "prompts" && item.key !== "platform-notes" && !targetRunId}
               className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
                 view === item.key ? "bg-gold text-gold-contrast" : "text-ink-muted hover:bg-surface-2 hover:text-ink"
               }`}
@@ -497,10 +515,10 @@ function PlanningPageInner() {
         </div>
       </aside>
       <div className="scroll-slim min-h-0 flex-1 overflow-y-auto p-6 sm:p-8">
-        {stillResolvingRuns ? null : !targetRunId ? (
-          <StartPlanningCard onStart={handleStart} starting={starting} error={startError} />
-        ) : view === "prompts" ? (
+        {stillResolvingRuns ? null : view === "prompts" ? (
           <PromptEditorView bookId={project.id} />
+        ) : view === "platform-notes" ? (
+          <PlatformCraftNotesView bookId={project.id} />
         ) : view === "runs" ? (
           <RunListView
             bookId={project.id}
@@ -512,6 +530,8 @@ function PlanningPageInner() {
             onStartNew={handleStart}
             starting={starting}
           />
+        ) : !targetRunId ? (
+          <StartPlanningCard onStart={handleStart} starting={starting} error={startError} />
         ) : !run ? (
           runLoadStatus === "error" ? (
             <div className="mx-auto max-w-xl card p-6 text-center">
@@ -525,7 +545,17 @@ function PlanningPageInner() {
         ) : view === "entities" ? (
           <EntityReviewView key={run.updatedAt} run={run} />
         ) : (
-          <PipelineView run={run} bookId={project.id} onOpenLedger={() => setView("ledger")} onOpenEntities={() => setView("entities")} />
+          <PipelineView
+            run={run}
+            bookId={project.id}
+            onOpenLedger={() => setView("ledger")}
+            onOpenEntities={() => setView("entities")}
+            onOpenPlatformNotes={() => setView("platform-notes")}
+            onOpenRun={(runId) => {
+              onRunIdChange(runId);
+              setView("pipeline");
+            }}
+          />
         )}
       </div>
     </div>
@@ -537,10 +567,11 @@ function StartPlanningCard({
   starting,
   error,
 }: {
-  onStart: () => void;
+  onStart: (pipelineType?: PipelineType) => void;
   starting: boolean;
   error: string | null;
 }) {
+  const [pipelineType, setPipelineType] = useState<PipelineType>("full");
   return (
     <div className="mx-auto max-w-xl">
       <div className="card p-8 text-center">
@@ -548,14 +579,34 @@ function StartPlanningCard({
         <h2 className="mt-3 font-display text-xl text-ink">Let&apos;s build your story</h2>
         <p className="mt-2 text-sm text-ink-muted">
           Starts with a conversation — describe your book, in your own words — then a guided pipeline takes it from
-          there: Core Summary, then each Act summarized, each Part outlined and beat-mapped, reviewed by a panel of
-          Critics and synthesized by an Arbitrator before it comes to you for approval. This never writes manuscript
-          prose; Generate/drafting stays exactly as it is.
+          there. This never writes manuscript prose; Generate/drafting stays exactly as it is.
         </p>
+
+        <div className="mt-5 space-y-2.5 text-left">
+          {PIPELINE_TYPES.map((pt) => (
+            <button
+              key={pt}
+              type="button"
+              onClick={() => setPipelineType(pt)}
+              className={`w-full rounded-xl border p-3.5 text-left transition-colors ${
+                pipelineType === pt ? "border-gold/60 bg-gold/5" : "border-line hover:border-line-strong"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className={`size-3.5 shrink-0 rounded-full border-2 ${pipelineType === pt ? "border-gold bg-gold" : "border-line"}`}
+                />
+                <span className="text-sm font-medium text-ink">{PIPELINE_TYPE_META[pt].label}</span>
+              </div>
+              <p className="mt-1 pl-6 text-xs text-ink-muted">{PIPELINE_TYPE_META[pt].description}</p>
+            </button>
+          ))}
+        </div>
+
         {error && <p className="mt-3 text-xs text-danger">{error}</p>}
         <button
           type="button"
-          onClick={onStart}
+          onClick={() => onStart(pipelineType)}
           disabled={starting}
           className="mt-5 inline-flex items-center gap-2 rounded-xl bg-gold px-5 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
         >
@@ -580,7 +631,7 @@ function buildUnitSequence(run: PlanningRun): UnitPosition[] {
   let guard = 0;
   while (pos && guard++ < 500) {
     seq.push(pos);
-    pos = nextPlanningPosition(pos, run.partChapterRanges);
+    pos = nextPlanningPosition(pos, run.partChapterRanges, run.pipelineType);
   }
   return seq;
 }
@@ -603,6 +654,10 @@ function unitLabel(pos: UnitPosition, run: PlanningRun): string {
   switch (pos.stage) {
     case "stage_1_summary":
       return "Stage 1 — Core Summary";
+    case "codex_documentation":
+      return "Codex Documentation";
+    case "hook_chapters_outline":
+      return "Hook Chapters Outline (Chapters 1-5)";
     case "act_summary":
       return `Act ${pos.act} — Summary`;
     case "part_outline":
@@ -665,11 +720,17 @@ function PipelineMap({
   onOpenUnit,
   onOpenLedger,
   onOpenEntities,
+  onOpenPlatformNotes,
+  onPromote,
+  promoting,
 }: {
   run: PlanningRun;
   onOpenUnit: () => void;
   onOpenLedger: () => void;
   onOpenEntities: () => void;
+  onOpenPlatformNotes: () => void;
+  onPromote: () => void;
+  promoting: boolean;
 }) {
   const sequence = useMemo(() => buildUnitSequence(run), [run]);
   const progress = useMemo(() => computePlanningProgress(run), [run]);
@@ -709,7 +770,30 @@ function PipelineMap({
 
       <UnitRow label={unitLabel(FIRST_UNIT_POSITION, run)} state={unitStateFor(FIRST_UNIT_POSITION, sequence, run)} />
 
-      {Array.from({ length: ACTS_PER_BOOK }, (_, i) => i + 1).map((act, actIdx) => {
+      {run.pipelineType === "contract" ? (
+        <div className="card space-y-3 p-5">
+          <div className="flex items-center justify-between">
+            <span className="label-caps text-[0.6rem] text-purple">Contract Pipeline</span>
+            <button
+              type="button"
+              onClick={onOpenPlatformNotes}
+              className="flex items-center gap-1.5 text-xs text-ink-muted transition-colors hover:text-ink"
+            >
+              <Newspaper className="size-3.5" />
+              Platform Craft Notes
+            </button>
+          </div>
+          {(
+            [
+              { stage: "codex_documentation", act: null, part: null, beatChunk: null },
+              { stage: "hook_chapters_outline", act: null, part: null, beatChunk: null },
+            ] as UnitPosition[]
+          ).map((pos) => (
+            <UnitRow key={pos.stage} label={unitLabel(pos, run)} state={unitStateFor(pos, sequence, run)} />
+          ))}
+        </div>
+      ) : (
+        Array.from({ length: ACTS_PER_BOOK }, (_, i) => i + 1).map((act, actIdx) => {
         const actSummaryPos: UnitPosition = { stage: "act_summary", act, part: null, beatChunk: null };
         const actSummaryState = unitStateFor(actSummaryPos, sequence, run);
         return (
@@ -779,10 +863,28 @@ function PipelineMap({
             </div>
           </div>
         );
-      })}
+        })
+      )}
 
       <div className="card flex flex-wrap items-center justify-between gap-4 p-5">
-        {isDone ? (
+        {isDone && run.pipelineType === "contract" ? (
+          <div>
+            <p className="text-sm font-medium text-ink">
+              Contract plan complete — Codex documentation and Chapters 1-5 are locked in.
+            </p>
+            <p className="mt-1 text-xs text-ink-muted">
+              Real Codex entries and chapter beats are already in your Outliner.{" "}
+              <button type="button" onClick={onOpenEntities} className="text-gold hover:opacity-80">
+                Review extracted entities
+              </button>{" "}
+              or{" "}
+              <button type="button" onClick={onOpenLedger} className="text-gold hover:opacity-80">
+                browse the Continuity Ledger
+              </button>
+              . When you&apos;re ready to plan the rest of the book, promote this plan to the full pipeline.
+            </p>
+          </div>
+        ) : isDone ? (
           <div>
             <p className="text-sm font-medium text-ink">Planning complete — every Act and Part is fully mapped.</p>
             <p className="mt-1 text-xs text-ink-muted">
@@ -808,14 +910,26 @@ function PipelineMap({
             </p>
           </div>
         )}
-        {!isDone && (
+        {isDone && run.pipelineType === "contract" ? (
           <button
             type="button"
-            onClick={onOpenUnit}
-            className="inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
+            onClick={onPromote}
+            disabled={promoting}
+            className="inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
           >
-            Open Unit
+            {promoting ? <Loader2 className="size-4 animate-spin" /> : <Rocket className="size-4" />}
+            Promote to Full Plan
           </button>
+        ) : (
+          !isDone && (
+            <button
+              type="button"
+              onClick={onOpenUnit}
+              className="inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
+            >
+              Open Unit
+            </button>
+          )
         )}
       </div>
     </div>
@@ -1211,6 +1325,14 @@ function ReviewGate({
         )}
       </div>
 
+      {(unit === "codex_documentation" || unit === "hook_chapters_outline") && (
+        <p className="rounded-xl border border-info/40 bg-info/10 p-3 text-xs text-ink-muted">
+          {unit === "codex_documentation"
+            ? "Approving writes these entries directly into your Codex — not a proposal you review again later."
+            : "Approving creates chapters 1-5 in your Manuscript with these planned beats, the same as an approved Part Beats chunk."}
+        </p>
+      )}
+
       <div className="flex items-center justify-between gap-3">
         {!isFirstUnit && hasOwnArtifact ? (
           <button type="button" onClick={onDiscardStage} className="text-xs text-ink-faint underline-offset-2 hover:text-danger hover:underline">
@@ -1410,16 +1532,21 @@ function PipelineView({
   bookId,
   onOpenLedger,
   onOpenEntities,
+  onOpenPlatformNotes,
+  onOpenRun,
 }: {
   run: PlanningRun;
   bookId: string;
   onOpenLedger: () => void;
   onOpenEntities: () => void;
+  onOpenPlatformNotes: () => void;
+  onOpenRun: (runId: string) => void;
 }) {
   const [subView, setSubView] = useState<"map" | "unit">("map");
   const [actionError, setActionError] = useState<string | null>(null);
   const [advancing, setAdvancing] = useState(false);
   const [discarding, setDiscarding] = useState(false);
+  const [promoting, setPromoting] = useState(false);
   const [confirmingDiscardRun, setConfirmingDiscardRun] = useState(false);
   const [intakeSending, setIntakeSending] = useState(false);
   const [intakeFinalizing, setIntakeFinalizing] = useState(false);
@@ -1470,13 +1597,27 @@ function PipelineView({
   async function handleApprove() {
     setAdvancing(true);
     setActionError(null);
-    const wasPartBeats = run.currentStage === "part_beats";
+    const wasPartBeats = run.currentStage === "part_beats" || run.currentStage === "hook_chapters_outline";
+    const wasCodexDocumentation = run.currentStage === "codex_documentation";
     try {
       await approvePlanningStage(run.id);
-      // A part_beats approval materializes real chapter_beats server-side
-      // — refresh the Outliner's own cache so the new beats show up there
-      // without the writer needing a manual page reload.
-      if (wasPartBeats) refreshOutline(bookId);
+      // A part_beats (or the Contract Pipeline's hook_chapters_outline)
+      // approval materializes real chapter_beats — plus real
+      // manuscript_chapters rows for hook_chapters_outline specifically,
+      // since those chapters don't exist yet on a fresh contract run —
+      // server-side. Refresh both caches so the Outliner and Manuscript
+      // both show the new content without a manual page reload.
+      if (wasPartBeats) {
+        refreshOutline(bookId);
+        refreshManuscript(bookId);
+      }
+      // A codex_documentation approval writes real codex_entries rows
+      // server-side — refresh both caches since a fresh entry's entryType
+      // isn't known client-side without a lookup (harmless either way).
+      if (wasCodexDocumentation) {
+        refreshCharacters(bookId);
+        refreshWorld(bookId);
+      }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Couldn't approve this unit.");
     } finally {
@@ -1556,6 +1697,19 @@ function PipelineView({
     }
   }
 
+  async function handlePromote() {
+    setPromoting(true);
+    setActionError(null);
+    try {
+      const newRun = await promoteContractRunToFull(run.id);
+      onOpenRun(newRun.id);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't promote this run to the full pipeline.");
+    } finally {
+      setPromoting(false);
+    }
+  }
+
   const discardRunControl = (
     <div className="mb-1 flex justify-end">
       <button
@@ -1602,7 +1756,15 @@ function PipelineView({
       {discardRunControl}
       {errorBanner}
       {subView === "map" || run.status === "done" ? (
-        <PipelineMap run={run} onOpenUnit={() => setSubView("unit")} onOpenLedger={onOpenLedger} onOpenEntities={onOpenEntities} />
+        <PipelineMap
+          run={run}
+          onOpenUnit={() => setSubView("unit")}
+          onOpenLedger={onOpenLedger}
+          onOpenEntities={onOpenEntities}
+          onOpenPlatformNotes={onOpenPlatformNotes}
+          onPromote={handlePromote}
+          promoting={promoting}
+        />
       ) : (
         <UnitDetail
           run={run}
@@ -1644,13 +1806,14 @@ function RunListView({
   bookId: string;
   activeRunId: string | null;
   onOpenRun: (runId: string) => void;
-  onStartNew: () => void;
+  onStartNew: (pipelineType?: PipelineType) => void;
   starting: boolean;
 }) {
   const runs = useBookPlanningRuns(bookId);
   const loadStatus = useBookPlanningRunsLoadStatus();
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busyRunId, setBusyRunId] = useState<string | null>(null);
 
   async function handleDelete(runId: string) {
     try {
@@ -1663,19 +1826,55 @@ function RunListView({
     }
   }
 
+  async function handlePromote(runId: string) {
+    setError(null);
+    setBusyRunId(runId);
+    try {
+      const newRun = await promoteContractRunToFull(runId);
+      onOpenRun(newRun.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't promote this run to the full pipeline.");
+    } finally {
+      setBusyRunId(null);
+    }
+  }
+
+  async function handleBranch(runId: string, pipelineType: PipelineType) {
+    setError(null);
+    setBusyRunId(runId);
+    try {
+      const newRun = await branchPlanningRun(runId, pipelineType);
+      onOpenRun(newRun.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't branch this run — it may not have an approved Stage 1 Summary yet.");
+    } finally {
+      setBusyRunId(null);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-3xl space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-lg text-ink">Planning Runs</h2>
-        <button
-          type="button"
-          onClick={onStartNew}
-          disabled={starting}
-          className="inline-flex items-center gap-2 rounded-xl bg-gold px-3.5 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
-          {starting && <Loader2 className="size-3.5 animate-spin" />}
-          New Run
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onStartNew("full")}
+            disabled={starting}
+            className="inline-flex items-center gap-2 rounded-xl bg-gold px-3.5 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {starting && <Loader2 className="size-3.5 animate-spin" />}
+            New Full Run
+          </button>
+          <button
+            type="button"
+            onClick={() => onStartNew("contract")}
+            disabled={starting}
+            className="inline-flex items-center gap-2 rounded-xl border border-line px-3.5 py-2 text-sm font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
+          >
+            New Contract Run
+          </button>
+        </div>
       </div>
       {error && <p className="text-xs text-danger">{error}</p>}
       {loadStatus === "loading" && runs.length === 0 && <p className="text-sm text-ink-muted">Loading…</p>}
@@ -1683,6 +1882,9 @@ function RunListView({
       <div className="space-y-2">
         {runs.map((run) => {
           const progress = computePlanningProgress(run);
+          const canPromote = run.status === "done" && run.pipelineType === "contract";
+          const canBranch = Boolean(run.stageArtifacts["stage_1_summary"]);
+          const busy = busyRunId === run.id;
           return (
             <div key={run.id} className={`card flex items-center gap-4 p-4 ${run.id === activeRunId ? "border-gold/50" : ""}`}>
               <div className="grid size-12 shrink-0 place-items-center rounded-lg bg-surface-2 text-ink-faint">
@@ -1693,6 +1895,13 @@ function RunListView({
                   <p className="truncate text-sm font-medium text-ink">
                     {run.status === "done" ? "Complete plan" : PLANNING_RUN_STATUS_LABEL[run.status]}
                   </p>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[0.6rem] font-medium ${
+                      run.pipelineType === "contract" ? "bg-purple/15 text-purple" : "bg-info/15 text-info"
+                    }`}
+                  >
+                    {run.pipelineType === "contract" ? "Contract" : "Full"}
+                  </span>
                   {run.id === activeRunId && (
                     <span className="rounded-full bg-gold/15 px-2 py-0.5 text-[0.6rem] font-medium text-gold">Active</span>
                   )}
@@ -1707,6 +1916,17 @@ function RunListView({
                     style={{ width: `${progress.total > 0 ? Math.min(100, (progress.approved / progress.total) * 100) : 0}%` }}
                   />
                 </div>
+                {canPromote && (
+                  <button
+                    type="button"
+                    onClick={() => handlePromote(run.id)}
+                    disabled={busy}
+                    className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-gold hover:opacity-80 disabled:opacity-50"
+                  >
+                    {busy ? <Loader2 className="size-3 animate-spin" /> : <Rocket className="size-3" />}
+                    Promote to Full Plan
+                  </button>
+                )}
               </div>
               <button
                 type="button"
@@ -1721,6 +1941,20 @@ function RunListView({
               </button>
               <OptionsMenu
                 items={[
+                  ...(canBranch
+                    ? [
+                        {
+                          label: "Branch → new Full Plan",
+                          Icon: GitFork,
+                          onClick: () => handleBranch(run.id, "full"),
+                        },
+                        {
+                          label: "Branch → new Contract Plan",
+                          Icon: GitFork,
+                          onClick: () => handleBranch(run.id, "contract"),
+                        },
+                      ]
+                    : []),
                   {
                     label: "Discard this plan",
                     Icon: Trash2,
@@ -1742,6 +1976,153 @@ function RunListView({
           onConfirm={() => handleDelete(confirmingDeleteId)}
         />
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Platform Craft Notes — a per-BOOK (not per-run) reference doc feeding
+// {{PLATFORM_TRENDS}} into the Contract Pipeline's codex_documentation/
+// hook_chapters_outline units. PATCH is the only save path; POST /research
+// is an on-demand, billed pass that returns a DRAFT ONLY — never
+// auto-saved. The writer must explicitly review the draft and click Save.
+// ---------------------------------------------------------------------
+
+function PlatformCraftNotesView({ bookId }: { bookId: string }) {
+  const notes = usePlatformCraftNotes(bookId);
+  const loadStatus = usePlatformCraftNotesLoadStatus();
+  const loadError = usePlatformCraftNotesError();
+
+  const [draft, setDraft] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [researching, setResearching] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [savedFlash, setSavedFlash] = useState(false);
+
+  useEffect(() => {
+    if (!savedFlash) return;
+    const timeout = window.setTimeout(() => setSavedFlash(false), 2000);
+    return () => window.clearTimeout(timeout);
+  }, [savedFlash]);
+
+  const savedContent = notes?.content ?? "";
+  // Editing state is either a fresh research draft (set explicitly by
+  // handleResearch) or the writer's own in-progress edit of the saved
+  // content — `draft` stays null until one of those starts.
+  const value = draft ?? savedContent;
+
+  async function handleResearch() {
+    setResearching(true);
+    setActionError(null);
+    try {
+      const result = await researchPlatformCraftNotes(bookId);
+      setDraft(result);
+      setEditing(true);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't run a research pass.");
+    } finally {
+      setResearching(false);
+    }
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setActionError(null);
+    try {
+      await savePlatformCraftNotes(bookId, value);
+      setDraft(null);
+      setEditing(false);
+      setSavedFlash(true);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't save Platform Craft Notes.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleDiscardDraft() {
+    setDraft(null);
+    setEditing(false);
+    setActionError(null);
+  }
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-4">
+      <div>
+        <h2 className="font-display text-lg text-ink">Platform Craft Notes</h2>
+        <p className="mt-1 text-sm text-ink-muted">
+          A reference doc for the Contract Pipeline&apos;s hook-focused Generator and Critics — current hook
+          conventions, early-chapter pacing expectations, and common rejection reasons for serialized-fiction
+          platforms. Not a live feed: refreshed only when you run a research pass below, and only saved once you
+          review and confirm it.
+        </p>
+      </div>
+
+      {loadStatus === "error" && <p className="text-xs text-danger">{loadError}</p>}
+      {actionError && <p className="text-xs text-danger">{actionError}</p>}
+
+      <div className="card p-5">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="label-caps text-[0.65rem] text-ink-faint">Notes</h3>
+          <div className="flex items-center gap-3">
+            {savedFlash && <span className="text-xs text-success">Saved</span>}
+            <button
+              type="button"
+              onClick={handleResearch}
+              disabled={researching}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-line px-3 py-1.5 text-xs font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
+            >
+              {researching ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+              {researching ? "Researching…" : "Run Research Pass"}
+            </button>
+          </div>
+        </div>
+
+        {draft !== null && (
+          <p className="mt-3 rounded-xl border border-gold/40 bg-gold/10 p-3 text-xs text-ink-muted">
+            This is a fresh research draft — nothing is saved yet. Review it below, edit anything you want to change,
+            then Save to keep it, or Discard to drop it.
+          </p>
+        )}
+
+        <textarea
+          value={value}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setEditing(true);
+          }}
+          placeholder="No notes saved yet. Write your own, or run a research pass to get a starting draft."
+          rows={16}
+          className="scroll-slim mt-3 w-full resize-y rounded-xl border border-line bg-surface-2 p-3 text-sm text-ink outline-none focus:border-gold/60"
+        />
+
+        {editing && (
+          <div className="mt-3 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {saving && <Loader2 className="size-4 animate-spin" />}
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={handleDiscardDraft}
+              disabled={saving}
+              className="text-xs text-ink-faint underline-offset-2 hover:text-danger hover:underline disabled:opacity-50"
+            >
+              Discard changes
+            </button>
+          </div>
+        )}
+
+        {notes?.updatedAt && draft === null && (
+          <p className="mt-3 text-[0.7rem] text-ink-faint">Last saved {new Date(notes.updatedAt).toLocaleString()}</p>
+        )}
+      </div>
     </div>
   );
 }

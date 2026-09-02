@@ -38,6 +38,7 @@ import {
   type EffortLevel,
   type ExtractedEntityCandidate,
   type PartChapterRange,
+  type PipelineType,
   type PlanningChatMessage,
   type PlanningRun,
   type PlanningRunStatus,
@@ -238,6 +239,7 @@ type PlanningRunRow = {
   id: string;
   book_id: string;
   user_id: string;
+  pipeline_type: PipelineType;
   current_stage: PlanningStage;
   status: PlanningRunStatus;
   current_act: number | null;
@@ -271,6 +273,7 @@ function mapRunRow(row: PlanningRunRow): PlanningRun {
     id: row.id,
     bookId: row.book_id,
     userId: row.user_id,
+    pipelineType: row.pipeline_type ?? "full",
     currentStage: row.current_stage,
     status: row.status,
     currentAct: row.current_act,
@@ -454,16 +457,18 @@ export async function loadPlanningRun(runId: string): Promise<void> {
  * Starts a brand-new run for this book and makes it the active run — NOT
  * Stage 1 yet. A fresh run opens in `intake_active`: a conversation where
  * the writer describes the book before the Generator ever runs (see
- * `sendIntakeChatTurn`/`finalizeIntakeConversation` below).
+ * `sendIntakeChatTurn`/`finalizeIntakeConversation` below). `pipelineType`
+ * defaults to "full" server-side when omitted — see PipelineType in
+ * planning-data.ts for what "contract" gets you instead.
  */
-export async function startPlanningRun(bookId: string): Promise<PlanningRun> {
+export async function startPlanningRun(bookId: string, pipelineType?: PipelineType): Promise<PlanningRun> {
   runStatus = "loading";
   runError = null;
   emitRun();
   try {
     const res = await apiFetch<RunResponse>("/planning/runs", {
       method: "POST",
-      body: JSON.stringify({ bookId, userId: getUserId() }),
+      body: JSON.stringify({ bookId, userId: getUserId(), ...(pipelineType ? { pipelineType } : {}) }),
     });
     return setActiveRun(res.run);
   } catch (err) {
@@ -472,6 +477,45 @@ export async function startPlanningRun(bookId: string): Promise<PlanningRun> {
     emitRun();
     throw err;
   }
+}
+
+/**
+ * Takes a COMPLETED (`status: "done"`) Contract Pipeline run and creates a
+ * brand new "full" pipeline run for the same book, seeded with its
+ * approved Stage 1 Summary and its already-materialized Part 1 (chapters
+ * 1-5) — see `promoteContractRunToFull` in the backend's planningEngine.ts.
+ * Returns the NEW run and makes it the active one; the original contract
+ * run is left completely untouched (a new row, not a mutation), so it
+ * stays visible in the Run List as a historical record. Also refreshes
+ * this book's run list so the new run shows up there without a manual
+ * reload.
+ */
+export async function promoteContractRunToFull(runId: string): Promise<PlanningRun> {
+  const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/promote-to-full`, { method: "POST" });
+  const run = setActiveRun(res.run);
+  refreshBookPlanningRuns(run.bookId);
+  return run;
+}
+
+/**
+ * Creates a NEW run reusing an EXISTING run's already-approved Stage 1
+ * Summary — skips intake and Stage 1 generation entirely, landing right
+ * after it for the requested `pipelineType` (codex_documentation for
+ * "contract", Act 1 Summary for "full"). `sourceRunId` just needs to have
+ * gotten past stage_1_summary at some point — works whether that run is
+ * still in progress or fully done. A secondary/power-user affordance for
+ * trying a different pipeline against a book whose premise is already
+ * settled, without paying for a duplicate Stage 1 call. 409 from the
+ * backend if the source run has no approved Stage 1 Summary yet.
+ */
+export async function branchPlanningRun(sourceRunId: string, pipelineType: PipelineType): Promise<PlanningRun> {
+  const res = await apiFetch<RunResponse>(`/planning/runs/${sourceRunId}/branch`, {
+    method: "POST",
+    body: JSON.stringify({ userId: getUserId(), pipelineType }),
+  });
+  const run = setActiveRun(res.run);
+  refreshBookPlanningRuns(run.bookId);
+  return run;
 }
 
 /**
@@ -719,4 +763,95 @@ export async function confirmPlanningEntities(runId: string, approvedIndexes: nu
     emitEntityAction();
     throw err;
   }
+}
+
+// ---------------------------------------------------------------------
+// Platform Craft Notes — a per-BOOK (not per-run) reference doc feeding
+// {{PLATFORM_TRENDS}} into the Contract Pipeline's codex_documentation/
+// hook_chapters_outline units. Backed by the real /platform-craft-notes
+// GET/PATCH/POST-research endpoints — see platformCraftNotes.ts on the
+// backend. Deliberately NOT a live/scheduled feed: PATCH is the only way
+// these notes ever actually get saved; POST /research returns a DRAFT
+// ONLY that the writer must explicitly review and save via PATCH — this
+// store never calls PATCH on the caller's behalf from inside `research()`.
+// bookId-scoped single-current-book, same pattern as Notes/Banned Terms.
+// ---------------------------------------------------------------------
+
+export type PlatformCraftNotes = { bookId: string; content: string; updatedAt: string | null };
+type PlatformCraftNotesRow = { book_id: string; content: string; updated_at: string | null };
+type PlatformCraftNotesResponse = { notes: PlatformCraftNotesRow };
+type PlatformCraftNotesResearchResponse = { draft: string };
+
+function mapPlatformCraftNotesRow(row: PlatformCraftNotesRow): PlatformCraftNotes {
+  return { bookId: row.book_id, content: row.content, updatedAt: row.updated_at };
+}
+
+let platformNotes: PlatformCraftNotes | null = null;
+let platformNotesBookId: string | null = null;
+let platformNotesStatus: LoadStatus = "idle";
+let platformNotesError: string | null = null;
+const platformNotesListeners = new Set<() => void>();
+function emitPlatformNotes() {
+  for (const l of platformNotesListeners) l();
+}
+function subscribePlatformNotes(l: () => void) {
+  platformNotesListeners.add(l);
+  return () => platformNotesListeners.delete(l);
+}
+
+async function loadPlatformCraftNotes(bookId: string): Promise<void> {
+  platformNotesBookId = bookId;
+  platformNotesStatus = "loading";
+  platformNotesError = null;
+  emitPlatformNotes();
+  try {
+    const res = await apiFetch<PlatformCraftNotesResponse>(`/platform-craft-notes?bookId=${encodeURIComponent(bookId)}`);
+    platformNotes = mapPlatformCraftNotesRow(res.notes);
+    platformNotesStatus = "loaded";
+  } catch (err) {
+    platformNotesStatus = "error";
+    platformNotesError = err instanceof Error ? err.message : "Couldn't load Platform Craft Notes.";
+  }
+  emitPlatformNotes();
+}
+
+/** The book's saved Platform Craft Notes — `content: ""` for a book that's never saved any. */
+export function usePlatformCraftNotes(bookId: string | undefined): PlatformCraftNotes | null {
+  useEffect(() => {
+    if (bookId && bookId !== platformNotesBookId) void loadPlatformCraftNotes(bookId);
+  }, [bookId]);
+  return useSyncExternalStore(subscribePlatformNotes, () => platformNotes, () => platformNotes);
+}
+export function usePlatformCraftNotesLoadStatus(): LoadStatus {
+  return useSyncExternalStore(subscribePlatformNotes, () => platformNotesStatus, () => platformNotesStatus);
+}
+export function usePlatformCraftNotesError(): string | null {
+  return useSyncExternalStore(subscribePlatformNotes, () => platformNotesError, () => platformNotesError);
+}
+
+/** The only way these notes actually get saved — whether the content came from editing a research draft or writing it directly. */
+export async function savePlatformCraftNotes(bookId: string, content: string): Promise<PlatformCraftNotes> {
+  const res = await apiFetch<PlatformCraftNotesResponse>("/platform-craft-notes", {
+    method: "PATCH",
+    body: JSON.stringify({ bookId, content }),
+  });
+  platformNotes = mapPlatformCraftNotesRow(res.notes);
+  platformNotesBookId = bookId;
+  platformNotesStatus = "loaded";
+  emitPlatformNotes();
+  return platformNotes;
+}
+
+/**
+ * An on-demand, billed research pass (Claude + web search/fetch) —
+ * returns a DRAFT STRING ONLY. Never touches the saved-notes cache and
+ * never calls PATCH itself; the caller must show the draft for review and
+ * call `savePlatformCraftNotes` explicitly if the writer wants to keep it.
+ */
+export async function researchPlatformCraftNotes(bookId: string): Promise<string> {
+  const res = await apiFetch<PlatformCraftNotesResearchResponse>("/platform-craft-notes/research", {
+    method: "POST",
+    body: JSON.stringify({ bookId }),
+  });
+  return res.draft;
 }

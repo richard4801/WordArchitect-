@@ -40,7 +40,8 @@ export type AgentRole =
   | "arbitrator_chat"
   | "arbitrator_directive"
   | "entity_extractor"
-  | "ledger_extractor";
+  | "ledger_extractor"
+  | "platform_researcher";
 
 export const AGENT_ROLES: AgentRole[] = [
   "generator",
@@ -52,6 +53,7 @@ export const AGENT_ROLES: AgentRole[] = [
   "arbitrator_directive",
   "entity_extractor",
   "ledger_extractor",
+  "platform_researcher",
 ];
 
 /**
@@ -103,6 +105,10 @@ export const AGENT_ROLE_META: Record<AgentRole, { label: string; description: st
     label: "Ledger Extractor",
     description: "Runs automatically after each Part's beats are approved — extracts hard facts (numbers, rules, established states) into the Continuity Ledger, reconciled against real drafted chapters where they exist.",
   },
+  platform_researcher: {
+    label: "Platform Researcher",
+    description: "On-demand research pass (web search/fetch) for the Contract Pipeline's Platform Craft Notes — finds current hook/pacing conventions for serialized-fiction platforms. Returns a draft only; never saves anything itself.",
+  },
 };
 
 /**
@@ -113,7 +119,7 @@ export const AGENT_ROLE_META: Record<AgentRole, { label: string; description: st
  * A UI hint, not an enforced rule elsewhere: "all" is always a valid
  * stage for any role.
  */
-export const SINGLE_STAGE_ROLES = new Set<AgentRole>(["entity_extractor", "ledger_extractor"]);
+export const SINGLE_STAGE_ROLES = new Set<AgentRole>(["entity_extractor", "ledger_extractor", "platform_researcher"]);
 
 /**
  * `arbitrator_chat` and `arbitrator_directive` are looked up at TWO
@@ -133,21 +139,84 @@ export const DUAL_MOMENT_ROLES = new Set<AgentRole>(["arbitrator_chat", "arbitra
  * two passes (outline, then one or more beats chunks) before the next
  * Part unlocks. See `UnitPosition`/`unitKeyForPosition` below for how a
  * run's exact position in that hierarchy is tracked and keyed.
+ *
+ * `codex_documentation`/`hook_chapters_outline` are the Contract
+ * Pipeline's own two units (see `PipelineType` below) — a flatter,
+ * separate track that only shares `stage_1_summary` with the Act/Part/
+ * Beats hierarchy above. See the backend's CLAUDE.md "Contract Pipeline"
+ * section, confirmed directly against `src/services/planningEngine.ts`.
  */
-export type PlanningStage = "stage_1_summary" | "act_summary" | "part_outline" | "part_beats" | "all" | "intake";
+export type PlanningStage =
+  | "stage_1_summary"
+  | "act_summary"
+  | "part_outline"
+  | "part_beats"
+  | "codex_documentation"
+  | "hook_chapters_outline"
+  | "all"
+  | "intake";
 
-export const PLANNING_STAGES: PlanningStage[] = ["stage_1_summary", "act_summary", "part_outline", "part_beats", "intake", "all"];
+export const PLANNING_STAGES: PlanningStage[] = [
+  "stage_1_summary",
+  "act_summary",
+  "part_outline",
+  "part_beats",
+  "codex_documentation",
+  "hook_chapters_outline",
+  "intake",
+  "all",
+];
 
-/** The four real pipeline stages, in order — a run's `current_stage` is never "all" or "intake"; those only exist as prompt-lookup stages. */
-export const RUN_STAGES: Exclude<PlanningStage, "all" | "intake">[] = ["stage_1_summary", "act_summary", "part_outline", "part_beats"];
+/** The six real pipeline stages, in order — a run's `current_stage` is never "all" or "intake"; those only exist as prompt-lookup stages. */
+export const RUN_STAGES: Exclude<PlanningStage, "all" | "intake">[] = [
+  "stage_1_summary",
+  "act_summary",
+  "part_outline",
+  "part_beats",
+  "codex_documentation",
+  "hook_chapters_outline",
+];
 
 export const PLANNING_STAGE_META: Record<PlanningStage, { label: string; short: string }> = {
   stage_1_summary: { label: "Stage 1 — Core Summary", short: "Summary" },
   act_summary: { label: "Act Summary", short: "Act" },
   part_outline: { label: "Part Outline", short: "Outline" },
   part_beats: { label: "Part Beats", short: "Beats" },
+  codex_documentation: { label: "Codex Documentation", short: "Codex" },
+  hook_chapters_outline: { label: "Hook Chapters Outline (1-5)", short: "Hook Chapters" },
   intake: { label: "Intake (pre-Stage 1)", short: "Intake" },
   all: { label: "All Stages", short: "All" },
+};
+
+/**
+ * "full" is the Act/Part/Beats hierarchy above. "contract" is a separate,
+ * much shorter track — a Core Summary, then Codex documentation, then a
+ * fixed 5-chapter hook outline — built to mirror how serialized-fiction
+ * platforms (GoodNovel-style) decide whether a book gets picked up: on
+ * roughly its first five chapters, judged on hook strength and early
+ * pacing, not the whole book. Both tracks share the same stage_1_summary
+ * unit and the same generate→critique→arbitrate→approve machinery; only
+ * the stage sequence after Stage 1 differs (see `nextPlanningPosition`
+ * below, mirroring the backend's own `nextPosition` in planningEngine.ts).
+ * A completed contract run can be promoted into a fresh full-pipeline run
+ * (see `promoteContractRunToFull` in planning-store.ts) that starts
+ * already past Part 1 of Act 1, since those first five chapters are
+ * already planned and approved.
+ */
+export type PipelineType = "full" | "contract";
+export const PIPELINE_TYPES: PipelineType[] = ["full", "contract"];
+
+export const PIPELINE_TYPE_META: Record<PipelineType, { label: string; description: string }> = {
+  full: {
+    label: "Plan the full book",
+    description:
+      "The complete Act → Part → Beats hierarchy — 3 Acts, 9 Parts, every chapter beat-mapped before you write it. Best when you're planning a book you already know you're writing.",
+  },
+  contract: {
+    label: "Plan first 5 chapters for a contract submission",
+    description:
+      "A short track built to mirror how serialized-fiction platforms judge a book: a Core Summary, initial Codex documentation, and a fixed 5-chapter hook outline — nothing more. Once approved, it can be promoted into a full-book plan.",
+  },
 };
 
 export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -255,6 +324,11 @@ export type PlanningRun = {
   id: string;
   bookId: string;
   userId: string;
+  // "full" (default) or "contract" — see PipelineType. Fixed for the life
+  // of a run; a promoted contract run creates a brand new "full" row
+  // rather than converting itself in place, so the contract run stays as
+  // an intact historical record of what actually got the contract.
+  pipelineType: PipelineType;
   currentStage: PlanningStage;
   status: PlanningRunStatus;
   // A run's exact position once it's past stage_1_summary — null/null/null
@@ -315,6 +389,10 @@ export function unitKeyForPosition(pos: UnitPosition): string {
   switch (pos.stage) {
     case "stage_1_summary":
       return "stage_1_summary";
+    case "codex_documentation":
+      return "codex_documentation";
+    case "hook_chapters_outline":
+      return "hook_chapters_outline";
     case "act_summary":
       return `act_${pos.act}_summary`;
     case "part_outline":
@@ -351,15 +429,46 @@ export function chunksNeededForRange(range: PartChapterRange): number {
 /**
  * Mirrors the backend's own `nextPosition()` exactly — what comes after
  * `pos`, given the run's partChapterRanges (needed to know how many
- * beat-generation chunks a Part needs). Null once all 3 Acts' 9 Parts are
- * fully planned. Used to compute the Pipeline Map's locked/current/
- * approved state for every unit, and the approved-unit progress count.
+ * beat-generation chunks a Part needs) and pipelineType (needed only at
+ * the one fork point right after stage_1_summary — everywhere else the
+ * stage alone already disambiguates, since codex_documentation/
+ * hook_chapters_outline only ever exist on a "contract" run). Null once
+ * the run's whole track is fully planned (all 3 Acts' 9 Parts for "full",
+ * or the fixed 3-unit sequence for "contract"). Used to compute the
+ * Pipeline Map's locked/current/approved state for every unit, and the
+ * approved-unit progress count.
  */
-export function nextPlanningPosition(pos: UnitPosition, partChapterRanges: Record<string, PartChapterRange>): UnitPosition | null {
+export function nextPlanningPosition(
+  pos: UnitPosition,
+  partChapterRanges: Record<string, PartChapterRange>,
+  pipelineType: PipelineType = "full",
+): UnitPosition | null {
   if (pos.stage === "stage_1_summary") {
+    if (pipelineType === "contract") {
+      return { stage: "codex_documentation", act: null, part: null, beatChunk: null };
+    }
     return { stage: "act_summary", act: 1, part: null, beatChunk: null };
   }
+  if (pos.stage === "codex_documentation") {
+    return { stage: "hook_chapters_outline", act: null, part: null, beatChunk: null };
+  }
+  if (pos.stage === "hook_chapters_outline") {
+    // The Contract Pipeline is exactly these three units — done once this
+    // is approved. See promoteContractRunToFull (planning-store.ts) for
+    // how an approved run continues into the main hierarchy, as a brand
+    // new "full" run.
+    return null;
+  }
   if (pos.stage === "act_summary") {
+    // A run created by promoteContractRunToFull already has Part 1
+    // (chapters 1-5) materialized before Act 1's summary is even
+    // generated — its chapter range was pre-seeded. Skip straight to
+    // Part 2 rather than re-planning a Part that's already written and
+    // approved via the Contract Pipeline. Mirrors the backend's own
+    // nextPosition exactly.
+    if (pos.act === 1 && partChapterRanges[partRangeKey(1, 1)]) {
+      return { stage: "part_outline", act: 1, part: 2, beatChunk: null };
+    }
     return { stage: "part_outline", act: pos.act, part: 1, beatChunk: null };
   }
   if (pos.stage === "part_outline") {
@@ -416,7 +525,7 @@ export function computePlanningProgress(run: PlanningRun): { approved: number; t
     total += 1;
     if (current && samePosition(pos, current)) reachedCurrent = true;
     else if (!reachedCurrent) approved += 1;
-    pos = nextPlanningPosition(pos, run.partChapterRanges);
+    pos = nextPlanningPosition(pos, run.partChapterRanges, run.pipelineType);
   }
 
   return { approved: run.status === "done" ? total : approved, total, totalIsFinal };
@@ -444,8 +553,12 @@ export function placeholdersFor(role: AgentRole, stage: PlanningStage): { token:
         { token: "{{PARENT_ARTIFACT}}", meaning: "The immediate parent unit's approved content (blank at Stage 1)" },
         { token: "{{CONTINUITY_LEDGER}}", meaning: "Accumulated hard facts from every approved beats chunk so far" },
         { token: "{{PREVIOUS_ARTIFACT}}", meaning: "This exact unit's own last draft — blank on a first generation" },
-        { token: "{{CHAPTER_RANGE}}", meaning: "Which chapter window this call must produce (part_beats only)" },
+        { token: "{{CHAPTER_RANGE}}", meaning: "Which chapter window this call must produce (part_beats and hook_chapters_outline — fixed at chapters 1-5 for the latter)" },
         { token: "{{FINAL_DELTA_DIRECTIVE}}", meaning: "Set after intake, or after a rejection's finalize-directive" },
+        {
+          token: "{{PLATFORM_TRENDS}}",
+          meaning: "Platform Craft Notes content (Contract Pipeline runs only) — empty on a \"full\" run or a book with no notes saved yet",
+        },
       ];
     case "continuity_critic":
     case "pacing_critic":
@@ -459,6 +572,10 @@ export function placeholdersFor(role: AgentRole, stage: PlanningStage): { token:
           token: "{{PREVIOUS_CRITIQUE}}",
           meaning: "This critic's own previous review of this same unit — empty on a first review, populated on a revision pass",
         },
+        {
+          token: "{{PLATFORM_TRENDS}}",
+          meaning: "Platform Craft Notes content (Contract Pipeline runs only) — empty on a \"full\" run or a book with no notes saved yet",
+        },
       ];
     case "arbitrator_panel":
       return [
@@ -468,6 +585,10 @@ export function placeholdersFor(role: AgentRole, stage: PlanningStage): { token:
         {
           token: "{{PREVIOUS_SYNTHESIS}}",
           meaning: "This Arbitrator's own previous synthesis of this same unit — empty on a first synthesis, populated on a revision pass",
+        },
+        {
+          token: "{{PLATFORM_TRENDS}}",
+          meaning: "Platform Craft Notes content (Contract Pipeline runs only) — empty on a \"full\" run or a book with no notes saved yet",
         },
       ];
     case "arbitrator_chat":
@@ -500,6 +621,8 @@ export function placeholdersFor(role: AgentRole, stage: PlanningStage): { token:
         { token: "{{CONTENT}}", meaning: "The reconciled per-chapter content to extract facts from (real drafted text where it exists, else the chunk's own beats)" },
         { token: "{{EXISTING_LEDGER}}", meaning: "The ledger so far, so it doesn't re-extract duplicates" },
       ];
+    case "platform_researcher":
+      return [{ token: "{{EXISTING_NOTES}}", meaning: "The book's currently-saved Platform Craft Notes, if any — so a re-research pass can build on what's already there" }];
     default:
       // A role the backend added that this file doesn't recognize yet (see
       // AGENT_ROLES' comment on the Prompt Editor's defensive fallback) —
@@ -547,8 +670,11 @@ export function outputShapeHint(role: AgentRole, stage: PlanningStage): string |
   if (role === "generator" && stage === "part_outline") {
     return 'Must return JSON:\n{"startChapter": 1, "endChapter": 12, "outline": "..."}';
   }
-  if (role === "generator" && stage === "part_beats") {
+  if (role === "generator" && (stage === "part_beats" || stage === "hook_chapters_outline")) {
     return 'Must return JSON:\n{"chapters": [{"chapterNumber": 1, "title": "...", "beats": [{"title": "...", "outlineText": "..."}]}]}';
+  }
+  if (role === "generator" && stage === "codex_documentation") {
+    return 'Must return JSON:\n{"entries": [{"name": "...", "entryType": "character", "description": "...", "aliases"?: [...], "tier"?: "...", "personalityTraits"?: [...], "motivations"?: [...]}]}\nApproving this unit writes these directly into your Codex.';
   }
   if (role === "entity_extractor") {
     return 'Must return a JSON array:\n[{"type": "codex_entry" | "world_category", "name": "...", "entryType": "...", "description": "..."}]';

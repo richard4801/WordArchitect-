@@ -2916,6 +2916,153 @@ Map, Unit Review, Continuity Ledger, and Entity Review compared side by
 side with the design mock to confirm the layout/spacing/color/component-
 shape correspondence the brief originally asked for. Zero console errors.
 
+**The Contract Pipeline — a second, shorter track, reusing almost
+everything already built.** Backend commits `f202121`/`67d2e73` added
+`pipeline_type: "full" | "contract"` on `planning_runs`, a fast 3-unit
+track (`stage_1_summary → codex_documentation → hook_chapters_outline →
+done`) mirroring how serialized-fiction platforms judge a book: on
+roughly its first five chapters' hook strength and early pacing, not the
+whole book. Confirmed by reading `planningEngine.ts`/`routes/planning.ts`/
+`routes/platformCraftNotes.ts` directly before building anything, same
+discipline as every other pass in this file.
+
+- **Same intake, same `UnitDetail`/`ReviewGate`, same approve/reject/
+  discard/unapprove actions, same 3-critic panel** — `nextPosition`
+  branches only once, at `stage_1_summary`, on `pipelineType`; everywhere
+  else the stage name alone disambiguates (`codex_documentation`/
+  `hook_chapters_outline` only ever exist on a "contract" run). Mirrored
+  exactly in `nextPlanningPosition()`/`unitKeyForPosition()`
+  (`planning-data.ts`) with a `pipelineType` parameter (default `"full"`
+  for every existing call site), so this needed zero new components —
+  `UnitDetail`/`ReviewGate` render the two new stages with no changes at
+  all beyond the artifact renderer already being schema-agnostic
+  (`StructuredValue`).
+- **`codex_documentation` writes directly into the real Codex on
+  approve** — not a proposal like on-demand entity extraction. JSON
+  contract `{"entries": [{"name", "entryType", "description", ...}]}`,
+  materialized by the backend's `materializeCodexDocumentation` the same
+  non-proposal way `materializeBeats` commits an approved beats chunk.
+  `ReviewGate` shows an explicit info note above Approve/Reject
+  ("Approving writes these entries directly into your Codex — not a
+  proposal you review again later.") specifically for this unit, since
+  every other unit's approve is "lock this plan," not "write real rows
+  right now." Approving refreshes both `character-store.ts` and
+  `worldbuilding-store.ts` (an entry's `entryType` isn't known client-side
+  without a lookup — harmless to refresh both).
+- **`hook_chapters_outline` is fixed to chapters 1-5** and reuses
+  `part_beats`'s exact JSON contract and `materializeBeats`/
+  `appendLedgerFacts` unchanged — approving it creates real
+  `manuscript_chapters`/`chapter_beats` rows, same as an approved Part
+  Beats chunk on the full pipeline. `ReviewGate` shows the matching
+  consequence note ("Approving creates chapters 1-5 in your Manuscript
+  with these planned beats..."). Approving refreshes both
+  `outline-store.ts` and `manuscript-store.ts`.
+- **Pipeline Map gets a real contract-specific layout**, not the Act/Part
+  grid — `PipelineMap` branches on `run.pipelineType`: three flat
+  `UnitRow`s (Stage 1, Codex Documentation, Hook Chapters Outline) inside
+  one card, with a link to Platform Craft Notes and, once `status ===
+  "done"`, a "Promote to Full Plan" button instead of "Open Unit." Total
+  unit count for `computePlanningProgress()` falls out of the same
+  `nextPlanningPosition()` walk used for the full hierarchy — a contract
+  run's `totalIsFinal` is always `true` (it never touches `part_beats`,
+  the one branch that can grow the count), so no special-casing was
+  needed there at all.
+- **Pipeline-type choice lives on `StartPlanningCard`** — two selectable
+  cards ("Plan the full book" / "Plan first 5 chapters for a contract
+  submission", labels/descriptions from `PIPELINE_TYPE_META`) instead of
+  a single "Start Planning" button; `startPlanningRun(bookId,
+  pipelineType?)` passes it straight through to `POST /planning/runs`
+  (server defaults to `"full"` when omitted, so every pre-existing call
+  site needed no changes). Run List's header also grew a second "New
+  Contract Run" button alongside "New Full Run" for starting another run
+  on a book that already has one.
+- **Platform Craft Notes** — a new per-BOOK (not per-run) reference doc
+  feeding `{{PLATFORM_TRENDS}}` into the Contract Pipeline's Generator/
+  Critics, real backend resource (`platform_craft_notes`, one row per
+  book) via three endpoints confirmed by reading `platformCraftNotes.ts`/
+  `routes/platformCraftNotes.ts` directly: `GET` (current saved notes, or
+  an honest empty stub), `PATCH` (the *only* save path), and `POST
+  /research` (an on-demand, billed Claude + web-search/fetch pass —
+  `platform_researcher`, stage `"all"`, added to `AGENT_ROLES` and the
+  Prompt Editor's role list) that returns a **draft only**. New
+  `PlatformCraftNotesView` (a `platform-notes` entry in the sidebar
+  nav, reachable without a run in progress since it's book-scoped, plus a
+  direct link from the Contract Pipeline's own Pipeline Map): a plain
+  `<textarea>` over the saved content, a "Run Research Pass" button that
+  fills the textarea with the returned draft and shows an explicit
+  "nothing is saved yet" banner, and a Save/Discard pair that only appear
+  once something's actually been edited. `savePlatformCraftNotes()`
+  (`planning-store.ts`) is the only function that ever calls `PATCH` —
+  `researchPlatformCraftNotes()` returns the string and touches no cache
+  at all, so a research pass can never silently overwrite what's saved
+  without the writer clicking Save first.
+- **"Promote to Full Plan"** — `POST /planning/runs/:id/promote-to-full`
+  (409 unless the source run is a completed `"contract"` run), wrapped by
+  `promoteContractRunToFull()`, which sets the new run as active and
+  refreshes the book's run list. The backend pre-seeds the new "full" run
+  with Part 1 of Act 1 already covered (`part_chapter_ranges["1-1"]:
+  {startChapter: 1, endChapter: 5}`, `stage_artifacts` seeded with a
+  display-only Part 1 outline placeholder and the contract run's real
+  `hook_chapters_outline` JSON as Part 1's beats) — confirmed by reading
+  `promoteContractRunToFull()` directly, not assumed from the route
+  comment alone. `nextPlanningPosition()`'s `act_summary` branch mirrors
+  the backend's own "skip Part 1" special case exactly (checks
+  `partChapterRanges["1-1"]` before deciding whether Part 1 or Part 2 is
+  next), so the promoted run's Pipeline Map correctly shows Part 1 as
+  already approved without any extra client-side bookkeeping. **The
+  original contract run is left completely untouched** — a new row, not a
+  mutation — confirmed in the Run List: both runs stay visible, tagged
+  "Contract"/"Full," and the contract run's own "Promote to Full Plan"
+  shortcut is still offered even after a promotion already happened
+  (the backend doesn't track "already promoted" as a distinct state, so
+  neither does this UI — promoting again just creates another new "full"
+  run, which is the correct, unsurprising behavior given what the
+  endpoint actually does).
+- **"Branch"** — `POST /planning/runs/:id/branch` (`{userId,
+  pipelineType}`, 409 if the source run has no approved Stage 1 Summary
+  yet), wrapped by `branchPlanningRun()`. A secondary/power-user
+  affordance in the Run List's per-run "..." menu ("Branch → new Full
+  Plan" / "Branch → new Contract Plan", shown whenever
+  `run.stageArtifacts.stage_1_summary` exists) for reusing an already-
+  approved Stage 1 Summary to start a fresh run of either pipeline type
+  without re-running intake or paying for a duplicate Stage 1 generation.
+- **`RealPlanningStage`/`PlanningStage` gained the two new stages**, and
+  `PlanningRun` gained exactly one field, `pipelineType`, mirroring the
+  backend's own single-field addition — every other type in
+  `planning-data.ts` needed no changes, confirming the "reuse almost
+  everything" framing was accurate, not just a wish.
+
+**Verified working** (against a from-scratch extension of the existing
+mock backend — pipelineType-aware `nextPosition`/`previousPosition`,
+`codex_documentation`/`hook_chapters_outline` generate/approve including
+real mock `codex_entries`/`manuscript_chapters` materialization,
+`promote-to-full`, `branch`, and the three `platform-craft-notes`
+endpoints, all mirroring the real backend's request/response/error
+shapes): a fresh book's Start Planning card offers both pipeline types;
+choosing Contract lands on the same intake chat, and finalizing intake
+opens Stage 1 exactly like a full run; approving Stage 1 moves a contract
+run to `codex_documentation` (confirmed NOT `act_summary`); the Codex
+Documentation review gate shows the real consequence note and its JSON
+artifact renders as readable entries with no raw braces; approving it
+writes real `codex_entries` (confirmed independently via `GET /codex`);
+the Hook Chapters Outline review gate shows its own consequence note;
+approving it creates 5 real chapters (confirmed via `GET
+/manuscript/chapters`) and the run reaches `status: "done"`; the Pipeline
+Map's contract-specific flat layout renders correctly with no Act/Part
+grid; the done state shows "Promote to Full Plan"; Platform Craft
+Notes' empty state, research draft (confirmed NOT auto-saved), and
+explicit Save all work, with a real "Last saved" timestamp after;
+Promote to Full creates a real new "full" run seeded with Part 1 already
+covered, confirmed to skip straight to Part 2's outline once Act 1's
+Summary is approved; the original contract run is confirmed untouched
+(`status: "done"`, `pipeline_type: "contract"`) after promotion; Branch
+correctly reuses a run's Stage 1 Summary and correctly 409s against a run
+with no summary yet; Promote correctly 409s against a non-contract or
+non-done run; and the Run List tags both runs by pipeline type. Re-ran
+the full pre-existing Act/Part/Beats Playwright pass unchanged afterward
+to confirm zero regression to the "full" pipeline. Zero console errors
+across the full pass.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance
