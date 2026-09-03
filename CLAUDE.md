@@ -3607,6 +3607,106 @@ Act/Part/Beats, Contract Pipeline, and Platform Craft Notes Playwright
 suites (the first two exercise this same `ReviewGate` component) — zero
 regressions. `tsc --noEmit`, `eslint`, and `npm run build` all clean.
 
+**Three real backend additions wired in the same pass: Apply Critique,
+per-critique arbitration exclusion, and chat auto-finalize.** Backend
+commits `b2a1317` ("Add Apply Critique action and per-critique exclusion")
+and `35f5a0c` ("Auto-finalize the rejection interview once the writer
+confirms") — both confirmed against the live route/service source before
+building anything, continuing this file's own discipline; one factual
+claim in the handoff spec for these ("Immediately call
+`POST /planning/runs/:id/generate` next — same as you already do after
+Accept-with-changes/`finalize-directive`") turned out to be wrong about
+this codebase's own existing behavior — `handleFinalizeDirective`'s own
+comment is explicit that it deliberately does **not** auto-chain into
+Generate ("the writer's last input before a fresh 60-180s call... should
+be a deliberate next click, not a multi-minute wait sprung by the same
+click"). Both new actions below follow that same already-established,
+deliberate principle instead of the spec's incorrect assumption.
+
+- **Apply Critique** — a real third button between Reject and Approve on
+  `ReviewGate` ("Reject & Discuss | Apply Critique | Approve & Lock"):
+  skips the whole reject → chat interview → directive path and sends the
+  Arbitrator's already-computed `mustFix`/`worthConsidering` straight to
+  the Generator, via the real `POST /planning/runs/:id/apply-critique`
+  (`applyCritiquePlanningStage` in `planning-store.ts`) — no extra LLM
+  call, confirmed instant. Only rendered once `hasVerdict` is true
+  (mirrors the backend's own 400 for "no arbitrator synthesis yet," which
+  in practice can't be reached through this button anyway since
+  `ReviewGate` itself only ever renders after a real arbitrate call).
+  Lands on the plain Generate/Continue card afterward, not auto-chained
+  into the real Generate call — see the note above.
+- **Per-critique inclusion checkboxes** — each of the three critic cards
+  in `ReviewCard` gained "Include in Arbitrator's review," default
+  checked. Unchecking one reveals a "Re-run Arbitration" button next to
+  the Critics heading (hidden while every critic is still checked — this
+  is a real, billed LLM call, only worth surfacing once something's
+  actually changed from the default) that re-POSTs
+  `/planning/runs/:id/arbitrate` with `{ excludedCritics }`
+  (`rerunArbitration` in `planning-store.ts`). The excluded critic's own
+  card stays fully visible and untouched — nothing is deleted, only what
+  the Arbitrator synthesizes from changes, exactly matching the backend's
+  own framing. This local exclusion state lives on `ReviewGate`, which is
+  now explicitly `key={unit}`ed from `UnitDetail` so a genuinely new unit
+  always starts every critic checked again, rather than carrying over a
+  previous unit's unchecked state — the same "reset via remount"
+  convention this file already uses for `PromptDraftEditor`/
+  `EntityReviewView`.
+- **Chat auto-finalize** — the manual "Send Directive & Regenerate"
+  button is gone from `RejectionInterview` entirely. The backend's
+  `chatTurn` now detects on its own when the writer has confirmed a
+  correction and chains straight into `finalizeDirective` server-side,
+  returning a run already back to `status: "generating"` with a real
+  `finalDeltaDirective` — not just an updated `chatHistory`. The frontend
+  needed **no new logic at all** for the actual transition: `UnitDetail`
+  already renders purely off `run.status`, so the same store update that
+  lands the auto-finalized run swaps the interview out for the plain
+  Generate card on its own, the same reactive path every other status
+  change on this screen already takes (approve, reject, discard-stage,
+  ...). `onSendChat` only gained a `try/catch` surfacing a send failure
+  into the existing `actionError` banner, which had been silently
+  swallowing errors before (a real, if minor, pre-existing gap fixed
+  incidentally while touching this code). `finalize-directive` stays
+  available as a real manual fallback — a small "Stuck? Finalize the
+  directive now instead of waiting for the Arbitrator to." text link
+  where the old button used to be, for a run where the signal was missed
+  or an old interview resumed mid-conversation.
+
+**Mock server extended to match all three real contracts exactly**: the
+default `/arbitrate` handler now reads `{ excludedCritics }` from the
+body and reflects it in the synthesis (so a re-arbitrate is independently
+verifiable, not just "the button didn't crash"); `/chat` recognizes an
+explicit `AUTO_FINALIZE_NOW` trigger phrase in the message (standing in
+for the real backend's own model-detected readiness signal, which isn't
+reproducible from a canned mock reply) and, when present, performs the
+exact same `finalizeDirective`-equivalent transition inline; a new
+`/apply-critique` endpoint mirrors `applyCritiqueDirectly`'s real logic
+byte for byte, including both its distinct 400 messages ("No arbitrator
+synthesis available yet" vs. "no mustFix or worthConsidering items").
+
+**Verified working** (Playwright, a real run driven through
+Generate→Critique→Arbitrate to a genuine `awaiting_user_review` with a
+real synthesis): all three critic checkboxes render checked by default
+with Re-run Arbitration hidden; unchecking Pacing Critic reveals the
+button, and clicking it produces a new synthesis that visibly reflects
+the exclusion while the Pacing Critic's own card stays fully visible;
+re-checking it hides the button again. Apply Critique is visible only
+once a verdict exists, in the correct Reject/Apply Critique/Approve
+order; clicking it sets `status: "generating"` with a real
+`finalDeltaDirective` built from the actual `mustFix`/`worthConsidering`
+items, landing on the plain Generate card rather than auto-chaining;
+calling apply-critique on a run before any arbitrate call correctly 400s
+with the real error text. For chat: confirmed "Send Directive &
+Regenerate" is gone and the "Stuck? Finalize..." fallback link exists
+and still works; an ordinary chat message does not auto-finalize (status
+stays `user_chat_active`); the `AUTO_FINALIZE_NOW` trigger flips status
+to `generating` with a real directive populated and the UI transitions
+out of the interview into the Generate card with zero additional clicks.
+Re-ran the full Act/Part/Beats and Contract Pipeline Playwright suites
+afterward (one pre-existing assertion in the former referencing the
+now-removed "Send Directive" button text was updated to the new fallback
+link, a test-only change) plus the Platform Craft Notes suite — zero
+regressions. `tsc --noEmit`, `eslint`, and `npm run build` all clean.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance

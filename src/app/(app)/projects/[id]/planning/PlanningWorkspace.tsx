@@ -79,6 +79,7 @@ import {
   unitKeyForPosition,
 } from "@/lib/planning-data";
 import {
+  applyCritiquePlanningStage,
   approvePlanningStage,
   branchPlanningRun,
   clonePromptsFromBook,
@@ -94,6 +95,7 @@ import {
   promoteContractRunToFull,
   refreshPlatformCraftNotes,
   rejectPlanningStage,
+  rerunArbitration,
   runPipelineForward,
   saveAgentPromptVersion,
   savePlatformCraftNotes,
@@ -1243,6 +1245,8 @@ function UnitDetail({
   onAdvance,
   onApprove,
   onReject,
+  onApplyCritique,
+  onRerunArbitrate,
   onUnapprove,
   onDiscardStage,
   onSendChat,
@@ -1254,6 +1258,8 @@ function UnitDetail({
   onAdvance: () => void;
   onApprove: () => void;
   onReject: () => void;
+  onApplyCritique: () => void;
+  onRerunArbitrate: (excludedCritics: AgentRole[]) => void;
   onUnapprove: () => void;
   onDiscardStage: () => void;
   onSendChat: (message: string) => Promise<void>;
@@ -1341,6 +1347,12 @@ function UnitDetail({
 
       {run.status === "awaiting_user_review" && (
         <ReviewGate
+          // Keyed on the unit so the per-critique include/exclude
+          // checkboxes always reset to every-critic-checked on a genuinely
+          // new unit, rather than carrying over a previous unit's
+          // unchecked state (the "reset via remount" pattern this file
+          // already uses for PromptDraftEditor/EntityReviewView).
+          key={unit}
           run={run}
           unit={unit}
           advancing={advancing}
@@ -1348,6 +1360,8 @@ function UnitDetail({
           isFirstUnit={isFirstUnit}
           onApprove={onApprove}
           onReject={onReject}
+          onApplyCritique={onApplyCritique}
+          onRerunArbitrate={onRerunArbitrate}
           onDiscardStage={() => setConfirmingDiscardStage(true)}
         />
       )}
@@ -1382,6 +1396,8 @@ function ReviewGate({
   isFirstUnit,
   onApprove,
   onReject,
+  onApplyCritique,
+  onRerunArbitrate,
   onDiscardStage,
 }: {
   run: PlanningRun;
@@ -1391,11 +1407,27 @@ function ReviewGate({
   isFirstUnit: boolean;
   onApprove: () => void;
   onReject: () => void;
+  onApplyCritique: () => void;
+  onRerunArbitrate: (excludedCritics: AgentRole[]) => void;
   onDiscardStage: () => void;
 }) {
   const artifact = run.stageArtifacts[unit] ?? "";
   const reviewEntries = run.panelReviews ? Object.entries(run.panelReviews) : [];
   const hasVerdict = run.arbitratorSynthesis !== null && run.arbitratorSynthesis !== undefined;
+  // Per-critique checkboxes for re-arbitrating with a subset of critics —
+  // default every critic included, matching "reviews arrive checked,
+  // uncheck what you don't want." Local, ephemeral UI state (not part of
+  // the run) — the caller keys this whole component on `unit` so a fresh
+  // unit always starts every critic checked again.
+  const [excluded, setExcluded] = useState<Set<AgentRole>>(new Set());
+  function toggleCritic(role: AgentRole) {
+    setExcluded((prev) => {
+      const next = new Set(prev);
+      if (next.has(role)) next.delete(role);
+      else next.add(role);
+      return next;
+    });
+  }
 
   return (
     <div className="space-y-4">
@@ -1432,10 +1464,37 @@ function ReviewGate({
         <div className="space-y-4">
           {reviewEntries.length > 0 && (
             <div>
-              <h3 className="label-caps mb-2 text-[0.6rem] text-ink-faint">Critics</h3>
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <h3 className="label-caps text-[0.6rem] text-ink-faint">Critics</h3>
+                {/*
+                  Re-arbitrating is a real, billed LLM call — only worth
+                  offering once the writer has actually changed something
+                  from the default (every critic included), matching
+                  "reviews arrive checked, uncheck what you don't want"
+                  from the backend's own framing.
+                */}
+                {excluded.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => onRerunArbitrate(Array.from(excluded))}
+                    disabled={advancing}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-[0.7rem] font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
+                  >
+                    {advancing && <Loader2 className="size-3 animate-spin" />}
+                    Re-run Arbitration
+                  </button>
+                )}
+              </div>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {reviewEntries.map(([role, value], i) => (
-                  <ReviewCard key={role} title={roleLabel(role)} value={value} dotColor={CRITIC_DOT_COLORS[i % CRITIC_DOT_COLORS.length]} />
+                  <ReviewCard
+                    key={role}
+                    title={roleLabel(role)}
+                    value={value}
+                    dotColor={CRITIC_DOT_COLORS[i % CRITIC_DOT_COLORS.length]}
+                    included={!excluded.has(role as AgentRole)}
+                    onToggleIncluded={() => toggleCritic(role as AgentRole)}
+                  />
                 ))}
               </div>
             </div>
@@ -1469,6 +1528,23 @@ function ReviewGate({
           >
             Reject &amp; Discuss
           </button>
+          {/*
+            A middle ground between Reject (open a whole chat interview)
+            and Approve (lock it as-is): "I agree with the panel's
+            findings, just fix them, don't make me chat about it." Only
+            offered once a real verdict exists for this unit — mirrors the
+            backend's own 400 for "no arbitrator synthesis yet."
+          */}
+          {hasVerdict && (
+            <button
+              type="button"
+              onClick={onApplyCritique}
+              disabled={advancing}
+              className="rounded-xl border border-line px-4 py-2 text-sm font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
+            >
+              Apply Critique
+            </button>
+          )}
           <button
             type="button"
             onClick={onApprove}
@@ -1492,7 +1568,19 @@ function scoreOf(value: unknown): string | null {
   return null;
 }
 
-function ReviewCard({ title, value, dotColor }: { title: string; value: unknown; dotColor: string }) {
+function ReviewCard({
+  title,
+  value,
+  dotColor,
+  included,
+  onToggleIncluded,
+}: {
+  title: string;
+  value: unknown;
+  dotColor: string;
+  included: boolean;
+  onToggleIncluded: () => void;
+}) {
   if (value === undefined) return null;
   const score = scoreOf(value);
   return (
@@ -1504,6 +1592,10 @@ function ReviewCard({ title, value, dotColor }: { title: string; value: unknown;
         </h4>
         {score && <span className="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[0.65rem] font-medium text-ink">{score}/10</span>}
       </div>
+      <label className="mt-2 flex w-fit items-center gap-1.5 text-[0.7rem] text-ink-faint">
+        <input type="checkbox" checked={included} onChange={onToggleIncluded} className="size-3.5 accent-gold" />
+        Include in Arbitrator&apos;s review
+      </label>
       <JsonBlock value={value} />
     </div>
   );
@@ -1627,16 +1719,23 @@ function RejectionInterview({
             {sending ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
           </button>
         </div>
+        {/*
+          The backend now auto-finalizes on its own — once the Arbitrator's
+          reply signals it understood the correction and the writer
+          confirmed they're ready, it compiles the directive and starts
+          regenerating without any extra click (see onSend's handling of a
+          "generating" status coming back from a /chat call). This manual
+          action stays only as a fallback for a run where that signal was
+          missed, or an older run resumed mid-interview.
+        */}
         <button
           type="button"
           onClick={onFinalize}
           disabled={run.chatHistory.length === 0 || advancing || sending}
-          className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gold px-4 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
+          className="mt-2 w-full text-center text-[0.7rem] text-ink-faint underline-offset-2 transition-colors hover:text-ink hover:underline disabled:opacity-50"
         >
-          {advancing && <Loader2 className="size-4 animate-spin" />}
-          Send Directive &amp; Regenerate
+          Stuck? Finalize the directive now instead of waiting for the Arbitrator to.
         </button>
-        <p className="mt-1.5 text-center text-[0.7rem] text-ink-faint">This compiles the conversation into a directive and restarts the generate → critique → arbitrate cycle.</p>
       </div>
     </section>
   );
@@ -1751,6 +1850,52 @@ function PipelineView({
       await rejectPlanningStage(run.id);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Couldn't reject this unit.");
+    } finally {
+      setAdvancing(false);
+    }
+  }
+
+  /**
+   * A middle ground between Reject (open a whole chat interview) and
+   * Approve (lock it as-is): sends the Arbitrator's already-computed
+   * mustFix/worthConsidering straight to the Generator as a directive,
+   * skipping the interview entirely. Lands on the plain Generate/Continue
+   * card afterward rather than auto-chaining into the actual Generate
+   * call — same "the writer's last input before a fresh 60-180s call
+   * should be a deliberate next click" reasoning handleFinalizeDirective
+   * already follows.
+   */
+  async function handleApplyCritique() {
+    setAdvancing(true);
+    setActionError(null);
+    try {
+      await applyCritiquePlanningStage(run.id);
+    } catch (err) {
+      setActionError(
+        err instanceof ApiError && err.status === 400
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Couldn't apply the critique.",
+      );
+    } finally {
+      setAdvancing(false);
+    }
+  }
+
+  /**
+   * Re-arbitrates the current unit with a subset of critics excluded (the
+   * per-critique checkboxes on the review gate) — a real, billed LLM call,
+   * only ever triggered by an explicit click once the writer has actually
+   * unchecked something.
+   */
+  async function handleRerunArbitration(excludedCritics: AgentRole[]) {
+    setAdvancing(true);
+    setActionError(null);
+    try {
+      await rerunArbitration(run.id, excludedCritics);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't re-run arbitration.");
     } finally {
       setAdvancing(false);
     }
@@ -1892,10 +2037,30 @@ function PipelineView({
           onAdvance={handleAdvance}
           onApprove={handleApprove}
           onReject={handleReject}
+          onApplyCritique={handleApplyCritique}
+          onRerunArbitrate={handleRerunArbitration}
           onUnapprove={handleUnapprove}
           onDiscardStage={handleDiscardStage}
           onSendChat={async (message) => {
-            await sendPlanningChatTurn(run.id, message);
+            setActionError(null);
+            try {
+              // No auto-chain into Generate here even when the backend
+              // auto-finalizes mid-conversation (run.status flips straight
+              // to "generating") — the reactive render below already
+              // switches UnitDetail out of the interview and onto the
+              // plain Generate/Continue card the moment `run.status`
+              // changes, same as it does after a manual
+              // finalize-directive or intake-finalize. Kicking off the
+              // actual 60-180s Generate call automatically here would
+              // spring an unrequested wait on a click that was just an
+              // ordinary chat message, not a deliberate "start generating"
+              // action — the same reasoning handleFinalizeDirective's own
+              // comment already gives for not auto-chaining.
+              await sendPlanningChatTurn(run.id, message);
+            } catch (err) {
+              setActionError(err instanceof Error ? err.message : "Couldn't send that message.");
+              throw err;
+            }
           }}
           onFinalizeDirective={handleFinalizeDirective}
         />

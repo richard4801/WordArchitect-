@@ -589,8 +589,40 @@ async function callCritique(runId: string): Promise<PlanningRun> {
   lastCritiqueSuccess = { runId: run.id, unit: currentUnitKey(run), artifact: run.stageArtifacts[currentUnitKey(run)] ?? "" };
   return run;
 }
-async function callArbitrate(runId: string): Promise<PlanningRun> {
-  const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/arbitrate`, { method: "POST" });
+async function callArbitrate(runId: string, excludedCritics: AgentRole[] = []): Promise<PlanningRun> {
+  const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/arbitrate`, {
+    method: "POST",
+    body: JSON.stringify({ excludedCritics }),
+  });
+  return setActiveRun(res.run);
+}
+
+/**
+ * Re-arbitrates the CURRENT unit with a different set of critics — the
+ * per-critique checkboxes on each critic's card in the review gate. The
+ * excluded critic's own review stays visible in its own card (nothing is
+ * deleted server-side); only what the Arbitrator synthesizes from changes.
+ * A deliberate, explicit re-run action, separate from
+ * `runPipelineForward`'s own auto-chained Generate→Critique→Arbitrate
+ * (which always arbitrates with every critic included — exclusions only
+ * ever come from this manual action, never inferred/persisted anywhere).
+ */
+export async function rerunArbitration(runId: string, excludedCritics: AgentRole[]): Promise<PlanningRun> {
+  return callArbitrate(runId, excludedCritics);
+}
+
+/**
+ * Skips the whole Reject → chat interview → directive path: takes the
+ * Arbitrator's already-computed synthesis (mustFix/worthConsidering from
+ * the last arbitrate call) and sends it straight to the Generator as a
+ * directive — no extra LLM call, instant. Only ever offered once a real
+ * verdict exists for the current unit (mirrors the backend's own 400 for
+ * "no arbitrator synthesis yet"). Callers should follow a success with
+ * `runPipelineForward` to actually run the resulting Generate call, same
+ * as after `finalizePlanningDirective`.
+ */
+export async function applyCritiquePlanningStage(runId: string): Promise<PlanningRun> {
+  const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/apply-critique`, { method: "POST" });
   return setActiveRun(res.run);
 }
 
@@ -684,7 +716,25 @@ export async function discardPlanningStage(runId: string): Promise<PlanningRun> 
   return setActiveRun(res.run);
 }
 
-/** One turn of the rejection interview. Every prior turn (intake + the WHOLE run's accumulated interview history, not just this cycle) is resent server-side — the Arbitrator is one continuous point of contact for the run, never a fresh stranger. */
+/**
+ * One turn of the rejection interview. Every prior turn (intake + the
+ * WHOLE run's accumulated interview history, not just this cycle) is
+ * resent server-side — the Arbitrator is one continuous point of contact
+ * for the run, never a fresh stranger.
+ *
+ * Can auto-finalize: if the Arbitrator's reply signals it understood the
+ * correction and the writer confirmed they're ready, the backend strips
+ * that internal signal and chains straight into `finalizeDirective`
+ * itself server-side — the returned run may already be back to
+ * `status: "generating"` with a fresh `finalDeltaDirective`, not just an
+ * updated `chatHistory`. Callers must check `run.status` after every call:
+ * on `"generating"`, show the just-arrived assistant reply as normal, then
+ * immediately call `runPipelineForward` to actually run that Generate
+ * call and transition out of the chat view — no separate user action, per
+ * the backend's own "don't make the writer find a button for something
+ * they already confirmed in conversation." `finalizePlanningDirective`
+ * still exists as an explicit manual fallback for when this doesn't fire.
+ */
 export async function sendPlanningChatTurn(runId: string, message: string): Promise<PlanningRun> {
   const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/chat`, {
     method: "POST",
