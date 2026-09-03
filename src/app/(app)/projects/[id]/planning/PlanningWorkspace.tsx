@@ -1399,56 +1399,50 @@ function ReviewGate({
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 lg:grid-cols-[1fr_320px] lg:items-start">
-        {/*
-          A CSS Grid row auto-sizes to its tallest item regardless of
-          align-items, so a short Artifact next to a long Critics rail
-          (real critiques with several issues each can run well past the
-          viewport) left a large genuinely-empty gap under the Artifact
-          card while the page kept scrolling through Critics beside it —
-          the actual "too much space to scroll through" production report.
-          Not fixable by capping the Critics column's own height instead
-          (already tried and reverted — see JsonBlock's comment: a nested
-          scrollbar there read as truncated content, not scrollable).
-          Sticky keeps the Artifact filling that space as the reader
-          scrolls, rather than leaving it blank; harmless on narrower
-          layouts where the columns stack (no sticky ancestor scroll
-          context to speak of there anyway).
-
-          The sticky/top utilities live on a plain wrapper, not on the
-          `.card` div itself — `.card` (globals.css) sets an unconditional
-          `position: relative` inside the same `@layer utilities` Tailwind's
-          own generated classes use, later in the merged layer, so it
-          silently wins the cascade over `lg:sticky` on the same element
-          (confirmed live: `lg:top-6` took effect, `lg:sticky` didn't).
-          Keeping them on a separate ancestor sidesteps the collision
-          entirely instead of touching `.card`'s shared, load-bearing CSS.
-        */}
-        <div className="lg:sticky lg:top-6">
-          <div className="card p-5">
-            <h3 className="label-caps text-[0.65rem] text-ink-faint">Artifact</h3>
-            <div className="scroll-slim mt-3 max-h-[32rem] overflow-y-auto text-sm text-ink">
-              {unit === "codex_documentation" ? <CodexEntryCards artifact={artifact} /> : <ArtifactContent artifact={artifact} />}
-            </div>
-          </div>
+      {/*
+        Was a two-column grid (wide Artifact + a narrower Critics/Verdict
+        rail, matching an earlier design mock's proportions). Real critique
+        content routinely runs to several issues per critic, several times
+        taller than the Artifact's own short prose — and pairing mismatched-
+        length content side by side always leaves a visually empty pane
+        under the shorter column at any given scroll position, no matter
+        how that column is positioned. Tried `sticky` alone (the empty pane
+        just relocated, staying permanently visible instead of eventually
+        scrolling past), then `position: absolute` + `sticky` together to
+        stop the row's height being inflated by the short column at all
+        (this genuinely fixed the *total scroll length* — confirmed via a
+        real long-critique reproduction, no more artificial padding) — but
+        the empty pane next to the pinned Artifact was still there in every
+        screenshot, because that's an inherent consequence of the
+        side-by-side split itself, not a fixable positioning detail.
+        Stacked layout removes the split entirely: Artifact first (still
+        capped at max-h-[32rem] with its own scroll for a long artifact),
+        Critics and the Verdict below it, both full width — content simply
+        flows top to bottom with normal spacing, so there's nothing for an
+        asymmetric side gap to appear next to.
+      */}
+      <div className="card p-5">
+        <h3 className="label-caps text-[0.65rem] text-ink-faint">Artifact</h3>
+        <div className="scroll-slim mt-3 max-h-[32rem] overflow-y-auto text-sm text-ink">
+          {unit === "codex_documentation" ? <CodexEntryCards artifact={artifact} /> : <ArtifactContent artifact={artifact} />}
         </div>
-
-        {(reviewEntries.length > 0 || hasVerdict) && (
-          <div className="space-y-4">
-            {reviewEntries.length > 0 && (
-              <div>
-                <h3 className="label-caps mb-2 text-[0.6rem] text-ink-faint">Critics</h3>
-                <div className="space-y-3">
-                  {reviewEntries.map(([role, value], i) => (
-                    <ReviewCard key={role} title={roleLabel(role)} value={value} dotColor={CRITIC_DOT_COLORS[i % CRITIC_DOT_COLORS.length]} />
-                  ))}
-                </div>
-              </div>
-            )}
-            {hasVerdict && <ArbitratorVerdictCard synthesis={run.arbitratorSynthesis} />}
-          </div>
-        )}
       </div>
+
+      {(reviewEntries.length > 0 || hasVerdict) && (
+        <div className="space-y-4">
+          {reviewEntries.length > 0 && (
+            <div>
+              <h3 className="label-caps mb-2 text-[0.6rem] text-ink-faint">Critics</h3>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {reviewEntries.map(([role, value], i) => (
+                  <ReviewCard key={role} title={roleLabel(role)} value={value} dotColor={CRITIC_DOT_COLORS[i % CRITIC_DOT_COLORS.length]} />
+                ))}
+              </div>
+            </div>
+          )}
+          {hasVerdict && <ArbitratorVerdictCard synthesis={run.arbitratorSynthesis} />}
+        </div>
+      )}
 
       {(unit === "codex_documentation" || unit === "hook_chapters_outline") && (
         <p className="rounded-xl border border-info/40 bg-info/10 p-3 text-xs text-ink-muted">

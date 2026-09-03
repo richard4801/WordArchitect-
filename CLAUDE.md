@@ -3522,9 +3522,10 @@ the Critics column's own height instead — already tried and reverted (see
 `JsonBlock`'s own comment): a nested scrollbar there previously read as
 truncated content, not scrollable, and produced its own bug report.
 
-Fixed by making the Artifact column `position: sticky` so it stays
-filling that space as the reader scrolls through Critics, instead of
-leaving it blank. A real, non-obvious CSS bug surfaced while doing this:
+**First attempt (superseded — kept here for the trail): `position:
+sticky` on the Artifact column.** Made the Artifact stay pinned near the
+top as the reader scrolls through Critics, instead of leaving the space
+below it blank. A real, non-obvious CSS bug surfaced while doing this:
 putting `lg:sticky lg:top-6` directly on the Artifact's own `.card` div
 did **not** work — `lg:top-6` took effect (confirmed via computed style:
 `top: 24px`) but `position` stayed `relative`. Root cause: `.card`
@@ -3533,25 +3534,78 @@ same `@layer utilities` block Tailwind's own generated utility classes
 use*, positioned later in that merged layer than `lg:sticky`'s generated
 rule — so for any element carrying both classes, `.card`'s unconditional
 rule silently wins the cascade at every viewport width, `lg:` breakpoint
-active or not, with no error or warning of any kind. Fixed by keeping
-`lg:sticky lg:top-6` off the `.card` element entirely — a plain wrapping
-`<div>` around the `.card` div carries the sticky positioning instead,
-sidestepping the collision rather than touching `.card`'s own shared,
-load-bearing CSS (which countless other cards across the app depend on
-keeping exactly as-is).
+active or not, with no error or warning of any kind. Worked around by
+keeping `lg:sticky lg:top-6` off the `.card` element entirely — a plain
+wrapping `<div>` carried the sticky positioning instead. This class of
+CSS bug (a shared utility-layer style silently beating a later Tailwind
+utility on the same element) is worth remembering for any future
+`position`/`top`/`z-index` override on a `.card`/`.card-2` element.
 
-**Verified working** (Playwright, a real run driven to the exact
-Generate→Critique→Arbitrate review state via direct API calls, a
-1440×900 viewport): confirmed via computed style that the wrapper (not
-`.card`) actually resolves to `position: sticky`; scrolled the review
-container by 800px and confirmed the Artifact card's on-screen position
-was unchanged (top/bottom identical before and after, not just
-coincidentally still in view) while the Critics content behind it visibly
-scrolled past — screenshots before and after confirm the Artifact stays
-pinned near the top instead of leaving a blank gap. Re-ran the full
-Act/Part/Beats and Contract Pipeline Playwright suites (both exercise
-this same `ReviewGate` component) plus the Platform Craft Notes suite —
-zero regressions. `tsc --noEmit`, `eslint`, and `npm run build` all clean.
+Verified (Playwright, a real run driven to Generate→Critique→Arbitrate,
+1440×900 viewport, the short default mock critique content — one issue
+per critic): the wrapper correctly resolved to `position: sticky`, and
+the Artifact's on-screen position was unchanged after scrolling 800px
+while Critics content scrolled past it. **This verification passed and
+still shipped a bug** — see below.
+
+**User report against the shipped sticky fix: "the critique runs long on
+the side, and there's the massive space below the content — that's not
+right."** Re-tested against real-length critique content instead of the
+short default mock (a new `/__test__/set-long-critique` mock endpoint,
+5-6 issues per critic plus a full arbitrator verdict, matching what an
+actual Claude critique produces) and the complaint reproduced immediately
+— a screenshot at any scroll position showed the short, sticky Artifact
+card pinned at the top-left with a large, permanently-empty pane beneath
+it for the *entire* scroll, while Critics content continued on the right.
+This is worse than the original bug: before, the empty space at least
+eventually scrolled past; sticky made it a fixture that's visible no
+matter where you scroll to.
+
+Tried tightening the CSS further before concluding the whole approach was
+wrong: took the Artifact out of the grid's row-height calculation
+entirely via `position: absolute` (an absolutely-positioned grid item
+doesn't contribute to implicit row-track sizing, so only the Critics
+column — the one remaining normal-flow item — would determine the row's
+real height), with the inner `sticky` element still doing the pinning.
+This genuinely fixed the *total scroll length* (confirmed: dropped back
+to matching Critics' real content height, no more artificial padding) —
+but the screenshot at the bottom of the scroll still showed the same
+large empty pane next to the pinned Artifact. That's the actual
+underlying lesson: pairing a short column and a much longer column
+side-by-side will *always* show empty space next to the short one at any
+given scroll position, no matter how that short column is positioned —
+sticky, absolute, or otherwise. It's not a positioning bug to fix; it's
+an inherent property of an asymmetric two-column split, and no CSS trick
+on the short column changes that.
+
+**Real fix: dropped the two-column layout entirely, in favor of a
+stacked, single-column one.** This reverses an earlier deliberate
+decision (documented above, from the visual-fidelity pass) to give
+`ReviewGate` "a genuine two-column layout (wide artifact + a narrower
+Critics/Verdict rail, matching the mock's proportions) instead of a
+full-width stack" — but that decision was made and verified against short
+placeholder content, and real critique length breaks it in a way no
+amount of positioning CSS can repair while keeping the split. Artifact
+now renders first, full width (still capped at `max-h-[32rem]` with its
+own internal scroll for a very long artifact, unchanged); Critics and the
+Arbitrator Verdict render below it, also full width. The three critic
+cards themselves also moved from a single-column stack to a
+`grid sm:grid-cols-2 lg:grid-cols-3` — free width they didn't have in the
+old 320px rail — so on top of removing the dead-space bug, three critics
+now sit side by side instead of stacking, which alone cut real scroll
+length substantially.
+
+**Verified working** (Playwright, the same real long-critique
+reproduction — 5-6 issues per critic, full verdict, run through
+Generate→Critique→Arbitrate via direct API calls, 1440×900 viewport):
+total scroll container height dropped from 6062px to 2849px (both
+measured against the identical injected long-critique content) — more
+than half; screenshots at the top and after scrolling to the bottom both
+show dense, natural top-to-bottom content flow with no empty pane at any
+position, critics genuinely laid out 3-across. Re-ran the full
+Act/Part/Beats, Contract Pipeline, and Platform Craft Notes Playwright
+suites (the first two exercise this same `ReviewGate` component) — zero
+regressions. `tsc --noEmit`, `eslint`, and `npm run build` all clean.
 
 ---
 
