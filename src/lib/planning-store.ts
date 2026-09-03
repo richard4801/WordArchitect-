@@ -589,26 +589,42 @@ async function callCritique(runId: string): Promise<PlanningRun> {
   lastCritiqueSuccess = { runId: run.id, unit: currentUnitKey(run), artifact: run.stageArtifacts[currentUnitKey(run)] ?? "" };
   return run;
 }
-async function callArbitrate(runId: string, excludedCritics: AgentRole[] = []): Promise<PlanningRun> {
+/** One individually-unchecked issue row: that critic's role + its position in that critic's own `issues` array as currently returned by GET (stable until the next `/critique` call regenerates it). */
+export type ExcludedIssue = { role: AgentRole; index: number };
+
+async function callArbitrate(
+  runId: string,
+  excludedCritics: AgentRole[] = [],
+  excludedIssues: ExcludedIssue[] = [],
+): Promise<PlanningRun> {
   const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/arbitrate`, {
     method: "POST",
-    body: JSON.stringify({ excludedCritics }),
+    body: JSON.stringify({ excludedCritics, excludedIssues }),
   });
   return setActiveRun(res.run);
 }
 
 /**
- * Re-arbitrates the CURRENT unit with a different set of critics — the
- * per-critique checkboxes on each critic's card in the review gate. The
- * excluded critic's own review stays visible in its own card (nothing is
- * deleted server-side); only what the Arbitrator synthesizes from changes.
- * A deliberate, explicit re-run action, separate from
- * `runPipelineForward`'s own auto-chained Generate→Critique→Arbitrate
- * (which always arbitrates with every critic included — exclusions only
- * ever come from this manual action, never inferred/persisted anywhere).
+ * Re-arbitrates the CURRENT unit with a different set of critics and/or
+ * individual issues — the two independent levels of checkbox on the
+ * review gate: a whole-panel "Include in Arbitrator's review" (drops a
+ * critic's entire review — score, summary, strengths, every issue) and a
+ * per-issue checkbox on each flagged issue row (drops just that one issue
+ * from an otherwise-included critique; its score/summary/strengths and
+ * every issue left checked still reach the Arbitrator). Nothing excluded
+ * is ever deleted server-side — this only changes what one `/arbitrate`
+ * call's synthesis is computed from. A deliberate, explicit re-run
+ * action, separate from `runPipelineForward`'s own auto-chained
+ * Generate→Critique→Arbitrate (which always arbitrates with everything
+ * included — exclusions only ever come from this manual action, never
+ * inferred/persisted anywhere).
  */
-export async function rerunArbitration(runId: string, excludedCritics: AgentRole[]): Promise<PlanningRun> {
-  return callArbitrate(runId, excludedCritics);
+export async function rerunArbitration(
+  runId: string,
+  excludedCritics: AgentRole[],
+  excludedIssues: ExcludedIssue[] = [],
+): Promise<PlanningRun> {
+  return callArbitrate(runId, excludedCritics, excludedIssues);
 }
 
 /**

@@ -88,6 +88,7 @@ import {
   deletePlanningRun,
   discardPlanningStage,
   discardPlatformCraftNotesDraft,
+  type ExcludedIssue,
   extractPlanningEntities,
   finalizeIntakeConversation,
   finalizePlanningDirective,
@@ -326,7 +327,50 @@ const BULLET_TONE: Record<string, string> = {
  * markers (the Arbitrator's mustFix/worthConsidering/whatWorks sections)
  * instead of the plain gray dot every other list gets.
  */
-function StructuredValue({ value, toneKey }: { value: unknown; toneKey?: string }) {
+/** Per-issue exclusion controls, threaded down to whichever "issues" array StructuredValue happens to render — only ever supplied by ReviewCard for the three critique panels; every other JsonBlock/StructuredValue call site omits it and gets today's plain rendering. */
+type IssueCheckboxes = { excludedIndexes: Set<number>; onToggle: (index: number) => void };
+
+/**
+ * The array-of-objects case specifically for a critique's `issues` field —
+ * same recursive per-field rendering as the generic array branch below,
+ * plus an optional checkbox per issue (the issue's own real index in the
+ * array, not a synthesized id) so a writer can drop individual flagged
+ * issues from what the Arbitrator synthesizes without excluding the whole
+ * critic. `checkboxes` is only ever passed for real critique panels;
+ * omitted, this renders identically to the plain array branch it replaces.
+ */
+function IssuesList({ issues, checkboxes }: { issues: unknown[]; checkboxes?: IssueCheckboxes }) {
+  return (
+    <div className="space-y-3">
+      {issues.map((item, i) => (
+        <div key={i} className="border-l-2 border-line pl-3">
+          {checkboxes && (
+            <label className="mb-1.5 flex w-fit items-center gap-1.5 text-[0.7rem] text-ink-faint">
+              <input
+                type="checkbox"
+                checked={!checkboxes.excludedIndexes.has(i)}
+                onChange={() => checkboxes.onToggle(i)}
+                className="size-3.5 accent-gold"
+              />
+              Include this issue
+            </label>
+          )}
+          <StructuredValue value={item} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function StructuredValue({
+  value,
+  toneKey,
+  issueCheckboxes,
+}: {
+  value: unknown;
+  toneKey?: string;
+  issueCheckboxes?: IssueCheckboxes;
+}) {
   if (value === null || value === undefined) return null;
 
   if (typeof value === "string") {
@@ -385,13 +429,17 @@ function StructuredValue({ value, toneKey }: { value: unknown; toneKey?: string 
         // The Arbitrator's issues array gets a compact severity-count
         // summary line above the full list, matching the mock's visual
         // design (real data: issues[].severity from each critic review).
+        // Each issue also gets its own include/exclude checkbox when a
+        // critique panel supplied one (see IssueCheckboxes) — a plain
+        // StructuredValue recursion has no per-item index to hang a
+        // checkbox off, hence the dedicated IssuesList here instead.
         if (key.toLowerCase() === "issues" && Array.isArray(v)) {
           return (
             <div key={key}>
               <h5 className="label-caps text-[0.6rem] text-ink-muted">{fieldLabel(key)}</h5>
               <IssueSeverityCounts issues={v} />
               <div className="mt-2">
-                <StructuredValue value={v} />
+                <IssuesList issues={v} checkboxes={issueCheckboxes} />
               </div>
             </div>
           );
@@ -410,7 +458,7 @@ function StructuredValue({ value, toneKey }: { value: unknown; toneKey?: string 
 }
 
 /** panel_reviews / arbitrator_synthesis have no fixed schema — renders defensively rather than assuming any particular field. */
-function JsonBlock({ value, toneKey }: { value: unknown; toneKey?: string }) {
+function JsonBlock({ value, toneKey, issueCheckboxes }: { value: unknown; toneKey?: string; issueCheckboxes?: IssueCheckboxes }) {
   // No inner max-height/scroll — the review column already sits inside the
   // page's own scroll region, and a second nested scrollbar was clipping
   // critic issues/verdict text mid-sentence with no visible "there's more"
@@ -418,7 +466,7 @@ function JsonBlock({ value, toneKey }: { value: unknown; toneKey?: string }) {
   // reads as a truncation bug, not a scrollable one).
   return (
     <div className="mt-2 text-xs text-ink-muted">
-      <StructuredValue value={value} toneKey={toneKey} />
+      <StructuredValue value={value} toneKey={toneKey} issueCheckboxes={issueCheckboxes} />
     </div>
   );
 }
@@ -1259,7 +1307,7 @@ function UnitDetail({
   onApprove: () => void;
   onReject: () => void;
   onApplyCritique: () => void;
-  onRerunArbitrate: (excludedCritics: AgentRole[]) => void;
+  onRerunArbitrate: (excludedCritics: AgentRole[], excludedIssues: ExcludedIssue[]) => void;
   onUnapprove: () => void;
   onDiscardStage: () => void;
   onSendChat: (message: string) => Promise<void>;
@@ -1387,6 +1435,8 @@ function UnitDetail({
 }
 
 const CRITIC_DOT_COLORS = ["var(--gold)", "var(--info)", "var(--purple)"];
+/** Stable empty Set for a critic with no individually-excluded issues, so ReviewCard isn't handed a freshly-constructed Set on every render. */
+const EMPTY_ISSUE_SET = new Set<number>();
 
 function ReviewGate({
   run,
@@ -1408,18 +1458,25 @@ function ReviewGate({
   onApprove: () => void;
   onReject: () => void;
   onApplyCritique: () => void;
-  onRerunArbitrate: (excludedCritics: AgentRole[]) => void;
+  onRerunArbitrate: (excludedCritics: AgentRole[], excludedIssues: ExcludedIssue[]) => void;
   onDiscardStage: () => void;
 }) {
   const artifact = run.stageArtifacts[unit] ?? "";
   const reviewEntries = run.panelReviews ? Object.entries(run.panelReviews) : [];
   const hasVerdict = run.arbitratorSynthesis !== null && run.arbitratorSynthesis !== undefined;
-  // Per-critique checkboxes for re-arbitrating with a subset of critics —
-  // default every critic included, matching "reviews arrive checked,
-  // uncheck what you don't want." Local, ephemeral UI state (not part of
-  // the run) — the caller keys this whole component on `unit` so a fresh
-  // unit always starts every critic checked again.
+  // Two independent levels of checkbox for re-arbitrating, both defaulting
+  // to everything included ("reviews arrive checked, uncheck what you
+  // don't want"). Local, ephemeral UI state (not part of the run) — the
+  // caller keys this whole component on `unit` so a fresh unit always
+  // starts everything checked again.
+  //   - excludedCritics: a whole critic's card unchecked entirely.
+  //   - excludedIssuesByRole: individual issue rows unchecked inside an
+  //     otherwise-included critic, keyed by that critic's role, each value
+  //     the set of that critic's own `issues` array indexes to drop —
+  //     exactly the {role, index} identity the backend expects, never a
+  //     synthesized id.
   const [excluded, setExcluded] = useState<Set<AgentRole>>(new Set());
+  const [excludedIssuesByRole, setExcludedIssuesByRole] = useState<Partial<Record<AgentRole, Set<number>>>>({});
   function toggleCritic(role: AgentRole) {
     setExcluded((prev) => {
       const next = new Set(prev);
@@ -1427,6 +1484,26 @@ function ReviewGate({
       else next.add(role);
       return next;
     });
+  }
+  function toggleIssue(role: AgentRole, index: number) {
+    setExcludedIssuesByRole((prev) => {
+      const next = new Set(prev[role] ?? []);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return { ...prev, [role]: next };
+    });
+  }
+  const hasAnyIssueExclusion = Object.values(excludedIssuesByRole).some((s) => s && s.size > 0);
+  function handleRerunClick() {
+    // No need to list issues from an already fully-excluded critic — the
+    // backend drops its whole review anyway — so only send exclusions for
+    // critics that are still otherwise included.
+    const excludedIssues: ExcludedIssue[] = [];
+    for (const [role, indexes] of Object.entries(excludedIssuesByRole) as [AgentRole, Set<number> | undefined][]) {
+      if (!indexes || excluded.has(role)) continue;
+      for (const index of indexes) excludedIssues.push({ role, index });
+    }
+    onRerunArbitrate(Array.from(excluded), excludedIssues);
   }
 
   return (
@@ -1473,10 +1550,10 @@ function ReviewGate({
                   "reviews arrive checked, uncheck what you don't want"
                   from the backend's own framing.
                 */}
-                {excluded.size > 0 && (
+                {(excluded.size > 0 || hasAnyIssueExclusion) && (
                   <button
                     type="button"
-                    onClick={() => onRerunArbitrate(Array.from(excluded))}
+                    onClick={handleRerunClick}
                     disabled={advancing}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-[0.7rem] font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
                   >
@@ -1494,6 +1571,8 @@ function ReviewGate({
                     dotColor={CRITIC_DOT_COLORS[i % CRITIC_DOT_COLORS.length]}
                     included={!excluded.has(role as AgentRole)}
                     onToggleIncluded={() => toggleCritic(role as AgentRole)}
+                    excludedIssueIndexes={excludedIssuesByRole[role as AgentRole] ?? EMPTY_ISSUE_SET}
+                    onToggleIssue={(index) => toggleIssue(role as AgentRole, index)}
                   />
                 ))}
               </div>
@@ -1574,12 +1653,16 @@ function ReviewCard({
   dotColor,
   included,
   onToggleIncluded,
+  excludedIssueIndexes,
+  onToggleIssue,
 }: {
   title: string;
   value: unknown;
   dotColor: string;
   included: boolean;
   onToggleIncluded: () => void;
+  excludedIssueIndexes: Set<number>;
+  onToggleIssue: (index: number) => void;
 }) {
   if (value === undefined) return null;
   const score = scoreOf(value);
@@ -1592,11 +1675,20 @@ function ReviewCard({
         </h4>
         {score && <span className="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[0.65rem] font-medium text-ink">{score}/10</span>}
       </div>
+      {/*
+        Two independent levels of checkbox: this whole-panel one drops the
+        critic's entire review (score/summary/strengths/every issue) —
+        "I don't trust this critic's read at all this pass." The per-issue
+        checkboxes rendered inside JsonBlock's own "issues" list (via
+        IssuesList) are the finer-grained sibling — "most of what it
+        flagged is right, but not this one" — and stay independent of this
+        one even when this panel is still included.
+      */}
       <label className="mt-2 flex w-fit items-center gap-1.5 text-[0.7rem] text-ink-faint">
         <input type="checkbox" checked={included} onChange={onToggleIncluded} className="size-3.5 accent-gold" />
         Include in Arbitrator&apos;s review
       </label>
-      <JsonBlock value={value} />
+      <JsonBlock value={value} issueCheckboxes={{ excludedIndexes: excludedIssueIndexes, onToggle: onToggleIssue }} />
     </div>
   );
 }
@@ -1884,16 +1976,16 @@ function PipelineView({
   }
 
   /**
-   * Re-arbitrates the current unit with a subset of critics excluded (the
-   * per-critique checkboxes on the review gate) — a real, billed LLM call,
-   * only ever triggered by an explicit click once the writer has actually
-   * unchecked something.
+   * Re-arbitrates the current unit with a subset of critics and/or
+   * individual issues excluded (the two independent levels of checkbox on
+   * the review gate) — a real, billed LLM call, only ever triggered by an
+   * explicit click once the writer has actually unchecked something.
    */
-  async function handleRerunArbitration(excludedCritics: AgentRole[]) {
+  async function handleRerunArbitration(excludedCritics: AgentRole[], excludedIssues: ExcludedIssue[]) {
     setAdvancing(true);
     setActionError(null);
     try {
-      await rerunArbitration(run.id, excludedCritics);
+      await rerunArbitration(run.id, excludedCritics, excludedIssues);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Couldn't re-run arbitration.");
     } finally {

@@ -3707,6 +3707,78 @@ now-removed "Send Directive" button text was updated to the new fallback
 link, a test-only change) plus the Platform Craft Notes suite — zero
 regressions. `tsc --noEmit`, `eslint`, and `npm run build` all clean.
 
+**Follow-up correction: the per-critique exclusion above was too coarse —
+added per-issue checkboxes alongside it, not instead of it.** User
+feedback on the shipped whole-panel-only checkbox: that's not what was
+asked for. The real request (backend commit `aaa7a37`, "Add per-issue
+exclusion for arbitration, alongside the existing per-critic one",
+confirmed against the live route/service source first) is a second,
+independent, finer-grained level — a checkbox on every individual flagged
+issue row, not just one per panel:
+
+- **Identity is `{role, index}`, not a synthesized id.** `index` is that
+  issue's real position in `panel_reviews.<role>.issues` exactly as
+  `GET /planning/runs/:id` returns it — stable until the next `/critique`
+  call regenerates the array, so safe to hold in the review screen's own
+  local state for as long as that screen is open. Confirmed by reading
+  the backend's `runArbitration` directly: it builds a
+  `Map<AgentRole, Set<number>>` from `excludedIssues` and filters each
+  critic's own `issues` array by that same index — there's no ID field
+  on an issue object to key by even if this frontend wanted to invent one.
+- **Two checkboxes per critic panel now, independent of each other**: the
+  existing whole-panel "Include in Arbitrator's review" (drops the
+  critic's entire review — score, summary, strengths, every issue) stays
+  exactly as it was; each individual issue row inside `ReviewCard` gained
+  its own "Include this issue" checkbox (drops just that one issue,
+  leaving the critic's score/summary/strengths and every other issue
+  reaching the Arbitrator). Both default to checked. Threading a
+  per-index checkbox through required a small, deliberately narrow change
+  to the fully-generic `StructuredValue`/`JsonBlock` recursive renderer
+  (used for every schema-less JSON blob in this workspace — critic
+  reviews, the Arbitrator's verdict, Part outline/Beats artifacts, Codex
+  Documentation entries): a new optional `issueCheckboxes` prop, consulted
+  only inside the existing "issues" key special-case (a new `IssuesList`
+  component replaces a plain recursive `StructuredValue` call there,
+  since only a direct `.map` over the array has the real index a
+  checkbox needs — the generic array-of-objects branch a level down
+  never receives or needs to know about it). Every other `JsonBlock`/
+  `StructuredValue` call site in the app omits the prop and renders
+  exactly as before.
+- **Sent together in one `/arbitrate` call**: `POST
+  /planning/runs/:id/arbitrate` now takes `{ excludedCritics,
+  excludedIssues }`, both optional, both defaulting to nothing excluded.
+  `rerunArbitration` (`planning-store.ts`) gained the `excludedIssues`
+  parameter; `ReviewGate` builds it from a second piece of local state,
+  `excludedIssuesByRole: Partial<Record<AgentRole, Set<number>>>`,
+  alongside the existing `excludedCritics` set — both reset together via
+  the same `key={unit}` remount already in place. Per the spec's own
+  "no need to list issues from an already-excluded critic" note, the
+  frontend filters those out client-side before sending (harmless either
+  way server-side, but cleaner) — confirmed via a combined test exercising
+  both levels in one call.
+- **"Re-run Arbitration" now appears for either level of exclusion** —
+  previously gated on `excludedCritics.size > 0` alone, now also on any
+  critic having at least one individually-excluded issue.
+
+**Verified working** (Playwright, a real run driven through Generate→
+Critique→Arbitrate, the default mock's one-issue-per-critic content):
+each critic card renders both its whole-panel checkbox and one per-issue
+checkbox (6 total across 3 critics), all checked by default; unchecking
+just Continuity's single issue (leaving its whole-panel checkbox checked)
+correctly reveals Re-run Arbitration, and re-arbitrating reflects the
+dropped issue in the new synthesis while Continuity's own card and that
+same issue stay fully visible afterward (nothing deleted); a combined
+call — Pacing's whole panel excluded AND one of Craft's issues excluded —
+correctly reflects both in a single re-arbitration, with Pacing's own
+(redundant) issue exclusion correctly not double-reported since its whole
+panel was already dropped. Re-ran the full Act/Part/Beats, Contract
+Pipeline, and Platform Craft Notes Playwright suites afterward (one
+pre-existing assertion in the Apply Critique/auto-finalize pass needed
+updating from a bare `input[type=checkbox]` locator to one scoped by the
+whole-panel checkbox's own label text, since each card now legitimately
+has two checkboxes — a test-only change) — zero regressions.
+`tsc --noEmit`, `eslint`, and `npm run build` all clean.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance
