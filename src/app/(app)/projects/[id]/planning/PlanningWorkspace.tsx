@@ -56,6 +56,8 @@ import {
   EFFORT_LEVELS,
   type ExtractedEntityCandidate,
   ledgerBadgeLabel,
+  MODEL_OPTIONS,
+  modelLabel,
   nextPlanningPosition,
   outputShapeHint,
   partRangeKey,
@@ -3308,6 +3310,17 @@ function PromptDraftEditor({
 
   const placeholders = placeholdersFor(role, stage);
 
+  // `model` is free-text on the backend (see MODEL_OPTIONS's own comment
+  // in planning-data.ts) — fold in whatever value this draft actually
+  // started with, in case it's an older/custom model outside the fixed
+  // list, so switching to a dropdown here can never silently discard a
+  // real saved value the writer never touched.
+  const modelOptions = useMemo(() => {
+    const options: string[] = [...MODEL_OPTIONS];
+    if (active?.model && !options.includes(active.model)) options.push(active.model);
+    return options;
+  }, [active]);
+
   return (
     <div className="card space-y-4 p-5">
       {loadedFromClaude && (
@@ -3346,10 +3359,15 @@ function PromptDraftEditor({
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <label className="label-caps text-[0.6rem]">Model</label>
-          <input
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            className="mt-1.5 w-full rounded-xl border border-line bg-surface px-3 py-2.5 text-sm text-ink focus:border-line-strong focus:outline-none"
+          <DropdownSelect
+            value={modelLabel(model)}
+            onChange={(label) => {
+              const next = modelOptions.find((m) => modelLabel(m) === label);
+              if (next) setModel(next);
+            }}
+            options={modelOptions.map((m) => modelLabel(m))}
+            placeholder="Select model"
+            className="mt-1.5"
           />
         </div>
         <div>

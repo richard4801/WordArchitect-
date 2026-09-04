@@ -225,6 +225,29 @@ export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 export const DEFAULT_MODEL = "claude-sonnet-5";
 export const DEFAULT_EFFORT: EffortLevel = "high";
 
+// `agent_prompts.model` is a free-text VARCHAR(50) backend-side (see the
+// backend's own CLAUDE.md — "a runtime setting per role/stage, not
+// hardcoded"), so this list is a frontend-only convenience, not a
+// validated enum: it's the current real Claude model lineup, offered as a
+// dropdown instead of a free-text field per an explicit request that a
+// typo-prone text input was the wrong UI for choosing a model. `modelLabel()`
+// falls back to the raw id for any value outside this list (an older model
+// a prompt was already saved with, or one entered before this dropdown
+// existed) — same "don't hide real data behind a fixed list" convention
+// `roleLabel()` already established for an unrecognized AgentRole.
+export const MODEL_OPTIONS = ["claude-opus-5", "claude-sonnet-5", "claude-fable-5-1", "claude-haiku-4-5-20251001"] as const;
+
+const MODEL_LABELS: Record<string, string> = {
+  "claude-opus-5": "Claude Opus 5",
+  "claude-sonnet-5": "Claude Sonnet 5",
+  "claude-fable-5-1": "Claude Fable 5.1",
+  "claude-haiku-4-5-20251001": "Claude Haiku 4.5",
+};
+
+export function modelLabel(model: string): string {
+  return MODEL_LABELS[model] ?? model;
+}
+
 // Fixed, not model-decided — mirrors ACTS_PER_BOOK/PARTS_PER_ACT in the
 // backend's src/types/domain.ts. A 600-chapter serial and a 90k-word
 // single-POV romance both get exactly 3 Acts and 9 Parts.

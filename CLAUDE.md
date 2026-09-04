@@ -3779,6 +3779,45 @@ whole-panel checkbox's own label text, since each card now legitimately
 has two checkboxes — a test-only change) — zero regressions.
 `tsc --noEmit`, `eslint`, and `npm run build` all clean.
 
+**Prompt Editor's Model field is now a dropdown, not a free-text
+input.** User feedback: "the model selection should be a dropdown,
+rather than a text edit" — the field had been a plain `<input>` the
+writer typed a model id into freehand, exactly the kind of typo-prone
+control every other fixed-choice field in this editor (Role, Stage,
+Effort) had already been a `DropdownSelect` for.
+
+`agent_prompts.model` is a free-text `VARCHAR(50)` on the backend (see
+its own CLAUDE.md — "a runtime setting per role/stage, not hardcoded"),
+so there's no server-side enum to validate against or drive the dropdown
+from — this is a frontend-only convenience list, not a contract change.
+New `MODEL_OPTIONS`/`modelLabel()` (`planning-data.ts`) hold the current
+real Claude model lineup (`claude-opus-5`, `claude-sonnet-5`,
+`claude-fable-5-1`, `claude-haiku-4-5-20251001`) with friendly display
+labels ("Claude Opus 5", etc.); `PromptDraftEditor`'s `modelOptions`
+folds in the draft's own starting `active.model` if it's a value outside
+that fixed list (an older or hand-typed model a prompt was already saved
+with before this dropdown existed) so switching to a dropdown can never
+silently discard a real saved value nobody's touched — the exact same
+"fixed list plus whatever real data already has" convention the Role
+dropdown already established for an `AgentRole` the fixed `AGENT_ROLES`
+array doesn't know about yet. Selecting an option still saves the raw
+model id (`claude-opus-5`), never the display label — confirmed against
+the real saved row, not just the UI's own echo of it.
+
+**Verified working** (Playwright, a book seeded with a Generator prompt
+whose `model` was set directly to `"claude-3-opus-legacy"` — a value
+outside the fixed list, simulating a prompt saved before this dropdown
+existed): the Model field renders as a dropdown trigger, not an
+`<input>`; opening it shows all 4 known models with friendly labels
+plus the outlier `"claude-3-opus-legacy"` value preserved verbatim, not
+dropped; picking "Claude Opus 5" and saving persists the raw id
+`claude-opus-5` server-side (confirmed via a direct API read, not just
+the UI); reloading the page shows the dropdown correctly reflecting the
+real persisted value. Re-ran the Apply Critique/per-critic-checkbox,
+per-issue-checkbox, Act/Part/Beats, Contract Pipeline, and Platform
+Craft Notes Playwright suites afterward — zero regressions, zero console
+errors. `tsc --noEmit`, `eslint`, and `npm run build` all clean.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance
