@@ -25,8 +25,6 @@ import {
   Search,
   Send,
   Sparkles,
-  ThumbsDown,
-  ThumbsUp,
   Trash2,
   Undo2,
   Users,
@@ -81,7 +79,6 @@ import {
   unitKeyForPosition,
 } from "@/lib/planning-data";
 import {
-  applyCritiquePlanningStage,
   approvePlanningStage,
   branchPlanningRun,
   clonePromptsFromBook,
@@ -90,20 +87,15 @@ import {
   deletePlanningRun,
   discardPlanningStage,
   discardPlatformCraftNotesDraft,
-  type ExcludedIssue,
   extractPlanningEntities,
   finalizeIntakeConversation,
-  finalizePlanningDirective,
   loadPlanningRun,
   promoteContractRunToFull,
   refreshPlatformCraftNotes,
-  rejectPlanningStage,
-  rerunArbitration,
   runPipelineForward,
   saveAgentPromptVersion,
   savePlatformCraftNotes,
   sendIntakeChatTurn,
-  sendPlanningChatTurn,
   startPlanningRun,
   startPlatformCraftNotesResearch,
   unapprovePlanningStage,
@@ -116,6 +108,7 @@ import {
   useBookPlanningRunsLoadStatus,
   useEntityActionError,
   useEntityActionStatus,
+  usePlanningRunPolling,
   usePlatformCraftNotes,
   usePlatformCraftNotesError,
   usePlatformCraftNotesLoadStatus,
@@ -329,34 +322,20 @@ const BULLET_TONE: Record<string, string> = {
  * markers (the Arbitrator's mustFix/worthConsidering/whatWorks sections)
  * instead of the plain gray dot every other list gets.
  */
-/** Per-issue exclusion controls, threaded down to whichever "issues" array StructuredValue happens to render — only ever supplied by ReviewCard for the three critique panels; every other JsonBlock/StructuredValue call site omits it and gets today's plain rendering. */
-type IssueCheckboxes = { excludedIndexes: Set<number>; onToggle: (index: number) => void };
 
 /**
  * The array-of-objects case specifically for a critique's `issues` field —
- * same recursive per-field rendering as the generic array branch below,
- * plus an optional checkbox per issue (the issue's own real index in the
- * array, not a synthesized id) so a writer can drop individual flagged
- * issues from what the Arbitrator synthesizes without excluding the whole
- * critic. `checkboxes` is only ever passed for real critique panels;
- * omitted, this renders identically to the plain array branch it replaces.
+ * same recursive per-field rendering as the generic array branch below.
+ * Used to also carry a per-issue include/exclude checkbox feeding a manual
+ * `/arbitrate` re-run — removed along with the rest of the app's own
+ * arbitration UI now that arbitration happens live in an MCP session
+ * instead (see ReviewGate's own comment). Read-only again.
  */
-function IssuesList({ issues, checkboxes }: { issues: unknown[]; checkboxes?: IssueCheckboxes }) {
+function IssuesList({ issues }: { issues: unknown[] }) {
   return (
     <div className="space-y-3">
       {issues.map((item, i) => (
         <div key={i} className="border-l-2 border-line pl-3">
-          {checkboxes && (
-            <label className="mb-1.5 flex w-fit items-center gap-1.5 text-[0.7rem] text-ink-faint">
-              <input
-                type="checkbox"
-                checked={!checkboxes.excludedIndexes.has(i)}
-                onChange={() => checkboxes.onToggle(i)}
-                className="size-3.5 accent-gold"
-              />
-              Include this issue
-            </label>
-          )}
           <StructuredValue value={item} />
         </div>
       ))}
@@ -364,15 +343,7 @@ function IssuesList({ issues, checkboxes }: { issues: unknown[]; checkboxes?: Is
   );
 }
 
-function StructuredValue({
-  value,
-  toneKey,
-  issueCheckboxes,
-}: {
-  value: unknown;
-  toneKey?: string;
-  issueCheckboxes?: IssueCheckboxes;
-}) {
+function StructuredValue({ value, toneKey }: { value: unknown; toneKey?: string }) {
   if (value === null || value === undefined) return null;
 
   if (typeof value === "string") {
@@ -431,17 +402,13 @@ function StructuredValue({
         // The Arbitrator's issues array gets a compact severity-count
         // summary line above the full list, matching the mock's visual
         // design (real data: issues[].severity from each critic review).
-        // Each issue also gets its own include/exclude checkbox when a
-        // critique panel supplied one (see IssueCheckboxes) — a plain
-        // StructuredValue recursion has no per-item index to hang a
-        // checkbox off, hence the dedicated IssuesList here instead.
         if (key.toLowerCase() === "issues" && Array.isArray(v)) {
           return (
             <div key={key}>
               <h5 className="label-caps text-[0.6rem] text-ink-muted">{fieldLabel(key)}</h5>
               <IssueSeverityCounts issues={v} />
               <div className="mt-2">
-                <IssuesList issues={v} checkboxes={issueCheckboxes} />
+                <IssuesList issues={v} />
               </div>
             </div>
           );
@@ -460,7 +427,7 @@ function StructuredValue({
 }
 
 /** panel_reviews / arbitrator_synthesis have no fixed schema — renders defensively rather than assuming any particular field. */
-function JsonBlock({ value, toneKey, issueCheckboxes }: { value: unknown; toneKey?: string; issueCheckboxes?: IssueCheckboxes }) {
+function JsonBlock({ value, toneKey }: { value: unknown; toneKey?: string }) {
   // No inner max-height/scroll — the review column already sits inside the
   // page's own scroll region, and a second nested scrollbar was clipping
   // critic issues/verdict text mid-sentence with no visible "there's more"
@@ -468,7 +435,7 @@ function JsonBlock({ value, toneKey, issueCheckboxes }: { value: unknown; toneKe
   // reads as a truncation bug, not a scrollable one).
   return (
     <div className="mt-2 text-xs text-ink-muted">
-      <StructuredValue value={value} toneKey={toneKey} issueCheckboxes={issueCheckboxes} />
+      <StructuredValue value={value} toneKey={toneKey} />
     </div>
   );
 }
@@ -576,6 +543,17 @@ function PlanningWorkspaceInner({ bookId, pipelineType }: { bookId: string; pipe
   useEffect(() => {
     if (targetRunId && (!run || run.id !== targetRunId)) void loadPlanningRun(targetRunId);
   }, [targetRunId, run]);
+
+  // Arbitration (and any other step) can now happen live from a separate
+  // MCP session instead of exclusively through this app's own button
+  // clicks — without this, an MCP-driven change to this exact run
+  // (status, current_stage/act/part/beat_chunk, stage_artifacts,
+  // panel_reviews) is invisible in this tab until something here happens
+  // to refetch. Polls the whole workspace's one active run regardless of
+  // which sub-view (Pipeline Map, Continuity Ledger, Entity Review, ...)
+  // is currently showing, and stops on its own once the run reaches a
+  // terminal status — see usePlanningRunPolling's own comment.
+  usePlanningRunPolling(run?.id, run?.status);
 
   function onRunIdChange(runId: string | null) {
     router.replace(runId ? `${pathname}?run=${runId}` : pathname);
@@ -1294,26 +1272,16 @@ function UnitDetail({
   onBack,
   onAdvance,
   onApprove,
-  onReject,
-  onApplyCritique,
-  onRerunArbitrate,
   onUnapprove,
   onDiscardStage,
-  onSendChat,
-  onFinalizeDirective,
 }: {
   run: PlanningRun;
   advancing: boolean;
   onBack: () => void;
   onAdvance: () => void;
   onApprove: () => void;
-  onReject: () => void;
-  onApplyCritique: () => void;
-  onRerunArbitrate: (excludedCritics: AgentRole[], excludedIssues: ExcludedIssue[]) => void;
   onUnapprove: () => void;
   onDiscardStage: () => void;
-  onSendChat: (message: string) => Promise<void>;
-  onFinalizeDirective: () => void;
 }) {
   const elapsed = useElapsedSeconds(advancing);
   const unit = currentUnitKey(run);
@@ -1349,7 +1317,7 @@ function UnitDetail({
 
       {parent && parent.text && <ContextPanel label={parent.label} text={parent.text} />}
 
-      {(run.status === "generating" || run.status === "critiquing" || run.status === "awaiting_arbitration") && (
+      {(run.status === "generating" || run.status === "critiquing") && (
         <div className="card p-6 text-center">
           <p className="text-sm text-ink-muted">{PLANNING_RUN_STATUS_LABEL[run.status]}…</p>
           <button
@@ -1359,7 +1327,7 @@ function UnitDetail({
             className="mt-4 inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {advancing && <Loader2 className="size-4 animate-spin" />}
-            {advancing ? "Working…" : run.status === "generating" ? "Generate" : "Continue"}
+            {advancing ? "Working…" : run.status === "generating" ? "Generate" : "Critique"}
           </button>
           {advancing && <LongRunningNote seconds={elapsed} />}
         </div>
@@ -1395,29 +1363,42 @@ function UnitDetail({
         </div>
       )}
 
-      {run.status === "awaiting_user_review" && (
+      {/*
+        Both awaiting_arbitration (critique just finished, arbitration
+        hasn't happened yet) and awaiting_user_review (a verdict — now
+        produced live in an MCP session, not by this app — already exists)
+        render the same Artifact + Critics view; ReviewGate itself decides
+        whether Approve is offered, since that's the one action still
+        gated on a real verdict existing.
+      */}
+      {(run.status === "awaiting_arbitration" || run.status === "awaiting_user_review") && (
         <ReviewGate
-          // Keyed on the unit so the per-critique include/exclude
-          // checkboxes always reset to every-critic-checked on a genuinely
-          // new unit, rather than carrying over a previous unit's
-          // unchecked state (the "reset via remount" pattern this file
-          // already uses for PromptDraftEditor/EntityReviewView).
-          key={unit}
           run={run}
           unit={unit}
           advancing={advancing}
           hasOwnArtifact={hasOwnArtifact}
           isFirstUnit={isFirstUnit}
           onApprove={onApprove}
-          onReject={onReject}
-          onApplyCritique={onApplyCritique}
-          onRerunArbitrate={onRerunArbitrate}
           onDiscardStage={() => setConfirmingDiscardStage(true)}
         />
       )}
 
+      {/*
+        A leftover state from the app's own now-removed Reject → chat
+        interview → directive flow — arbitration (and any correction to
+        it) happens live in an MCP session now, so there's no interactive
+        UI here for it. Nothing in this app can put a run into this status
+        anymore; a run resuming mid an older interview just waits here
+        until the polling in PlanningWorkspaceInner picks up whatever the
+        MCP session does next.
+      */}
       {run.status === "user_chat_active" && (
-        <RejectionInterview run={run} advancing={advancing} onSend={onSendChat} onFinalize={onFinalizeDirective} />
+        <div className="card p-6 text-center">
+          <p className="text-sm text-ink-muted">
+            This unit is in a rejection interview from an earlier flow. Continue that conversation from
+            your MCP session — this screen updates automatically once it moves on.
+          </p>
+        </div>
       )}
 
       {confirmingDiscardStage && (
@@ -1437,9 +1418,21 @@ function UnitDetail({
 }
 
 const CRITIC_DOT_COLORS = ["var(--gold)", "var(--info)", "var(--purple)"];
-/** Stable empty Set for a critic with no individually-excluded issues, so ReviewCard isn't handed a freshly-constructed Set on every render. */
-const EMPTY_ISSUE_SET = new Set<number>();
 
+/**
+ * Shows the current unit's Artifact and, once Critique has run, its raw
+ * per-critic reviews — a live status view of exactly what Generate/
+ * Critique produced, whether triggered from this app's own Generate/
+ * Critique buttons or from an MCP session driving the same run (they
+ * write to the same `stage_artifacts`/`panel_reviews`, so this looks
+ * identical either way). Arbitration itself — the synthesis that used to
+ * drive a Reject button, an Apply Critique shortcut, and a rejection-
+ * interview chat here — now happens live in that MCP session instead of
+ * through this screen, so none of that renders here anymore. Approve is
+ * the one action left: the human sign-off doesn't go away just because
+ * arbitration moved elsewhere, and it's still only offered once
+ * `awaiting_user_review` confirms a verdict actually exists.
+ */
 function ReviewGate({
   run,
   unit,
@@ -1447,9 +1440,6 @@ function ReviewGate({
   hasOwnArtifact,
   isFirstUnit,
   onApprove,
-  onReject,
-  onApplyCritique,
-  onRerunArbitrate,
   onDiscardStage,
 }: {
   run: PlanningRun;
@@ -1458,55 +1448,11 @@ function ReviewGate({
   hasOwnArtifact: boolean;
   isFirstUnit: boolean;
   onApprove: () => void;
-  onReject: () => void;
-  onApplyCritique: () => void;
-  onRerunArbitrate: (excludedCritics: AgentRole[], excludedIssues: ExcludedIssue[]) => void;
   onDiscardStage: () => void;
 }) {
   const artifact = run.stageArtifacts[unit] ?? "";
   const reviewEntries = run.panelReviews ? Object.entries(run.panelReviews) : [];
-  const hasVerdict = run.arbitratorSynthesis !== null && run.arbitratorSynthesis !== undefined;
-  // Two independent levels of checkbox for re-arbitrating, both defaulting
-  // to everything included ("reviews arrive checked, uncheck what you
-  // don't want"). Local, ephemeral UI state (not part of the run) — the
-  // caller keys this whole component on `unit` so a fresh unit always
-  // starts everything checked again.
-  //   - excludedCritics: a whole critic's card unchecked entirely.
-  //   - excludedIssuesByRole: individual issue rows unchecked inside an
-  //     otherwise-included critic, keyed by that critic's role, each value
-  //     the set of that critic's own `issues` array indexes to drop —
-  //     exactly the {role, index} identity the backend expects, never a
-  //     synthesized id.
-  const [excluded, setExcluded] = useState<Set<AgentRole>>(new Set());
-  const [excludedIssuesByRole, setExcludedIssuesByRole] = useState<Partial<Record<AgentRole, Set<number>>>>({});
-  function toggleCritic(role: AgentRole) {
-    setExcluded((prev) => {
-      const next = new Set(prev);
-      if (next.has(role)) next.delete(role);
-      else next.add(role);
-      return next;
-    });
-  }
-  function toggleIssue(role: AgentRole, index: number) {
-    setExcludedIssuesByRole((prev) => {
-      const next = new Set(prev[role] ?? []);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
-      return { ...prev, [role]: next };
-    });
-  }
-  const hasAnyIssueExclusion = Object.values(excludedIssuesByRole).some((s) => s && s.size > 0);
-  function handleRerunClick() {
-    // No need to list issues from an already fully-excluded critic — the
-    // backend drops its whole review anyway — so only send exclusions for
-    // critics that are still otherwise included.
-    const excludedIssues: ExcludedIssue[] = [];
-    for (const [role, indexes] of Object.entries(excludedIssuesByRole) as [AgentRole, Set<number> | undefined][]) {
-      if (!indexes || excluded.has(role)) continue;
-      for (const index of indexes) excludedIssues.push({ role, index });
-    }
-    onRerunArbitrate(Array.from(excluded), excludedIssues);
-  }
+  const canApprove = run.status === "awaiting_user_review";
 
   return (
     <div className="space-y-4">
@@ -1528,9 +1474,9 @@ function ReviewGate({
         side-by-side split itself, not a fixable positioning detail.
         Stacked layout removes the split entirely: Artifact first (still
         capped at max-h-[32rem] with its own scroll for a long artifact),
-        Critics and the Verdict below it, both full width — content simply
-        flows top to bottom with normal spacing, so there's nothing for an
-        asymmetric side gap to appear next to.
+        Critics below it, both full width — content simply flows top to
+        bottom with normal spacing, so there's nothing for an asymmetric
+        side gap to appear next to.
       */}
       <div className="card p-5">
         <h3 className="label-caps text-[0.65rem] text-ink-faint">Artifact</h3>
@@ -1539,52 +1485,25 @@ function ReviewGate({
         </div>
       </div>
 
-      {(reviewEntries.length > 0 || hasVerdict) && (
-        <div className="space-y-4">
-          {reviewEntries.length > 0 && (
-            <div>
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <h3 className="label-caps text-[0.6rem] text-ink-faint">Critics</h3>
-                {/*
-                  Re-arbitrating is a real, billed LLM call — only worth
-                  offering once the writer has actually changed something
-                  from the default (every critic included), matching
-                  "reviews arrive checked, uncheck what you don't want"
-                  from the backend's own framing.
-                */}
-                {(excluded.size > 0 || hasAnyIssueExclusion) && (
-                  <button
-                    type="button"
-                    onClick={handleRerunClick}
-                    disabled={advancing}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-[0.7rem] font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
-                  >
-                    {advancing && <Loader2 className="size-3 animate-spin" />}
-                    Re-run Arbitration
-                  </button>
-                )}
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {reviewEntries.map(([role, value], i) => (
-                  <ReviewCard
-                    key={role}
-                    title={roleLabel(role)}
-                    value={value}
-                    dotColor={CRITIC_DOT_COLORS[i % CRITIC_DOT_COLORS.length]}
-                    included={!excluded.has(role as AgentRole)}
-                    onToggleIncluded={() => toggleCritic(role as AgentRole)}
-                    excludedIssueIndexes={excludedIssuesByRole[role as AgentRole] ?? EMPTY_ISSUE_SET}
-                    onToggleIssue={(index) => toggleIssue(role as AgentRole, index)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-          {hasVerdict && <ArbitratorVerdictCard synthesis={run.arbitratorSynthesis} />}
+      {reviewEntries.length > 0 && (
+        <div>
+          <h3 className="label-caps mb-2 text-[0.6rem] text-ink-faint">Critics</h3>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {reviewEntries.map(([role, value], i) => (
+              <ReviewCard key={role} title={roleLabel(role)} value={value} dotColor={CRITIC_DOT_COLORS[i % CRITIC_DOT_COLORS.length]} />
+            ))}
+          </div>
         </div>
       )}
 
-      {(unit === "codex_documentation" || unit === "hook_chapters_outline") && (
+      {!canApprove && (
+        <p className="rounded-xl border border-line bg-surface-2 p-3 text-xs text-ink-muted">
+          Waiting on arbitration — that now happens live in your MCP session. This screen updates
+          automatically once it&apos;s done.
+        </p>
+      )}
+
+      {canApprove && (unit === "codex_documentation" || unit === "hook_chapters_outline") && (
         <p className="rounded-xl border border-info/40 bg-info/10 p-3 text-xs text-ink-muted">
           {unit === "codex_documentation"
             ? "Approving writes these entries directly into your Codex — not a proposal you review again later."
@@ -1600,32 +1519,7 @@ function ReviewGate({
         ) : (
           <span />
         )}
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={onReject}
-            disabled={advancing}
-            className="rounded-xl border border-line px-4 py-2 text-sm font-medium text-ink transition-colors hover:border-danger hover:text-danger disabled:opacity-50"
-          >
-            Reject &amp; Discuss
-          </button>
-          {/*
-            A middle ground between Reject (open a whole chat interview)
-            and Approve (lock it as-is): "I agree with the panel's
-            findings, just fix them, don't make me chat about it." Only
-            offered once a real verdict exists for this unit — mirrors the
-            backend's own 400 for "no arbitrator synthesis yet."
-          */}
-          {hasVerdict && (
-            <button
-              type="button"
-              onClick={onApplyCritique}
-              disabled={advancing}
-              className="rounded-xl border border-line px-4 py-2 text-sm font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-50"
-            >
-              Apply Critique
-            </button>
-          )}
+        {canApprove && (
           <button
             type="button"
             onClick={onApprove}
@@ -1635,7 +1529,7 @@ function ReviewGate({
             {advancing && <Loader2 className="size-4 animate-spin" />}
             Approve &amp; Lock
           </button>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -1649,23 +1543,7 @@ function scoreOf(value: unknown): string | null {
   return null;
 }
 
-function ReviewCard({
-  title,
-  value,
-  dotColor,
-  included,
-  onToggleIncluded,
-  excludedIssueIndexes,
-  onToggleIssue,
-}: {
-  title: string;
-  value: unknown;
-  dotColor: string;
-  included: boolean;
-  onToggleIncluded: () => void;
-  excludedIssueIndexes: Set<number>;
-  onToggleIssue: (index: number) => void;
-}) {
+function ReviewCard({ title, value, dotColor }: { title: string; value: unknown; dotColor: string }) {
   if (value === undefined) return null;
   const score = scoreOf(value);
   return (
@@ -1677,161 +1555,8 @@ function ReviewCard({
         </h4>
         {score && <span className="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[0.65rem] font-medium text-ink">{score}/10</span>}
       </div>
-      {/*
-        Two independent levels of checkbox: this whole-panel one drops the
-        critic's entire review (score/summary/strengths/every issue) —
-        "I don't trust this critic's read at all this pass." The per-issue
-        checkboxes rendered inside JsonBlock's own "issues" list (via
-        IssuesList) are the finer-grained sibling — "most of what it
-        flagged is right, but not this one" — and stay independent of this
-        one even when this panel is still included.
-      */}
-      <label className="mt-2 flex w-fit items-center gap-1.5 text-[0.7rem] text-ink-faint">
-        <input type="checkbox" checked={included} onChange={onToggleIncluded} className="size-3.5 accent-gold" />
-        Include in Arbitrator&apos;s review
-      </label>
-      <JsonBlock value={value} issueCheckboxes={{ excludedIndexes: excludedIssueIndexes, onToggle: onToggleIssue }} />
+      <JsonBlock value={value} />
     </div>
-  );
-}
-
-function ArbitratorVerdictCard({ synthesis }: { synthesis: unknown }) {
-  const isObject = synthesis !== null && typeof synthesis === "object" && !Array.isArray(synthesis);
-  const recommendation = isObject && "recommendation" in (synthesis as object) ? String((synthesis as { recommendation: unknown }).recommendation) : null;
-  const approves = recommendation === "approve";
-  // Strip the field already surfaced prominently above (icon + headline)
-  // so it isn't shown twice in the generic body render below.
-  const rest = isObject ? Object.fromEntries(Object.entries(synthesis as Record<string, unknown>).filter(([k]) => k !== "recommendation")) : synthesis;
-  return (
-    <div className="card p-4">
-      <h3 className="label-caps mb-3 text-[0.6rem] text-ink-faint">Arbitrator Verdict</h3>
-      <div className="flex items-center gap-2.5">
-        <span className={`grid size-8 shrink-0 place-items-center rounded-full ${approves ? "bg-success/15 text-success" : "bg-warn/15 text-warn"}`}>
-          {approves ? <ThumbsUp className="size-4" /> : <ThumbsDown className="size-4" />}
-        </span>
-        <p className="text-sm font-medium text-ink">{approves ? "Recommend Approve" : recommendation ? `Recommend ${fieldLabel(recommendation)}` : "Verdict"}</p>
-      </div>
-      <div className="mt-3">
-        <JsonBlock value={rest} />
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------
-// Rejection Interview
-//
-// CORRECTION vs. the design mock: the mock showed a left rail grouping
-// history by unit with a "Rejected N times" count per unit. That
-// structure doesn't exist in the real data — chat_history is one flat
-// array of {role, content}, the WHOLE run's rejection interviews
-// concatenated, with no per-turn unit tag to group by. Rendered here as
-// one continuous thread instead, exactly what the data supports — never
-// sliced to "this unit only," and with no "clear history" action at all
-// (there's no endpoint for it, and it would erase the Arbitrator's
-// deliberate continuous memory across the whole run).
-// ---------------------------------------------------------------------
-
-function RejectionInterview({
-  run,
-  advancing,
-  onSend,
-  onFinalize,
-}: {
-  run: PlanningRun;
-  advancing: boolean;
-  onSend: (message: string) => Promise<void>;
-  onFinalize: () => void;
-}) {
-  const [message, setMessage] = useState("");
-  const [sending, setSending] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const elapsed = useElapsedSeconds(sending);
-  const finalizingElapsed = useElapsedSeconds(advancing);
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [run.chatHistory.length, sending]);
-
-  async function handleSend() {
-    const text = message.trim();
-    if (!text || sending) return;
-    setSending(true);
-    setMessage("");
-    try {
-      await onSend(text);
-    } finally {
-      setSending(false);
-    }
-  }
-
-  return (
-    <section className="card flex h-[36rem] flex-col p-0">
-      <header className="flex shrink-0 items-center gap-2.5 border-b border-line px-5 py-4">
-        <span className="grid size-8 shrink-0 place-items-center rounded-full bg-warn/15 text-warn">
-          <PenLine className="size-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="flex items-center gap-2 text-sm font-medium text-ink">
-            Rejection Interview
-            <span className="rounded-full border border-warn/40 bg-warn/10 px-2 py-0.5 text-[0.6rem] font-medium text-warn">In Interview</span>
-          </p>
-          <p className="text-xs text-ink-faint">The Arbitrator&apos;s full conversation across this whole run — nothing here is ever cleared.</p>
-        </div>
-      </header>
-      <div ref={scrollRef} className="scroll-slim min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
-        {run.chatHistory.length === 0 && <p className="text-sm text-ink-faint">Tell the Arbitrator what to change about this unit.</p>}
-        {run.chatHistory.map((m, i) => (
-          <ChatBubble key={i} role={m.role} content={m.content} />
-        ))}
-        {sending && <ChatTypingIndicator />}
-        {sending && <LongRunningNote seconds={elapsed} />}
-        {advancing && <LongRunningNote seconds={finalizingElapsed} />}
-      </div>
-      <div className="shrink-0 border-t border-line p-3">
-        <div className="flex items-end gap-2">
-          <textarea
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSend();
-              }
-            }}
-            placeholder="Type your message to the Arbitrator…"
-            rows={1}
-            className="max-h-32 min-h-[2.25rem] flex-1 resize-none rounded-lg border border-line bg-transparent px-3 py-2 text-sm text-ink outline-none focus:border-line-strong"
-          />
-          <button
-            type="button"
-            aria-label="Send"
-            onClick={handleSend}
-            disabled={sending || !message.trim()}
-            className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-gold text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
-          >
-            {sending ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
-          </button>
-        </div>
-        {/*
-          The backend now auto-finalizes on its own — once the Arbitrator's
-          reply signals it understood the correction and the writer
-          confirmed they're ready, it compiles the directive and starts
-          regenerating without any extra click (see onSend's handling of a
-          "generating" status coming back from a /chat call). This manual
-          action stays only as a fallback for a run where that signal was
-          missed, or an older run resumed mid-interview.
-        */}
-        <button
-          type="button"
-          onClick={onFinalize}
-          disabled={run.chatHistory.length === 0 || advancing || sending}
-          className="mt-2 w-full text-center text-[0.7rem] text-ink-faint underline-offset-2 transition-colors hover:text-ink hover:underline disabled:opacity-50"
-        >
-          Stuck? Finalize the directive now instead of waiting for the Arbitrator to.
-        </button>
-      </div>
-    </section>
   );
 }
 
@@ -1937,64 +1662,6 @@ function PipelineView({
     }
   }
 
-  async function handleReject() {
-    setAdvancing(true);
-    setActionError(null);
-    try {
-      await rejectPlanningStage(run.id);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Couldn't reject this unit.");
-    } finally {
-      setAdvancing(false);
-    }
-  }
-
-  /**
-   * A middle ground between Reject (open a whole chat interview) and
-   * Approve (lock it as-is): sends the Arbitrator's already-computed
-   * mustFix/worthConsidering straight to the Generator as a directive,
-   * skipping the interview entirely. Lands on the plain Generate/Continue
-   * card afterward rather than auto-chaining into the actual Generate
-   * call — same "the writer's last input before a fresh 60-180s call
-   * should be a deliberate next click" reasoning handleFinalizeDirective
-   * already follows.
-   */
-  async function handleApplyCritique() {
-    setAdvancing(true);
-    setActionError(null);
-    try {
-      await applyCritiquePlanningStage(run.id);
-    } catch (err) {
-      setActionError(
-        err instanceof ApiError && err.status === 400
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : "Couldn't apply the critique.",
-      );
-    } finally {
-      setAdvancing(false);
-    }
-  }
-
-  /**
-   * Re-arbitrates the current unit with a subset of critics and/or
-   * individual issues excluded (the two independent levels of checkbox on
-   * the review gate) — a real, billed LLM call, only ever triggered by an
-   * explicit click once the writer has actually unchecked something.
-   */
-  async function handleRerunArbitration(excludedCritics: AgentRole[], excludedIssues: ExcludedIssue[]) {
-    setAdvancing(true);
-    setActionError(null);
-    try {
-      await rerunArbitration(run.id, excludedCritics, excludedIssues);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Couldn't re-run arbitration.");
-    } finally {
-      setAdvancing(false);
-    }
-  }
-
   async function handleUnapprove() {
     setAdvancing(true);
     setActionError(null);
@@ -2026,18 +1693,6 @@ function PipelineView({
             ? err.message
             : "Couldn't discard this draft.",
       );
-    } finally {
-      setAdvancing(false);
-    }
-  }
-
-  async function handleFinalizeDirective() {
-    setAdvancing(true);
-    setActionError(null);
-    try {
-      await finalizePlanningDirective(run.id);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Couldn't finalize the directive.");
     } finally {
       setAdvancing(false);
     }
@@ -2130,33 +1785,8 @@ function PipelineView({
           onBack={() => setSubView("map")}
           onAdvance={handleAdvance}
           onApprove={handleApprove}
-          onReject={handleReject}
-          onApplyCritique={handleApplyCritique}
-          onRerunArbitrate={handleRerunArbitration}
           onUnapprove={handleUnapprove}
           onDiscardStage={handleDiscardStage}
-          onSendChat={async (message) => {
-            setActionError(null);
-            try {
-              // No auto-chain into Generate here even when the backend
-              // auto-finalizes mid-conversation (run.status flips straight
-              // to "generating") — the reactive render below already
-              // switches UnitDetail out of the interview and onto the
-              // plain Generate/Continue card the moment `run.status`
-              // changes, same as it does after a manual
-              // finalize-directive or intake-finalize. Kicking off the
-              // actual 60-180s Generate call automatically here would
-              // spring an unrequested wait on a click that was just an
-              // ordinary chat message, not a deliberate "start generating"
-              // action — the same reasoning handleFinalizeDirective's own
-              // comment already gives for not auto-chaining.
-              await sendPlanningChatTurn(run.id, message);
-            } catch (err) {
-              setActionError(err instanceof Error ? err.message : "Couldn't send that message.");
-              throw err;
-            }
-          }}
-          onFinalizeDirective={handleFinalizeDirective}
         />
       )}
       {confirmDiscardRunDialog}

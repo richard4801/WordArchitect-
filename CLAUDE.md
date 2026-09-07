@@ -3818,6 +3818,147 @@ per-issue-checkbox, Act/Part/Beats, Contract Pipeline, and Platform
 Craft Notes Playwright suites afterward — zero regressions, zero console
 errors. `tsc --noEmit`, `eslint`, and `npm run build` all clean.
 
+**Arbitration moved out of the app entirely, into a live MCP session —
+the automated Reject/Apply Critique/rejection-interview UI this whole
+section spent several passes building is now gone, and the review screen
+polls for live state instead of only reacting to its own button clicks.**
+User's own framing: "I want to use a different of my Claude account to do
+the Arbitrator." Concretely, a separate Claude Code session (connected to
+this backend over MCP, with tools like `critique_planning_unit`,
+`get_planning_run`, `set_planning_directive`, `approve_planning_unit`) now
+plays the Arbitrator role directly in its own conversation, instead of the
+backend's own `/arbitrate` LLM call being driven exclusively through this
+app's buttons. This app still owns Generate and Critique (and Approve),
+and still shows the resulting critique — it just no longer drives or
+displays arbitration's own synthesis step.
+
+**Removed, all in `PlanningWorkspace.tsx`:**
+- **`ArbitratorVerdictCard`** — the `recommendation`/`summary`/`mustFix`/
+  `worthConsidering`/`whatWorks` synthesis card — deleted outright, along
+  with the now-unused `ThumbsUp`/`ThumbsDown` icon imports it was the only
+  caller of.
+- **`RejectionInterview`** — the whole chat UI (`POST .../chat`,
+  `.../finalize-directive`) — deleted outright, comment header and all.
+  `UnitDetail`'s `user_chat_active` branch (a run resuming mid an older
+  interview, or reopened via "Undo last approval" restoring a past unit's
+  history) now renders one static line instead — "Continue that
+  conversation from your MCP session — this screen updates automatically
+  once it moves on" — rather than a dead end with no explanation. Nothing
+  in this app can put a run into this status anymore (Reject is gone), so
+  this is purely a fallback for state that predates or came from outside
+  this app.
+- **The Apply Critique button** (`POST .../apply-critique`) — deleted from
+  `ReviewGate`, along with `handleApplyCritique` in `PipelineView` and
+  `applyCritiquePlanningStage` in `planning-store.ts` (confirmed unused
+  anywhere else before deleting, not just hidden).
+- **The whole-panel and per-issue "include in Arbitrator's review"
+  checkboxes and "Re-run Arbitration" button** (`POST .../arbitrate` with
+  `excludedCritics`/`excludedIssues`) — these existed purely to feed a
+  manual re-arbitration call that no longer has anywhere to live in this
+  app, so `ReviewCard`/`IssuesList`/`StructuredValue`/`JsonBlock` all lost
+  their `issueCheckboxes`/`included`/`onToggleIncluded` plumbing back to
+  the plain read-only rendering they had before that feature existed, and
+  `handleRerunArbitration`/`rerunArbitration`/`callArbitrate`/
+  `ExcludedIssue` are gone from `planning-store.ts` entirely.
+- **Reject itself** (`POST .../reject`) — `handleReject` and
+  `rejectPlanningStage` deleted; the "Reject & Discuss" button is gone
+  from `ReviewGate`.
+
+**Kept, per an explicit "don't throw out the parts that still work"
+instruction:** Generate and Critique remain real, separate, deliberate
+buttons — `nextForwardStep`/`runPipelineForward` in `planning-store.ts`
+now only ever resolve to `"generate"` or `"critique"` (the return type
+dropped `"arbitrate"` entirely) and the function runs exactly ONE step per
+call instead of looping forward — Generate no longer auto-chains into
+Critique, matching this file's own established "the writer's last input
+before a fresh 60-180s call should be a deliberate next click" principle,
+now applied one step earlier than it used to be. `UnitDetail`'s
+generating/critiquing card's button label changed from a generic
+"Continue" to "Critique" for the `critiquing` status specifically, so the
+two real actions read as two real, differently-named actions rather than
+one button whose label happens to change. **The raw critic cards
+(score/issues/strengths per critic) stay, and are now shown even before
+arbitration has happened** — `ReviewGate` (still capable of a full
+`ArtifactContent`/`CodexEntryCards` render, as before) now renders for
+BOTH `awaiting_arbitration` (critique just finished, no verdict yet) and
+`awaiting_user_review` (a verdict now exists, produced live in an MCP
+session), showing the exact same Artifact + Critics content either way —
+these populate identically whether Critique was triggered from this app's
+own button or from `critique_planning_unit` in an MCP session, since both
+write to the same `stage_artifacts`/`panel_reviews`, so this is
+genuinely useful as a live status view rather than something that only
+makes sense post-verdict. **Approve stays** — a new `canApprove =
+run.status === "awaiting_user_review"` boolean is the only thing gating
+it (replacing the old `hasVerdict` check against `arbitratorSynthesis`,
+which this screen no longer reads or displays at all): pre-verdict, a
+plain "Waiting on arbitration — that now happens live in your MCP
+session. This screen updates automatically once it's done." note shows
+instead of the button. Discard-this-draft is unaffected either way (it
+never depended on arbitration having happened).
+
+**The real fix underneath the UI change: the screen now polls, so an
+MCP-driven change doesn't sit invisible until something in this tab
+happens to refetch.** Before this pass, `PlanningWorkspaceInner` only ever
+refetched the active run from its own `useEffect` keyed on `targetRunId`
+changing — nothing re-fetched an already-loaded run just because time
+passed, so a status/artifact/panel_reviews change made by a *separate*
+MCP session driving the same run id was invisible in this tab until the
+writer did something that happened to trigger a reload (switching runs,
+a hard refresh). New `usePlanningRunPolling(runId, status)` in
+`planning-store.ts` — same "subscribe, then act in a callback" effect
+shape `usePlatformCraftNotesPolling` already established for the same
+React Compiler lint reason — polls `GET /planning/runs/:id` every 4s
+whenever a non-terminal run (anything other than `done`/`failed`) is
+loaded, calling the existing `loadPlanningRun` on each tick rather than a
+new function: every tick replaces the active run wholesale (not a
+diff/merge), which is deliberate — an MCP-driven change can move
+`status`, `current_stage`/`current_act`/`current_part`/
+`current_beat_chunk`, `stage_artifacts`, and `panel_reviews` all at once
+between two polls, and there's no cheap way to merge that partially.
+Wired once, in `PlanningWorkspaceInner`, off the one active `run` the
+whole workspace already tracks — covers every sub-view (Pipeline Map,
+Continuity Ledger, Entity Review, Prompt Editor), not just the pipeline
+screen, since Ledger/Entity Review already render straight off the same
+`run` prop. Stops automatically once the run reaches `done`/`failed` — a
+failed run needs a deliberate Retry click, not silent background polling.
+
+**Caching double-checked, not assumed:** the spec driving this asserted
+"`Cache-Control: no-store` is already set project-wide for polled
+endpoints" — checked before trusting it, by reading `api-client.ts`'s
+`apiFetch` directly, and found it sets no `Cache-Control` of any kind,
+project-wide or otherwise (confirmed `usePlatformCraftNotesPolling`'s own
+GET doesn't set it either — that fix was purely "refetch on every mount +
+poll," never a caching change). So the premise was wrong, not "already
+handled elsewhere" — `loadPlanningRun`'s own `GET /planning/runs/:id` call
+now explicitly passes `{ cache: "no-store" }` (a real, if minor, Fetch API
+option that disables the browser's HTTP cache for that one request,
+independent of the mostly-server-side Next.js `fetch` cache option), since
+this is the one call site that's now also the target of a polling
+interval and a stale cached response would defeat the whole point.
+
+**Verified working** (Playwright, against the local mock backend):
+clicking Generate on a fresh `generating` unit moves the run to
+`critiquing` without auto-chaining further; a "Critique" button (not
+"Continue") appears and clicking it moves the run to
+`awaiting_arbitration` with `panel_reviews` already populated — not
+auto-arbitrated; the critic cards render as a live status view during
+`awaiting_arbitration` with no Reject/Apply Critique/Re-run
+Arbitration/"Include in Arbitrator"/"Include this issue" controls
+anywhere, no Approve button yet, and a real "Waiting on arbitration" note
+instead; calling `/arbitrate` directly against the mock backend (standing
+in for a real MCP session's own arbitration, entirely outside this app)
+was picked up by polling with zero clicks or reloads, surfacing a real
+Approve button with no arbitrator-verdict card ever appearing even though
+a verdict now genuinely exists; clicking Approve still correctly advances
+the run. Re-ran the full Act/Part/Beats, Contract Pipeline, and Platform
+Craft Notes Playwright suites afterward, updating each one's own
+Generate-through-to-Approve helper to drive Critique as its own step and
+simulate an MCP-style `/arbitrate` call directly against the mock (mirrors
+exactly how a real MCP session would reach the same state) instead of
+relying on the old single-click auto-chain — zero regressions once
+updated, zero console errors across the full pass. `tsc --noEmit`,
+`eslint`, and `npm run build` all clean.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance

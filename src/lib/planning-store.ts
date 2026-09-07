@@ -440,7 +440,14 @@ export async function loadPlanningRun(runId: string): Promise<void> {
   runError = null;
   emitRun();
   try {
-    const res = await apiFetch<RunResponse>(`/planning/runs/${runId}`);
+    // `cache: "no-store"` is explicit here, not incidental — this call is
+    // now also the target of usePlanningRunPolling's interval, and a
+    // stale cached response would defeat the whole point of polling.
+    // Checked project-wide first: apiFetch sets no Cache-Control of any
+    // kind by default (confirmed by reading api-client.ts directly, not
+    // assumed) — this is the one call site that actually needs it, not
+    // something already covered elsewhere.
+    const res = await apiFetch<RunResponse>(`/planning/runs/${runId}`, { cache: "no-store" });
     // A freshly-loaded run can't vouch for a critique success from some
     // earlier session/tab — only a real callCritique() success in THIS
     // session may unlock Arbitrate on a failed run, see nextForwardStep.
@@ -451,6 +458,36 @@ export async function loadPlanningRun(runId: string): Promise<void> {
     runError = err instanceof Error ? err.message : "Couldn't load this planning run.";
     emitRun();
   }
+}
+
+const TERMINAL_RUN_STATUSES = new Set<PlanningRunStatus>(["done", "failed"]);
+
+/**
+ * Polls GET /planning/runs/:id on an interval while the Planning Engine
+ * screen is open on a non-terminal run — the real gap this closes: with
+ * arbitration (and any other step) now driven live from a separate MCP
+ * session instead of exclusively through this app's own button clicks, an
+ * MCP-side change is otherwise invisible in this tab until something here
+ * happens to trigger a refetch. Same "subscribe, then act in a callback"
+ * effect shape `usePlatformCraftNotesPolling` already uses elsewhere in
+ * this file for the same React Compiler lint reason (never setState
+ * synchronously in the effect body).
+ *
+ * Each tick calls `loadPlanningRun`, which replaces the active run
+ * wholesale rather than diffing/merging — deliberate, since an MCP-driven
+ * change can move `status`, `current_stage`/`current_act`/`current_part`/
+ * `current_beat_chunk`, `stage_artifacts`, and `panel_reviews` all at once
+ * between two polls, and there's no cheap way to merge that partially.
+ * Stops once the run reaches a terminal status (`done`/`failed`) — a
+ * failed run needs a deliberate Retry click, not silent background
+ * polling, and a done run has nothing left to wait for.
+ */
+export function usePlanningRunPolling(runId: string | undefined, status: PlanningRunStatus | undefined): void {
+  useEffect(() => {
+    if (!runId || !status || TERMINAL_RUN_STATUSES.has(status)) return;
+    const interval = window.setInterval(() => void loadPlanningRun(runId), 4000);
+    return () => window.clearInterval(interval);
+  }, [runId, status]);
 }
 
 /**
@@ -589,102 +626,48 @@ async function callCritique(runId: string): Promise<PlanningRun> {
   lastCritiqueSuccess = { runId: run.id, unit: currentUnitKey(run), artifact: run.stageArtifacts[currentUnitKey(run)] ?? "" };
   return run;
 }
-/** One individually-unchecked issue row: that critic's role + its position in that critic's own `issues` array as currently returned by GET (stable until the next `/critique` call regenerates it). */
-export type ExcludedIssue = { role: AgentRole; index: number };
-
-async function callArbitrate(
-  runId: string,
-  excludedCritics: AgentRole[] = [],
-  excludedIssues: ExcludedIssue[] = [],
-): Promise<PlanningRun> {
-  const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/arbitrate`, {
-    method: "POST",
-    body: JSON.stringify({ excludedCritics, excludedIssues }),
-  });
-  return setActiveRun(res.run);
-}
 
 /**
- * Re-arbitrates the CURRENT unit with a different set of critics and/or
- * individual issues — the two independent levels of checkbox on the
- * review gate: a whole-panel "Include in Arbitrator's review" (drops a
- * critic's entire review — score, summary, strengths, every issue) and a
- * per-issue checkbox on each flagged issue row (drops just that one issue
- * from an otherwise-included critique; its score/summary/strengths and
- * every issue left checked still reach the Arbitrator). Nothing excluded
- * is ever deleted server-side — this only changes what one `/arbitrate`
- * call's synthesis is computed from. A deliberate, explicit re-run
- * action, separate from `runPipelineForward`'s own auto-chained
- * Generate→Critique→Arbitrate (which always arbitrates with everything
- * included — exclusions only ever come from this manual action, never
- * inferred/persisted anywhere).
- */
-export async function rerunArbitration(
-  runId: string,
-  excludedCritics: AgentRole[],
-  excludedIssues: ExcludedIssue[] = [],
-): Promise<PlanningRun> {
-  return callArbitrate(runId, excludedCritics, excludedIssues);
-}
-
-/**
- * Skips the whole Reject → chat interview → directive path: takes the
- * Arbitrator's already-computed synthesis (mustFix/worthConsidering from
- * the last arbitrate call) and sends it straight to the Generator as a
- * directive — no extra LLM call, instant. Only ever offered once a real
- * verdict exists for the current unit (mirrors the backend's own 400 for
- * "no arbitrator synthesis yet"). Callers should follow a success with
- * `runPipelineForward` to actually run the resulting Generate call, same
- * as after `finalizePlanningDirective`.
- */
-export async function applyCritiquePlanningStage(runId: string): Promise<PlanningRun> {
-  const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/apply-critique`, { method: "POST" });
-  return setActiveRun(res.run);
-}
-
-/**
- * Figures out which of Generate/Critique/Arbitrate a run still needs from
+ * Figures out which of Generate/Critique this app still needs to run from
  * the run's own state, rather than a client-tracked "which step was in
  * flight" — this is what lets one function serve both the very first
  * "Generate" click (status starts at `generating`) and "Retry" after a
- * `failed` run. On a `failed` run, Arbitrate is only ever offered once
- * `critiqueSucceededForCurrentArtifact` confirms a real, in-session
- * Critique success for this exact unit+artifact — never inferred from
- * `panelReviews` merely being present, which can be stale from an earlier
- * cycle (see the comment above `lastCritiqueSuccess`).
+ * `failed` run. Arbitration is deliberately NOT part of this anymore —
+ * it now happens live in an MCP session instead of through the app (see
+ * `usePlanningRunPolling` below for how the app picks up an MCP-driven
+ * change), so `awaiting_arbitration` and a `failed` run whose current
+ * unit already has a real critique success both return `null`: there's
+ * nothing left for this app to auto-run, only something to wait for.
  */
-function nextForwardStep(run: PlanningRun): "generate" | "critique" | "arbitrate" | null {
+function nextForwardStep(run: PlanningRun): "generate" | "critique" | null {
   if (run.status === "generating") return "generate";
   if (run.status === "critiquing") return "critique";
-  if (run.status === "awaiting_arbitration") return "arbitrate";
   if (run.status === "failed") {
     if (!run.stageArtifacts[currentUnitKey(run)]) return "generate";
     if (!critiqueSucceededForCurrentArtifact(run)) return "critique";
-    return "arbitrate";
+    return null;
   }
   return null;
 }
 
 /**
- * Drives the pipeline forward on its own — Generate, then Critique, then
- * Arbitrate — stopping the moment it needs a human (`awaiting_user_review`)
- * or hits a real error (`failed`). Backs a single "Generate"/"Retry"
- * button in the UI; each underlying call is still one bounded request, so
- * nothing here risks a client-side timeout regardless of how long an
- * individual step takes (these can run a couple of minutes).
+ * Runs whichever single step (Generate, or Critique) this app still owes
+ * the current unit — never Arbitrate, which now happens live in an MCP
+ * session instead (see the module comment above `nextForwardStep`). Backs
+ * the "Generate"/"Critique"/"Retry" button in the UI; each call is still
+ * one bounded request, so nothing here risks a client-side timeout
+ * regardless of how long an individual step takes (these can run a couple
+ * of minutes). Deliberately does NOT loop from Generate straight into
+ * Critique — each is its own deliberate click, matching this codebase's
+ * existing "the writer's last input before a fresh 60-180s call should be
+ * a deliberate next click" principle.
  */
 export async function runPipelineForward(runId: string): Promise<PlanningRun> {
   if (!activeRun || activeRun.id !== runId) await loadPlanningRun(runId);
   if (!activeRun) throw new Error("Planning run not found.");
-  let run = activeRun;
-  for (;;) {
-    const step = nextForwardStep(run);
-    if (!step) break;
-    if (step === "generate") run = await callGenerate(runId);
-    else if (step === "critique") run = await callCritique(runId);
-    else run = await callArbitrate(runId);
-    if (run.status === "failed") break;
-  }
+  const step = nextForwardStep(activeRun);
+  if (!step) return activeRun;
+  const run = step === "generate" ? await callGenerate(runId) : await callCritique(runId);
   return run;
 }
 
@@ -697,12 +680,6 @@ export async function runPipelineForward(runId: string): Promise<PlanningRun> {
  */
 export async function approvePlanningStage(runId: string): Promise<PlanningRun> {
   const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/approve`, { method: "POST" });
-  return setActiveRun(res.run);
-}
-
-/** The review gate's Reject action — opens the chat interview (status -> user_chat_active). chat_history is never reset by this — the Arbitrator keeps continuous memory for the whole run. */
-export async function rejectPlanningStage(runId: string): Promise<PlanningRun> {
-  const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/reject`, { method: "POST" });
   return setActiveRun(res.run);
 }
 
@@ -729,39 +706,6 @@ export async function unapprovePlanningStage(runId: string): Promise<PlanningRun
  */
 export async function discardPlanningStage(runId: string): Promise<PlanningRun> {
   const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/discard-stage`, { method: "POST" });
-  return setActiveRun(res.run);
-}
-
-/**
- * One turn of the rejection interview. Every prior turn (intake + the
- * WHOLE run's accumulated interview history, not just this cycle) is
- * resent server-side — the Arbitrator is one continuous point of contact
- * for the run, never a fresh stranger.
- *
- * Can auto-finalize: if the Arbitrator's reply signals it understood the
- * correction and the writer confirmed they're ready, the backend strips
- * that internal signal and chains straight into `finalizeDirective`
- * itself server-side — the returned run may already be back to
- * `status: "generating"` with a fresh `finalDeltaDirective`, not just an
- * updated `chatHistory`. Callers must check `run.status` after every call:
- * on `"generating"`, show the just-arrived assistant reply as normal, then
- * immediately call `runPipelineForward` to actually run that Generate
- * call and transition out of the chat view — no separate user action, per
- * the backend's own "don't make the writer find a button for something
- * they already confirmed in conversation." `finalizePlanningDirective`
- * still exists as an explicit manual fallback for when this doesn't fire.
- */
-export async function sendPlanningChatTurn(runId: string, message: string): Promise<PlanningRun> {
-  const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/chat`, {
-    method: "POST",
-    body: JSON.stringify({ message }),
-  });
-  return setActiveRun(res.run);
-}
-
-/** Compiles the interview into a delta directive and loops back to Generating for the same unit. Callers should follow this with runPipelineForward() (via an explicit next click, not auto-chained — see planning/page.tsx) to keep driving until the next human gate. */
-export async function finalizePlanningDirective(runId: string): Promise<PlanningRun> {
-  const res = await apiFetch<RunResponse>(`/planning/runs/${runId}/finalize-directive`, { method: "POST" });
   return setActiveRun(res.run);
 }
 
