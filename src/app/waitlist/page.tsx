@@ -61,7 +61,9 @@ export default function WaitlistPage() {
   }
 
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-canvas px-6 py-16">
+    <div className="relative z-0 flex min-h-dvh items-center justify-center overflow-hidden bg-canvas px-6 py-16">
+      <div aria-hidden className="wa-grid pointer-events-none absolute inset-0 -z-10" />
+      <div aria-hidden className="wa-grid-glow pointer-events-none absolute inset-0 -z-10" />
       <div className="w-full max-w-md">
         <div className="mb-8 flex flex-col items-center text-center">
           <BrandMark className="size-7 text-gold" />
@@ -87,11 +89,6 @@ export default function WaitlistPage() {
             <>
               <div className="text-center">
                 <h1 className="font-display text-2xl text-ink">Get early access</h1>
-                <p className="mt-2 text-sm text-ink-muted">
-                  A writing studio for novelists, with AI at your side — planning, drafting, and
-                  worldbuilding in one place. Join the waitlist and we&apos;ll let you know when it&apos;s
-                  your turn.
-                </p>
               </div>
 
               <form onSubmit={handleSubmit} className="mt-6 space-y-4" noValidate>

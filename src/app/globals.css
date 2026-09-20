@@ -377,6 +377,20 @@ body {
   }
 }
 
+/* Waitlist page's background glow — a soft light drifting across the grid, slowly enough to read as ambient rather than a distraction */
+@keyframes wa-grid-glow {
+  0%,
+  100% {
+    background-position: 15% 20%;
+  }
+  33% {
+    background-position: 80% 15%;
+  }
+  66% {
+    background-position: 55% 85%;
+  }
+}
+
 @layer utilities {
   .wa-fill {
     position: relative;
@@ -403,10 +417,37 @@ body {
     animation: wa-search-flash 1.6s ease-out;
     border-radius: 0.25rem;
   }
+  /*
+    Waitlist page background: a faint line grid, faded toward the edges via
+    a radial mask so it reads as a reflective surface receding under the
+    card rather than a hard-edged tile pattern, plus a separate blurred
+    glow layer drifting slowly across it (wa-grid-glow, above) — the "shows
+    it" effect the design asked for: the grid itself stays subtle/near
+    invisible at rest, and the passing glow is what makes a given patch of
+    it read clearly for a moment. Two separate layers (not one) so the
+    grid's own geometry stays crisp while only the glow blurs/moves.
+  */
+  .wa-grid {
+    background-image:
+      linear-gradient(to right, var(--line-strong) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--line-strong) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 70% 55% at 50% 32%, black 0%, transparent 85%);
+    -webkit-mask-image: radial-gradient(ellipse 70% 55% at 50% 32%, black 0%, transparent 85%);
+  }
+  .wa-grid-glow {
+    background-image: radial-gradient(circle, color-mix(in srgb, var(--gold) 60%, transparent) 0%, transparent 65%);
+    background-size: 55% 55%;
+    background-repeat: no-repeat;
+    filter: blur(60px);
+    opacity: 0.6;
+    animation: wa-grid-glow 16s ease-in-out infinite;
+  }
   @media (prefers-reduced-motion: reduce) {
     .wa-shimmer,
     .wa-ring-spin,
-    .wa-search-flash {
+    .wa-search-flash,
+    .wa-grid-glow {
       animation: none;
     }
   }
