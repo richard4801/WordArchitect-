@@ -4284,6 +4284,89 @@ re-render cycle that originally surfaced the `removeChild` regression.
 
 ---
 
+## 5.7. Waitlist landing page (`/waitlist`)
+
+A standalone marketing page (`src/app/waitlist/page.tsx`) — deliberately
+outside the `(app)` route group, so it gets the root layout's fonts/theme
+but none of the sidebar/header chrome every real workspace has. Not
+linked from anywhere in the app's own nav; reached directly by URL. Its
+own request, explicitly scoped to *not* need a new Supabase table or a
+real backend endpoint: email, "What do you write?", and an optional "How
+do you currently use AI for writing?" field, all matching the app's own
+`card`/`label-caps`/input styling exactly (no one-off visual style).
+
+**Storage: a Google Apps Script Web App bound to a Google Sheet, not a
+Google Form.** A Form was the first attempt — Forms' own "link an
+existing spreadsheet as the response destination" step turned out
+unreliable through the UI in practice (a real test submission landed in
+the Form's own internal response store but never reached the linked
+Sheet), and "Tools → Create a Form" from within Sheets didn't reliably
+auto-populate the 3 questions from the sheet's header row either. Given up
+on Forms entirely in favor of a `doPost(e)` Apps Script handler deployed
+as a Web App, bound directly to the Sheet, that just calls
+`sheet.appendRow([...])` on every submission — no separate Form entity, no
+response-destination linking step that can silently fail. Its `/exec` URL
+lives in `src/lib/waitlist-config.ts` (`WAITLIST_ENDPOINT_URL`), along
+with the exact script + redeploy steps needed to point this at a different
+sheet later.
+
+**Real bug hit once, worth remembering for any future `appendRow` call
+against a sheet with its own fixed header row: the values array must have
+exactly as many entries as there are header columns, in the same order.**
+The first version of the script prepended `new Date()` as a timestamp,
+but the sheet's own header row (`Email | What do you write? | How do you
+currently use AI for writing?`) has no Timestamp column — so every real
+value landed one column to the right of where its header said it should
+be (email under "What do you write?", etc.). Fixed by dropping the
+timestamp so the row is exactly 3 values, matching the 3 headers. Also
+worth remembering: **editing an Apps Script's code does not update an
+already-deployed Web App** — the live `/exec` URL keeps running whatever
+was deployed until you explicitly go to Deploy → Manage deployments → New
+version → Deploy again; saving the script alone does nothing to traffic
+already hitting the URL.
+
+Submission uses `fetch(..., { mode: "no-cors", headers: { "Content-Type":
+"text/plain;charset=utf-8" }, body: JSON.stringify({...}) })` — `no-cors`
+because Apps Script Web Apps don't reliably send CORS headers, and
+`text/plain` (not `application/json`) deliberately keeps this a CORS
+"simple" request with no preflight, which Apps Script's `doPost` doesn't
+handle; the script still `JSON.parse()`s the raw body regardless of the
+declared content type. Because of `no-cors`, this code can never read back
+a real status — a thrown network error (offline, blocked) is the only
+failure this page can detect on its own; anything the script itself
+rejects is silent from here, which is why getting the script's own row
+shape right (see the bug above) matters. `WAITLIST_CONFIGURED` gates
+whether a submit attempt fires at all — false shows a real "not connected
+yet" error rather than a fake success, so an unconfigured deploy is
+honestly distinguishable from a working one. This sandbox's own egress is
+locked to an allowlist that excludes every Google domain used here
+(`docs.google.com`, `script.google.com` both returned a blocked `403` on a
+direct `curl`), so none of this could be verified end-to-end from inside
+a session — every real check (data actually landing in the right columns,
+the Apps Script redeploy step, the Form-linking failure itself) was
+confirmed by the user directly against the live page and their own Sheet.
+
+**Background**: `.wa-grid`/`.wa-grid-glow` (`globals.css`, `@layer
+utilities`, following the existing `wa-*` decorative-motion naming) — a
+faint line grid faded toward the edges via a radial `mask-image` (so it
+reads as a surface receding under the card, not a hard-edged tile), plus
+a separate blurred gold radial-gradient layer whose `background-position`
+drifts slowly via `@keyframes wa-grid-glow`, disabled under
+`prefers-reduced-motion` alongside this file's other `wa-*` animations.
+**Real stacking-context bug hit while building this**: the two `-z-10`
+background layers rendered completely invisible at first, despite
+computing correct CSS — their parent was `position: relative` with no
+explicit `z-index`, which does **not** establish a stacking context on
+its own, so the negative-z-index children escaped to a distant ancestor's
+context and painted behind everything. Fixed by adding an explicit
+`z-0` to the parent (any non-`auto` z-index establishes the context), so
+the `-z-10` children are actually contained by it and paint just behind
+its own content as intended — a real, easy-to-hit trap for this exact
+"parent + absolutely-positioned negative-z decorative children" pattern
+anywhere else in the app.
+
+---
+
 ## 6. AI provider abstraction (the one piece of real network code)
 
 App code never imports a vendor SDK directly — it depends on the
@@ -4361,6 +4444,7 @@ export interface AiProvider {
 /planning                                    global entry point — Main/Contract chooser, then a real book picker (useProjects()) → navigates into that book's /projects/[id]/planning/main|contract
 /writing /outlines /characters /worldbuilding /notes /assistant   redirect-only pages → most-recently-active project's real workspace, no data of their own
 /goals /analytics /settings /timeline /templates /help   stubs — <ComingSoon>, no data model
+/waitlist                                    standalone marketing page, outside (app) — see §5.7
 /api/ai                                      POST — see §6
 ```
 
