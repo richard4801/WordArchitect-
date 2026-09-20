@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Check, Loader2, Sparkles } from "lucide-react";
+import { ArrowRight, Check, Loader2 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { BrandMark } from "@/components/brand-mark";
 import { WAITLIST_CONFIGURED, WAITLIST_ENTRY_IDS, WAITLIST_FORM_ACTION_URL } from "@/lib/waitlist-config";
@@ -86,8 +86,7 @@ export default function WaitlistPage() {
           ) : (
             <>
               <div className="text-center">
-                <Sparkles className="mx-auto size-6 text-gold" />
-                <h1 className="mt-3 font-display text-2xl text-ink">Get early access</h1>
+                <h1 className="font-display text-2xl text-ink">Get early access</h1>
                 <p className="mt-2 text-sm text-ink-muted">
                   A writing studio for novelists, with AI at your side — planning, drafting, and
                   worldbuilding in one place. Join the waitlist and we&apos;ll let you know when it&apos;s
