@@ -3,7 +3,7 @@
 import { ArrowRight, Check, Loader2 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { BrandMark } from "@/components/brand-mark";
-import { WAITLIST_CONFIGURED, WAITLIST_ENTRY_IDS, WAITLIST_FORM_ACTION_URL } from "@/lib/waitlist-config";
+import { WAITLIST_CONFIGURED, WAITLIST_ENDPOINT_URL } from "@/lib/waitlist-config";
 
 type SubmitState = "idle" | "submitting" | "success" | "error";
 
@@ -34,25 +34,21 @@ export default function WaitlistPage() {
     }
 
     setState("submitting");
-    const body = new URLSearchParams({
-      [WAITLIST_ENTRY_IDS.email]: email.trim(),
-      [WAITLIST_ENTRY_IDS.whatYouWrite]: whatYouWrite.trim(),
-      [WAITLIST_ENTRY_IDS.aiUsage]: aiUsage.trim(),
-    });
     try {
-      // Google's form-response endpoint sends no CORS headers, so this is
-      // deliberately `no-cors` — the browser still sends the request for
-      // real (confirmed against a live Form: the row lands in its Sheet),
-      // it just can't let this code read back a status code. A genuine
-      // network failure (offline, blocked) is the one thing this can still
-      // detect, via the fetch throwing — anything else Google might reject
-      // (e.g. a wrong entry id) is silent from here, which is exactly why
-      // getting waitlist-config.ts's ids right matters.
-      await fetch(WAITLIST_FORM_ACTION_URL, {
+      // Apps Script Web Apps don't reliably send CORS headers either, so
+      // this stays `no-cors` — the browser still sends the request for
+      // real, it just can't let this code read back a status code. A
+      // genuine network failure (offline, blocked) is the one thing this
+      // can still detect, via the fetch throwing. `text/plain` (not
+      // `application/json`) is deliberate too: it's a CORS "simple"
+      // content type, so the browser sends this as one plain request with
+      // no preflight — Apps Script's doPost still reads and JSON.parses
+      // the raw body regardless of the declared content type.
+      await fetch(WAITLIST_ENDPOINT_URL, {
         method: "POST",
         mode: "no-cors",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: body.toString(),
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ email: email.trim(), whatYouWrite: whatYouWrite.trim(), aiUsage: aiUsage.trim() }),
       });
       setState("success");
     } catch {
