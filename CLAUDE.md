@@ -323,7 +323,10 @@ npm run build    # production build
 npm run lint     # eslint
 ```
 
-No test suite exists. No database, no ORM, no auth are wired up yet.
+No test suite exists. No local database/ORM — the real backend owns
+persistence (Supabase Postgres, see its own CLAUDE.md). Real accounts
+exist now (`/auth/*`, see §3.5's Accounts & Authentication section) —
+every `(app)` route requires a signed-in session.
 
 ---
 
@@ -383,13 +386,15 @@ isn't mistaken for a hang.
 
 **`src/lib/api-client.ts`** is the shared entry point every store's fetches
 should go through: `apiFetch<T>(path, init)` (base URL + JSON + error
-handling) and `getUserId()`. The backend has no real auth yet (its own
-documented, deliberate MVP tradeoff) — every write just needs *a*
-`userId`, so `getUserId()` generates one UUID per browser on first use and
-persists it to `localStorage`. This is a single stable pseudo-identity per
-browser install, not a real account system — matches the "no real auth
-yet, just persist data, single-user for now" decision made before backend
-integration started.
+handling) and `getUserId()`. **`getUserId()` no longer generates or
+persists anything itself** — real accounts now exist (see "Accounts &
+Authentication" below), so it just delegates to `auth-store.ts`'s
+`getCurrentUserId()`, returning whichever real account is actually signed
+in. The old "generate one UUID per browser on first use" implementation
+is gone entirely, along with the cross-device bug it caused (a writer's
+data was invisible on a second device, since nothing tied a browser's
+random id back to a real account) — this section's history below is kept
+for the trail, but describes a predecessor state the app no longer has.
 
 Base URL is configurable via `NEXT_PUBLIC_API_BASE_URL` (see
 `.env.example`) — defaults to the hosted instance if unset, so no Vercel
@@ -400,6 +405,7 @@ backend during backend-side development.
 
 | Domain | Status | Store |
 | --- | --- | --- |
+| Accounts & Authentication | **Live** — `/auth/signup`, `/auth/login`, `/auth/me` | `auth-store.ts` |
 | Project | **Live** — `/books` | `project-store.ts` |
 | Character | **Live** — `/codex` (`entryType: "character"`) | `character-store.ts` |
 | Worldbuilding | **Live** — `/world-categories` + `/codex` | `worldbuilding-store.ts` |
@@ -410,6 +416,114 @@ backend during backend-side development.
 | Outliner | **Live** — `/outline/beats` + `/manuscript/chapters/:id/beats` + `/manuscript/beats/:id` | `outline-store.ts` |
 | Planning Engine | **Live** — `/agent-prompts` + `/planning/runs` | `planning-store.ts` |
 | Dashboard-only stats | Mock, deferred | `dashboard-data.ts` (no backend resource exists for these — see §4.9) |
+
+### Accounts & Authentication (live)
+
+**Real accounts, replacing the per-browser pseudo-identity described just
+above.** Backed by the real backend's `/auth/signup`, `/auth/login`,
+`/auth/me` (GET + PATCH) on `claude/ai-fiction-platform-backend-qnvkm5`
+(see the backend repo's `src/routes/auth.ts` / `src/services/auth.ts`,
+read directly and confirmed to match the handoff spec exactly — this is
+the rare case where nothing needed correcting). `src/lib/auth-store.ts`
+(new file — this domain previously had no store at all) owns the whole
+session: `signup()`, `login()`, `logout()`, `changePassword()`,
+`restoreSession()`, plus `useAuthUser()`/`useAuthStatus()` hooks and the
+one function everything else actually depends on,
+`getCurrentUserId()` — what `api-client.ts`'s `getUserId()` now delegates
+to entirely (see above).
+
+**Session shape**: a JWT `token` (90-day, no refresh — a `401` just means
+log in again) persisted to `localStorage`, plus a cached `user` object
+shown optimistically on load so there's no blank flash while the real
+round trip is in flight — but **never trusted over a fresh `GET /auth/me`
+call**, per the backend's own integration notes; `restoreSession()`
+overwrites the cached copy the moment that response lands, and clears
+everything on a `401` (expired token, deleted account, or any other
+rejection).
+
+**`(app)/layout.tsx` is the one real auth gate in the app.** Every route
+under `(app)` renders nothing but a neutral loading mark
+(`authStatus !== "authenticated"`) until `restoreSession()` resolves —
+covers both "still checking" and "not signed in, about to redirect,"
+so a not-yet-verified session can never flash a real (possibly stale,
+possibly someone else's) workspace before the check completes. `/login`,
+`/signup`, and `/waitlist` are the only pages that live outside this
+group, specifically so they render without this gate — `/login`/`/signup`
+each call `restoreSession()` a second time on their own mount for exactly
+this reason, a real bug this pass caught and fixed: `(app)/layout.tsx`'s
+own `restoreSession()` call never runs for a fresh, direct load of
+`/login` (a bookmark, a manual URL) since that page lives outside the
+group entirely — without the page's own call too, a visitor with a
+genuinely valid stored token would be stuck on the login screen forever,
+since `authStatus` would never leave `"loading"` to trigger the
+"already signed in, bounce to the Dashboard" redirect. Confirmed via a
+real Playwright reproduction of exactly this sequence (log in, navigate
+straight to `/login` again, confirm it bounces back) before concluding
+the fix was right, not just plausible.
+
+**Every other store in this app is a module-level singleton cache**
+(`project-store.ts`'s `hasStartedLoad`, the active planning run, the
+manuscript word-count cache, etc.) that persists for as long as the page
+stays loaded — correct for one signed-in account, wrong the instant a
+*different* account signs in on the same tab without a real reload, which
+would otherwise show account A's still-cached projects/characters/notes
+under account B's name. `login()`/`signup()`/`logout()` all navigate via a
+real `window.location` change (not a client-side route change) specifically
+to force this — a full navigation tears down every module's in-memory
+state along with the page itself, so the next load starts genuinely
+clean, without needing a manual "clear cache" hook added to every single
+domain store. The one place a *client-side* redirect is correct instead
+(`AuthForm`'s own "already authenticated, bounce to the Dashboard" effect)
+is precisely because it's the *same* account staying signed in, not a
+different one that could leave stale data behind.
+
+**The sidebar's profile block was previously 100% mock** (a hardcoded
+"Jessica," a fake "Level 7 · Storyweaver"/XP bar, a dead chevron button
+with no menu) — the name is real now, and the chevron opens a real
+`UserMenu` (`src/components/user-menu.tsx`, new — the same portal +
+viewport-tracked positioning `OptionsMenu` already uses, just with an
+arbitrary trigger instead of a fixed "..." icon, since `OptionsMenu`'s API
+doesn't support that) with real Settings/Log out actions. The XP/level
+gamification bits are untouched mock content, out of scope for this pass.
+The Dashboard's own big "Welcome back"/"Welcome to WordArchitect" headings
+had the same hardcoded "Jessica" (`dashboard-data.ts`'s old `user.name`) —
+now `greetingName()` in `page.tsx` reads the real `useAuthUser()`, falling
+back to the email's local part or "Writer" for the one spec-optional case
+(no `displayName` given at signup). `dashboard-data.ts`'s `user` export
+was trimmed to just `quote` (the decorative welcome-quote flavor text,
+unrelated to identity, left as the honest mock content it always was).
+
+**Settings** (`(app)/settings/page.tsx`, previously a bare
+`<ComingSoon>` stub) is now a real Account + Change Password page — read-
+only email/display-name (no endpoint exists to edit either, so no edit UI
+was built for them, same "don't fabricate a write path that isn't there"
+discipline as everywhere else in this file) plus a real new-password +
+confirm form calling `changePassword()`. No current-password confirmation
+field, matching the backend's own design exactly (a valid bearer token
+alone is treated as sufficient proof of identity — there's no forgot-
+password flow to build around instead).
+
+**Verified working** (against a local mock backend built directly from
+the real route/service source — `/auth/signup`/`/auth/login`/`/auth/me`
+GET+PATCH matching the real request/response/error shapes exactly,
+including the 400/409/401 cases and their exact error text): visiting any
+`(app)` route while signed out redirects to `/login`; signing up lands on
+the Dashboard with the real display name shown in both the sidebar and
+the welcome heading (confirmed no stale "Jessica" anywhere on the page); a
+hard reload keeps the session (real `/auth/me` restore, not a
+`localStorage`-only illusion); Settings shows the real account email;
+changing the password shows a real confirmation; the sidebar's user menu
+opens with real Settings/Log out actions; logging out lands back on
+`/login`; the *old* password is correctly rejected after a change, and the
+*new* one logs in successfully; signing up again with the same email
+shows the real 409 message; and — the bug described above — visiting
+`/login` directly while already authenticated correctly bounces back to
+the Dashboard instead of getting stuck. Zero console errors beyond the
+browser's own unsuppressable network-panel logging of the expected
+401/409 responses themselves (not JS exceptions — every browser logs any
+non-2xx fetch regardless of how the app handles it, same as noted
+elsewhere in this file). `tsc --noEmit`, `eslint`, and `npm run build` all
+clean.
 
 ### Project (live)
 
@@ -4445,6 +4559,7 @@ export interface AiProvider {
 /writing /outlines /characters /worldbuilding /notes /assistant   redirect-only pages → most-recently-active project's real workspace, no data of their own
 /goals /analytics /settings /timeline /templates /help   stubs — <ComingSoon>, no data model
 /waitlist                                    standalone marketing page, outside (app) — see §5.7
+/login /signup                               public auth pages, outside (app) — see §3.5's Accounts & Authentication section
 /api/ai                                      POST — see §6
 ```
 

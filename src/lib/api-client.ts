@@ -1,13 +1,11 @@
 /**
  * Thin client for the real WordArchitect backend (see the backend repo's
  * CLAUDE.md — "Frontend Integration Reference" — for the full contract).
- * No auth exists yet (a documented, deliberate MVP tradeoff on the backend
- * side): every write just needs a `userId`, so this module owns generating
- * and persisting one stable per-browser id rather than every store
- * reinventing that. Every domain store (`project-store.ts`, etc.) should
- * go through `apiFetch` here rather than calling `fetch` directly, so the
- * base URL, error shape, and userId handling stay in one place.
+ * Every domain store (`project-store.ts`, etc.) should go through
+ * `apiFetch` here rather than calling `fetch` directly, so the base URL
+ * and error shape stay in one place.
  */
+import { getCurrentUserId } from "@/lib/auth-store";
 
 const DEFAULT_BASE_URL = "https://wordarchitect-backend.onrender.com";
 
@@ -15,35 +13,17 @@ export function apiBaseUrl(): string {
   return process.env.NEXT_PUBLIC_API_BASE_URL?.trim() || DEFAULT_BASE_URL;
 }
 
-const USER_ID_STORAGE_KEY = "wordarchitect_user_id";
-
-function generateUuid(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  // Fallback for any environment without crypto.randomUUID (older browsers).
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
-
 /**
- * The current browser's stable pseudo-identity. Backend has no real auth
- * yet, so every request just needs *a* consistent `userId` — generated
- * once and persisted to localStorage, not tied to a real account. Safe to
- * call from any client component; returns a fresh id (not persisted) if
- * called during SSR/on the server, where localStorage doesn't exist.
+ * The signed-in account's real id — every domain store's own `userId`
+ * field now comes from here, not a locally-invented per-browser UUID (the
+ * old implementation, deleted along with the cross-device bug it caused:
+ * a writer's data was invisible on any second device, since nothing tied
+ * a browser's random id back to a real account). See `auth-store.ts` for
+ * where this id actually comes from — a real backend account, restored
+ * from a persisted token and re-verified via `/auth/me` on every load.
  */
 export function getUserId(): string {
-  if (typeof window === "undefined") return generateUuid();
-  let id = window.localStorage.getItem(USER_ID_STORAGE_KEY);
-  if (!id) {
-    id = generateUuid();
-    window.localStorage.setItem(USER_ID_STORAGE_KEY, id);
-  }
-  return id;
+  return getCurrentUserId();
 }
 
 export class ApiError extends Error {

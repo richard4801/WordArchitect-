@@ -1,11 +1,13 @@
 "use client";
 
-import { ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { ChevronDown, ChevronRight, LogOut, PanelLeftClose, PanelLeftOpen, Settings } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { BrandMark } from "@/components/brand-mark";
 import { Progress } from "@/components/ui/progress";
+import { UserMenu } from "@/components/user-menu";
+import { logout, useAuthUser } from "@/lib/auth-store";
 import { NAV_ITEMS, UTILITY_NAV_ITEMS } from "@/lib/nav";
 import { useProjects } from "@/lib/project-store";
 import { hydrateSidebarCollapsed, useSidebarCollapsed } from "@/lib/ui-store";
@@ -35,6 +37,8 @@ const FULL_BLEED_WORKSPACES = [
  */
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const user = useAuthUser();
   const isNewUser = useProjects().length === 0;
   const [collapsed, toggle] = useSidebarCollapsed();
 
@@ -203,13 +207,18 @@ export function Sidebar() {
                 aria-hidden
               />
               <div className="min-w-0 flex-1">
-                <button
-                  type="button"
-                  className="flex items-center gap-1 text-sm font-medium text-ink"
-                >
-                  <span className="truncate">Jessica</span>
-                  <ChevronDown className="size-3.5 shrink-0 text-ink-muted" />
-                </button>
+                <UserMenu
+                  trigger={
+                    <span className="flex items-center gap-1 text-sm font-medium text-ink">
+                      <span className="truncate">{user?.displayName || user?.email || "Account"}</span>
+                      <ChevronDown className="size-3.5 shrink-0 text-ink-muted" />
+                    </span>
+                  }
+                  items={[
+                    { label: "Settings", Icon: Settings, onClick: () => router.push("/settings") },
+                    { label: "Log out", Icon: LogOut, onClick: logout, danger: true },
+                  ]}
+                />
                 <p className="truncate text-xs text-ink-muted">
                   {isNewUser ? "New Writer" : "Level 7 • Storyweaver"}
                 </p>

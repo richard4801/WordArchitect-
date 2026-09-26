@@ -1,14 +1,13 @@
 /**
- * Placeholder dashboard data. This stands in until the data layer (Prisma)
- * and auth are wired up — shape it however the real models end up.
+ * Placeholder dashboard data. This stands in until more of the data layer
+ * gets wired up — shape it however the real models end up. The writer's
+ * own name is real now (see `auth-store.ts`'s `useAuthUser()`), so it's no
+ * longer part of this mock object — only the decorative welcome quote is.
  */
 
-export const user = {
-  name: "Jessica",
-  quote: {
-    text: "Every great story begins with a single word.",
-    attribution: "Keep writing.",
-  },
+export const quote = {
+  text: "Every great story begins with a single word.",
+  attribution: "Keep writing.",
 };
 
 /**

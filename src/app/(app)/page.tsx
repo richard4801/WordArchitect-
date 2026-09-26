@@ -47,10 +47,16 @@ import {
   aiInsights,
   type AiInsightTone,
   type Project,
-  user,
+  quote,
   weeklyStats,
   writingGoal,
 } from "@/lib/dashboard-data";
+import { useAuthUser } from "@/lib/auth-store";
+
+/** The writer's own name for a greeting — falls back gracefully for the (spec-optional) case a display name was never set. */
+function greetingName(user: ReturnType<typeof useAuthUser>): string {
+  return user?.displayName || user?.email?.split("@")[0] || "Writer";
+}
 
 export default function DashboardPage() {
   return (
@@ -136,11 +142,12 @@ function ReturningUserDashboard({ projects }: { projects: Project[] }) {
 }
 
 function WelcomeBackHeader() {
+  const user = useAuthUser();
   return (
     <section className="pt-6">
       <p className="text-base text-ink-muted">Welcome back,</p>
       <h1 className="mt-1 flex items-center gap-3 font-display text-5xl font-medium text-ink sm:text-6xl">
-        {user.name}
+        {greetingName(user)}
         <Sparkle className="size-5 text-gold" />
       </h1>
       <p className="mt-2 text-sm text-ink-muted">Let&rsquo;s continue crafting your masterpiece.</p>
@@ -684,16 +691,17 @@ const HERO_TEXT =
   "text-[#2a1c10] [text-shadow:0_1px_3px_rgba(255,255,255,0.7)] dark:text-white dark:[text-shadow:0_2px_10px_rgba(0,0,0,0.6)]";
 
 function NewUserHero() {
+  const user = useAuthUser();
   return (
     <section className="pt-6">
       <div className="max-w-md">
         <p className={`text-base ${HERO_TEXT}`}>Welcome to WordArchitect,</p>
         <h1 className="mt-1 flex items-center gap-3 font-display text-6xl font-medium text-[#2a1c10] [text-shadow:0_1px_4px_rgba(255,255,255,0.7)] dark:text-white dark:[text-shadow:0_2px_14px_rgba(0,0,0,0.6)] sm:text-7xl">
-          {user.name}
+          {greetingName(user)}
           <Sparkle className="size-6 text-gold" />
         </h1>
         <blockquote className={`mt-5 font-display text-lg italic leading-snug ${HERO_TEXT}`}>
-          &ldquo;{user.quote.text}&rdquo;
+          &ldquo;{quote.text}&rdquo;
         </blockquote>
         <p className={`mt-4 text-sm ${HERO_TEXT}`}>Let&rsquo;s bring your stories to life.</p>
       </div>

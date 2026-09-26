@@ -1,11 +1,13 @@
 "use client";
 
 import { Bell, Mail, Search } from "lucide-react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
+import { BrandMark } from "@/components/brand-mark";
 import { PageBackground } from "@/components/page-background";
 import { Sidebar } from "@/components/sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { restoreSession, useAuthStatus } from "@/lib/auth-store";
 import { hydrateSidebarCollapsed, useFocusModeActive, useSidebarCollapsed } from "@/lib/ui-store";
 
 /**
@@ -19,6 +21,14 @@ import { hydrateSidebarCollapsed, useFocusModeActive, useSidebarCollapsed } from
  * ui-store.ts), not tied to any particular route — it applies everywhere,
  * so the content column's own left padding has to track it here too or a
  * collapsed sidebar leaves a dead gap.
+ *
+ * Also the one real auth gate in the app: every route under `(app)` is a
+ * real, signed-in account's workspace now, not a per-browser pseudo-
+ * identity — `/login`/`/signup`/`/waitlist` are the only pages that live
+ * outside this group specifically so they render without it. Nothing here
+ * renders until `restoreSession()` resolves, so a not-yet-verified token
+ * never flashes real (possibly stale, possibly someone else's) content
+ * before the check completes.
  */
 export default function AppLayout({
   children,
@@ -26,7 +36,18 @@ export default function AppLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const authStatus = useAuthStatus();
   const isDashboard = pathname === "/";
+
+  useEffect(() => {
+    restoreSession();
+  }, []);
+
+  useEffect(() => {
+    if (authStatus === "unauthenticated") router.replace("/login");
+  }, [authStatus, router]);
+
   // The manuscript editor, the outliner, the characters workspace, the
   // worldbuilding hub, the notes hub, the AI Assistant, and the Planning
   // Engine are all full-bleed pages with their own top bar — they replace
@@ -47,6 +68,18 @@ export default function AppLayout({
   useEffect(() => {
     hydrateSidebarCollapsed();
   }, []);
+
+  if (authStatus !== "authenticated") {
+    // Covers both "loading" (restoreSession() hasn't resolved yet) and
+    // "unauthenticated" (the redirect effect above is about to fire) — a
+    // plain neutral screen either way, never the real sidebar/children,
+    // so a not-yet-verified session can't flash someone's real workspace.
+    return (
+      <div className="grid min-h-dvh place-items-center bg-canvas">
+        <BrandMark className="size-8 animate-pulse text-gold" />
+      </div>
+    );
+  }
 
   if (isFullBleedWorkspace) {
     return (
