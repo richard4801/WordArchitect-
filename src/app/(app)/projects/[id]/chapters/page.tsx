@@ -38,6 +38,7 @@ import {
   Type,
   Underline,
   Undo2,
+  Upload,
   Wind,
   X,
 } from "lucide-react";
@@ -524,7 +525,7 @@ export default function ChaptersPage() {
 
       <div className="@container relative flex min-w-0 flex-1 flex-col border-r border-line">
         {!hasChapters ? (
-          <EmptyManuscriptState onCreate={handleCreateChapter} creating={creatingChapter} />
+          <EmptyManuscriptState onCreate={handleCreateChapter} creating={creatingChapter} bookId={project.id} />
         ) : !activeChapter || !body ? (
           <>
             {!hideChrome && (
@@ -645,22 +646,40 @@ export default function ChaptersPage() {
 }
 
 /** Shown in the editor pane when a project genuinely has zero chapters yet — a real, working action, not a dead end. */
-function EmptyManuscriptState({ onCreate, creating }: { onCreate: () => void; creating: boolean }) {
+function EmptyManuscriptState({
+  onCreate,
+  creating,
+  bookId,
+}: {
+  onCreate: () => void;
+  creating: boolean;
+  bookId: string;
+}) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
       <p className="font-display text-2xl text-ink">Start your manuscript</p>
       <p className="max-w-sm text-sm text-ink-muted">
-        This project doesn&rsquo;t have any chapters yet. Create your first one to start writing.
+        This project doesn&rsquo;t have any chapters yet. Create your first one to start writing, or import an
+        existing manuscript.
       </p>
-      <button
-        type="button"
-        onClick={onCreate}
-        disabled={creating}
-        className="mt-2 inline-flex items-center gap-2 rounded-xl bg-gold px-5 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-60"
-      >
-        <Plus className="size-4" />
-        {creating ? "Creating…" : "Create First Chapter"}
-      </button>
+      <div className="mt-2 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={onCreate}
+          disabled={creating}
+          className="inline-flex items-center gap-2 rounded-xl bg-gold px-5 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-60"
+        >
+          <Plus className="size-4" />
+          {creating ? "Creating…" : "Create First Chapter"}
+        </button>
+        <Link
+          href={`/projects/${bookId}/chapters/import`}
+          className="inline-flex items-center gap-2 rounded-xl border border-line-strong px-5 py-2.5 text-sm text-ink transition-colors hover:bg-surface-2"
+        >
+          <Upload className="size-4" />
+          Import a Manuscript
+        </Link>
+      </div>
     </div>
   );
 }
@@ -954,6 +973,13 @@ function ManuscriptPanel({
           >
             <Search className="size-4" />
           </button>
+          <Link
+            href={`/projects/${bookId}/chapters/import`}
+            aria-label="Import manuscript"
+            className="grid size-7 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+          >
+            <Upload className="size-4" />
+          </Link>
           <button
             type="button"
             aria-label="Add chapter"

@@ -642,3 +642,66 @@ export function useManuscriptSearchIndex(
     [entry],
   );
 }
+
+// ---------------------------------------------------------------------
+// Bulk manuscript import — the resumable job flow
+// (`/manuscript/bulk-import/jobs`), confirmed against the real backend's
+// `manuscriptImportJob.ts`/`routes/manuscript.ts` directly before wiring
+// this up. Deliberately NOT reactive store state (no useSyncExternalStore)
+// — a job belongs to exactly one page (the import screen), which already
+// owns the step-until-done polling loop and its own progress UI; these are
+// just plain async wrappers around the three real endpoints, same
+// treatment `syncChapterToMemory` already gets for a similarly one-off
+// action. The one piece of cross-cutting cleanup a finished import needs
+// (refreshing this book's chapter list + invalidating its word-count
+// cache so the newly-imported chapters show up without a manual reload)
+// is exposed as `refreshManuscript`/an exported cache-buster below, called
+// by the import page itself once `job.status === "done"`.
+// ---------------------------------------------------------------------
+
+export type ImportJobStatus = "pending" | "processing" | "done" | "failed";
+
+/** `manuscript_import_jobs` row exactly as the backend returns it — raw snake_case columns. */
+export type ImportJobRow = {
+  id: string;
+  user_id: string;
+  book_id: string;
+  status: ImportJobStatus;
+  next_chapter_index: number;
+  chapters_total: number;
+  chapters_done: number;
+  chunks_stored: number;
+  last_chapter_title: string | null;
+  error: string | null;
+};
+
+type ImportJobResponse = { job: ImportJobRow };
+
+/** Creates a resumable import job — fast regardless of manuscript length (splits + persists chapter text, no embedding work yet). */
+export async function createImportJob(bookId: string, rawText: string): Promise<ImportJobRow> {
+  const res = await apiFetch<ImportJobResponse>("/manuscript/bulk-import/jobs", {
+    method: "POST",
+    body: JSON.stringify({ userId: getUserId(), bookId, rawText }),
+  });
+  return res.job;
+}
+
+/** Advances a job by exactly one chapter. Call repeatedly until `status` is `"done"` or `"failed"` — `"failed"` is not terminal, since `next_chapter_index` was never advanced past the chapter that failed, so stepping again just retries it. */
+export async function stepImportJob(jobId: string): Promise<ImportJobRow> {
+  const res = await apiFetch<ImportJobResponse>(`/manuscript/bulk-import/jobs/${jobId}/step`, {
+    method: "POST",
+  });
+  return res.job;
+}
+
+/** Read-only status check (does not advance the job) — used to resume a job's progress after a remount/reload without processing an extra chapter as a side effect of just looking at it. */
+export async function getImportJob(jobId: string): Promise<ImportJobRow> {
+  const res = await apiFetch<ImportJobResponse>(`/manuscript/bulk-import/jobs/${jobId}`);
+  return res.job;
+}
+
+/** Call once a job reaches `"done"` — drops this book's cached chapter list/word count so the newly-imported chapters actually show up on the next read, same invalidation `deleteChapter`/`saveChapterBody` already do on their own writes. */
+export function invalidateManuscriptCache(bookId: string): void {
+  listCache.delete(bookId);
+  wordCountCache.delete(bookId);
+}

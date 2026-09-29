@@ -1663,6 +1663,103 @@ data shows the blocked message with exactly 6 listed chapters and an
 "…and N more" line for the rest; Dismiss returns the sidebar to the
 compact one-line notice. Zero console errors.
 
+**Bulk Manuscript Import — a real screen for the resumable job flow, not
+the one-shot `/manuscript/bulk-import` endpoint.** Confirmed by reading
+the backend's `manuscriptImportJob.ts`/`routes/manuscript.ts` directly:
+the one-shot endpoint (`bulkIngestManuscript`) processes every chapter
+sequentially inside a single request, which its own comment already flags
+as a real timeout risk for a long manuscript; the resumable job endpoints
+(`POST /manuscript/bulk-import/jobs`, `POST .../jobs/:jobId/step`, `GET
+.../jobs/:jobId`) exist specifically to avoid that — `createImportJob`
+only splits and persists chapter text (fast regardless of length),
+and `stepImportJob` advances exactly one chapter's worth of chunk/embed/
+store work per call, so the frontend is the one driving the loop, one
+request per chapter, rather than betting a single request survives an
+entire novel's worth of sequential embedding calls.
+
+**`ImportJobRow` mapped exactly as the backend returns it** — raw
+snake_case columns (`next_chapter_index`, `chapters_total`,
+`chapters_done`, `chunks_stored`, `last_chapter_title`, `error`), no
+envelope surprises this time (`{ job }` on all three endpoints, confirmed
+by reading the route handlers, not assumed from the endpoint names alone
+— the same discipline every earlier domain integration in this file
+established). `createImportJob`/`stepImportJob`/`getImportJob`
+(`manuscript-store.ts`) are deliberately plain async functions, not
+reactive store state — a job belongs to exactly one page for its whole
+lifetime, unlike a chapter or a planning run that multiple components
+might need to read simultaneously — same treatment `syncChapterToMemory`
+already gets for a similarly one-off action.
+
+**`"failed"` is not terminal, by design — confirmed in the backend's own
+comment before building the Retry button around it.** `next_chapter_index`
+is never advanced past the chapter that failed, so calling `.../step`
+again on a failed job just retries that same chapter; a transient
+embedding/network error doesn't permanently brick an otherwise-working
+import. The import page's Retry button (both the inline one shown next to
+a failure banner mid-run and the one on the dedicated "Import failed"
+card) does nothing but call the same `driveImport()` loop again — no
+special-cased "resume from failure" code path, since stepping a failed
+job is already the correct, ordinary next call.
+
+**`job.id` survives in the URL (`?job=`), not just component state** —
+same convention the Planning Engine's own long-running runs already
+established for surviving a reload. On mount, if `?job=` is present but no
+local job state exists yet, the page does a real `GET .../jobs/:jobId`
+first (never a `.../step` as a side effect of just looking, per the
+route's own doc comment) and only resumes the drive loop if the resumed
+job isn't already `"done"`/`"failed"`. A `drivingRef` guards against the
+resume-on-mount effect and a manual Retry click racing to step the same
+job twice at once.
+
+**Two real entry points, both linking to a new dedicated route**
+(`/projects/[id]/chapters/import`), not a modal — a bulk import is a
+substantial, multi-step flow (paste/upload → progress → done/failed), not
+a quick action a modal fits well: the `EmptyManuscriptState` (zero
+chapters) gained a secondary "Import a Manuscript" button alongside the
+existing "Create First Chapter" one, and `ManuscriptPanel`'s header
+gained an upload icon next to the existing Search/Add-chapter icons —
+reachable even once a project already has chapters, not just on a
+brand-new one.
+
+**On completion, the book's chapter list/word-count cache is invalidated**
+(`invalidateManuscriptCache(bookId)`, a small new export dropping both
+`listCache`/`wordCountCache` entries for that book) so navigating to
+Chapters via the "Go to Chapters" button shows the real imported chapters
+immediately — no manual reload needed, same "cache-bust on write" pattern
+`deleteChapter`/`saveChapterBody` already use for their own writes.
+
+**Copy matches the spec's real parsing rules exactly**, confirmed against
+`manuscriptIngest.ts`'s own `splitIntoChapters` before writing it: content
+before the first "Chapter N" header line is genuinely dropped (accumulated
+into a body buffer that's only ever flushed once a real chapter number has
+been seen), and if no header is ever found, the entire input becomes
+Chapter 1 rather than being rejected — both shown as plain hint text under
+the textarea, not asserted without having read the code that makes it
+true.
+
+**Verified working** (against a local mock backend extended with
+`/manuscript/bulk-import/jobs` + `.../jobs/:jobId/step` + `.../jobs/:jobId`
+handlers — `splitIntoChapters` ported line-for-line from the real backend
+source so the mock exercises the exact same parsing rules, plus a
+`/__test__/force-import-failure` hook for a one-shot simulated step
+failure): pasting a manuscript with front matter before its first chapter
+header and 3 real "Chapter N: Title" sections imports exactly 3 chapters,
+confirmed independently via a direct `GET /manuscript/chapters` call (not
+just the UI's own summary) with the real parsed titles preserved; the
+front-matter text is confirmed dropped; a manuscript with no chapter
+headers at all imports as exactly 1 chapter; the job id lands in the URL
+on submit; reloading the page mid-import (simulating closing and
+reopening the tab) resumes to completion via a real `GET`, not a lost or
+re-started job; a simulated step failure shows "Import failed" with the
+real `job.error` text, and clicking Retry successfully completes the
+import from where it left off; "Go to Chapters" routes to the real
+Chapters list with the imported chapters visible in the nav and openable
+in the editor with their real body text, no manual reload needed; both
+entry points (`EmptyManuscriptState`'s button, `ManuscriptPanel`'s header
+icon) are reachable and correctly navigate to the import screen. Zero
+console errors across the full pass. `tsc --noEmit`, `eslint`, and
+`npm run build` all clean.
+
 ### 4.6 Banned Terms
 
 **Live — backed by the real backend's `/banned-terms` (see the backend
@@ -4097,6 +4194,7 @@ summary the backend team asked for.)
 | Ban this selection (Ghost Editor) | **Live** — highlight text, ban it for the book via `/banned-terms`; enforced automatically server-side on every future generation (see §4.6) |
 | Sync to AI Memory | **Live** — "..." menu action in the editor's TopBar, `POST /manuscript/chapters/:id/sync-to-memory` (§4.5) |
 | Search this manuscript (sidebar search icon) | **Live, client-side** — real full-text search across every chapter's actual saved paragraphs, not just chapter titles/numbers (that's the separate, always-visible "Filter chapters…" input, unchanged). No backend search endpoint exists (or is needed) for this — see below. |
+| Bulk Manuscript Import | **Live** — dedicated `/projects/[id]/chapters/import` screen, the resumable job flow (`/manuscript/bulk-import/jobs` + `.../step` + `GET .../:jobId`), reachable from the empty-manuscript state and the Manuscript panel's header icon (§4.5) |
 
 ---
 
@@ -4543,6 +4641,7 @@ export interface AiProvider {
 /projects/[id]/analytics                     stub — <ComingSoon>, no data model
 /projects/[id]/settings                      stub — <ComingSoon>, no data model
 /projects/[id]/chapters                      ManuscriptPart[] (live) + ChapterBody (live) + CommentThread[] (mock) (§4.5/§5) + BannedTermRow[] (live, §4.6) + ChatSessionRow[]/ChatMessage[] (live, AI tab, §4.7) + OutlineBeat[] (live read-only, Outline tab, §4.8)
+/projects/[id]/chapters/import                ImportJobRow (live, resumable job flow, §4.5)
 /projects/[id]/outlines                      OutlinePart[]/OutlineChapter[]/OutlineBeat[] (live, §4.8)
 /projects/[id]/planning                      book-scoped Main/Contract chooser (PipelineTypeChooser) — no workspace of its own, just picks which section below
 /projects/[id]/planning/main                 AgentPrompt[]/PlanningRun (live, §4.10, pipelineType "full") — full-bleed Main Pipeline workspace (Pipeline Map, Run List, Continuity Ledger, Entity Review, Settings/Prompt Editor)
