@@ -1760,6 +1760,61 @@ icon) are reachable and correctly navigate to the import screen. Zero
 console errors across the full pass. `tsc --noEmit`, `eslint`, and
 `npm run build` all clean.
 
+**Bulk import also accepts a real Word (.docx) upload, not just .txt** —
+follow-up request: pasting/uploading a manuscript that was actually
+written in Word meant either re-typing it as plain text or losing all
+paragraph structure, since the upload path only ever read a file as raw
+text. `.docx` is a zip archive whose body lives in `word/document.xml` as
+`<w:p>` paragraph elements (each made of `<w:r>` runs containing `<w:t>`
+text nodes) — no full docx→HTML conversion library was pulled in for
+this, since the only thing bulk import ever consumes is a flat `rawText`
+string anyway, so a small dependency-light reader is a better fit than a
+heavier one this app would only use a sliver of (same "don't add a
+dependency for more than what's needed" discipline as `simple-markdown.tsx`
+avoiding a full markdown library for AI chat replies). New
+`src/lib/docx-text.ts` (`extractDocxText(file)`) uses `jszip` (the one new
+dependency this added — a small, dependency-free, extremely standard zip
+reader; confirmed via `npm audit` that it introduces zero new
+vulnerabilities of its own, only pre-existing ones in unrelated
+transitive deps like `next`/`postcss`/`sharp`) plus the browser's native
+`DOMParser` to walk every `<w:p>` in `word/document.xml` and join their
+text content one paragraph per line, blank line between paragraphs —
+exactly the shape `splitIntoChapters` on the backend already expects (a
+"Chapter N" header has to sit alone on its own line to be detected as
+one). `<w:br>`/`<w:cr>` become newlines and `<w:tab>` becomes a tab
+mid-paragraph too, so a manuscript using soft line breaks inside a
+paragraph doesn't silently run everything together.
+
+**Old binary `.doc` is explicitly rejected, not silently mishandled** —
+`.doc` (pre-2007 Word format) isn't a zip archive at all, so trying to
+read it the same way would just throw a confusing parse error; instead
+the extension is checked directly and shows a real, specific message
+("save it as .docx first, or paste the text directly") rather than the
+generic "couldn't read that file" a .doc would otherwise produce by
+accident. The file input's own `accept` attribute was widened to
+`.docx,.txt,text/plain,application/vnd.openxmlformats-officedocument.
+wordprocessingml.document`, and the upload button relabeled "Upload
+.docx or .txt file"; a `readingFile` state disables the button and shows
+a spinner while the (occasionally non-trivial, for a long document) zip
+read + XML parse is in flight, so a slow file doesn't look like a dead
+click.
+
+**Verified working** (Playwright, a real `.docx` fixture built the same
+way any real Word export is structured — a proper zip with
+`[Content_Types].xml`/`_rels/.rels`/`word/document.xml`, 7 real
+paragraphs including front matter before the first chapter header):
+uploading it populates the textarea with the exact real paragraph text,
+each chapter header landing on its own line; submitting it through the
+existing bulk-import job flow imports exactly 3 chapters (front matter
+correctly dropped by the unchanged backend splitter) with the real
+chapter titles, independently confirmed via a direct `GET
+/manuscript/chapters` call; a file with an unsupported extension (a
+renamed `.pdf`) shows the real "Please choose a .docx or .txt file."
+error; a corrupted `.docx` (a plain text file renamed to `.docx`, not a
+real zip) shows a real "Couldn't open that file" error rather than
+crashing the page. Zero console errors across the full pass. `tsc
+--noEmit`, `eslint`, and `npm run build` all clean.
+
 ### 4.6 Banned Terms
 
 **Live — backed by the real backend's `/banned-terms` (see the backend
@@ -4194,7 +4249,7 @@ summary the backend team asked for.)
 | Ban this selection (Ghost Editor) | **Live** — highlight text, ban it for the book via `/banned-terms`; enforced automatically server-side on every future generation (see §4.6) |
 | Sync to AI Memory | **Live** — "..." menu action in the editor's TopBar, `POST /manuscript/chapters/:id/sync-to-memory` (§4.5) |
 | Search this manuscript (sidebar search icon) | **Live, client-side** — real full-text search across every chapter's actual saved paragraphs, not just chapter titles/numbers (that's the separate, always-visible "Filter chapters…" input, unchanged). No backend search endpoint exists (or is needed) for this — see below. |
-| Bulk Manuscript Import | **Live** — dedicated `/projects/[id]/chapters/import` screen, the resumable job flow (`/manuscript/bulk-import/jobs` + `.../step` + `GET .../:jobId`), reachable from the empty-manuscript state and the Manuscript panel's header icon (§4.5) |
+| Bulk Manuscript Import | **Live** — dedicated `/projects/[id]/chapters/import` screen, the resumable job flow (`/manuscript/bulk-import/jobs` + `.../step` + `GET .../:jobId`), accepts paste, `.txt`, or real `.docx` upload (client-side extraction via `jszip`, §4.5), reachable from the empty-manuscript state and the Manuscript panel's header icon |
 
 ---
 

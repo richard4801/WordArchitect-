@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Progress } from "@/components/ui/progress";
+import { extractDocxText } from "@/lib/docx-text";
 import {
   createImportJob,
   getImportJob,
@@ -33,6 +34,7 @@ export default function BulkImportPage() {
 
   const [rawText, setRawText] = useState("");
   const [fileError, setFileError] = useState<string | null>(null);
+  const [readingFile, setReadingFile] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [job, setJob] = useState<ImportJobRow | null>(null);
@@ -88,17 +90,35 @@ export default function BulkImportPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobIdParam, project?.id]);
 
-  function handleFilePick(file: File | undefined) {
+  function readTxt(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+      reader.onerror = () => reject(new Error("Couldn't read that file."));
+      reader.readAsText(file);
+    });
+  }
+
+  async function handleFilePick(file: File | undefined) {
     if (!file) return;
     setFileError(null);
-    if (!file.name.toLowerCase().endsWith(".txt")) {
-      setFileError("Please choose a plain .txt file.");
-      return;
+    const name = file.name.toLowerCase();
+    setReadingFile(true);
+    try {
+      if (name.endsWith(".docx")) {
+        setRawText(await extractDocxText(file));
+      } else if (name.endsWith(".txt")) {
+        setRawText(await readTxt(file));
+      } else if (name.endsWith(".doc")) {
+        setFileError("Old .doc files aren't supported — save it as .docx first, or paste the text directly.");
+      } else {
+        setFileError("Please choose a .docx or .txt file.");
+      }
+    } catch (err) {
+      setFileError(err instanceof Error ? err.message : "Couldn't read that file.");
+    } finally {
+      setReadingFile(false);
     }
-    const reader = new FileReader();
-    reader.onload = () => setRawText(typeof reader.result === "string" ? reader.result : "");
-    reader.onerror = () => setFileError("Couldn't read that file.");
-    reader.readAsText(file);
   }
 
   async function handleSubmit() {
@@ -160,8 +180,8 @@ export default function BulkImportPage() {
         <div className="w-full max-w-2xl">
           <h1 className="font-display text-3xl text-ink">Import Manuscript</h1>
           <p className="mt-1 text-sm text-ink-muted">
-            Paste your full manuscript below, or upload a plain text file. It will be split into chapters and
-            imported straight into this project&rsquo;s Manuscript workspace.
+            Paste your full manuscript below, or upload a Word (.docx) or plain text file. It will be split into
+            chapters and imported straight into this project&rsquo;s Manuscript workspace.
           </p>
 
           {!job && (
@@ -173,17 +193,21 @@ export default function BulkImportPage() {
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-xs text-ink-muted transition-colors hover:text-ink"
+                  disabled={readingFile}
+                  className="flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-xs text-ink-muted transition-colors hover:text-ink disabled:opacity-60"
                 >
-                  <Upload className="size-3.5" />
-                  Upload .txt file
+                  {readingFile ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
+                  {readingFile ? "Reading file…" : "Upload .docx or .txt file"}
                 </button>
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".txt,text/plain"
+                  accept=".docx,.txt,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                   className="hidden"
-                  onChange={(e) => handleFilePick(e.target.files?.[0])}
+                  onChange={(e) => {
+                    void handleFilePick(e.target.files?.[0]);
+                    e.target.value = "";
+                  }}
                 />
               </div>
               <textarea
