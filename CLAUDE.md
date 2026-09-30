@@ -297,10 +297,12 @@ writer's side). Tagline: **"Write. Craft. Conquer."**
   and six full workspaces — Writing (manuscript editor), Outliner,
   Characters, Worldbuilding, Notes, AI Assistant (chat — see §4.7).
 - Still stubbed (`<ComingSoon>`, no data model at all yet): Project
-  Analytics tab, Project Settings tab, and the top-level Timeline/
-  Templates/Goals/Help nav destinations. (The top-level "AI Assistant" nav
-  destination is real now — it redirects to the book-scoped assistant,
-  same pattern as Writing/Characters/etc.)
+  Analytics tab, and the top-level Timeline/Templates/Goals/Help nav
+  destinations. (The top-level "AI Assistant" nav destination is real
+  now — it redirects to the book-scoped assistant, same pattern as
+  Writing/Characters/etc.) Project Settings has one real feature now — a
+  Book Links card for connecting a project to a sequel/translation (see
+  §4.11) — though everything else on that tab is still unbuilt.
 - **Formerly the single most important gap, now closed:** the manuscript
   editor's prose is a `contentEditable` DOM region — it now has real
   chapter-body save/load (debounced autosave, lazy load-on-open) backed by
@@ -415,6 +417,7 @@ backend during backend-side development.
 | AI Assistant Chat | **Live** — `/chat` + `/chat/sessions` | `chat-store.ts` |
 | Outliner | **Live** — `/outline/beats` + `/manuscript/chapters/:id/beats` + `/manuscript/beats/:id` | `outline-store.ts` |
 | Planning Engine | **Live** — `/agent-prompts` + `/planning/runs` | `planning-store.ts` |
+| Book Links | **Live** — `/book-links` | `book-links-store.ts` |
 | Dashboard-only stats | Mock, deferred | `dashboard-data.ts` (no backend resource exists for these — see §4.9) |
 
 ### Accounts & Authentication (live)
@@ -4382,6 +4385,119 @@ relying on the old single-click auto-chain — zero regressions once
 updated, zero console errors across the full pass. `tsc --noEmit`,
 `eslint`, and `npm run build` all clean.
 
+### 4.11 Book Links
+
+**Live — backed by the real backend's `/book-links`** (see the backend
+repo's `src/routes/bookLinks.ts` + `030_book_links.sql`, read directly
+before building anything). A generic book-to-book relationship: "this
+project is a sequel of that one" or "this project is a translation of
+that one" — the first primitive of its kind, since every other table in
+this schema (Codex, manuscript, planning runs, ...) is scoped strictly to
+one `book_id` with no way to point at a *different* book at all.
+
+```ts
+export type BookLinkRow = {
+  id: string;
+  from_book_id: string; // the derived book — the sequel, or the translation
+  to_book_id: string;   // what it relates to — the original
+  link_type: string;    // open-ended text; two known values: "sequel_of" | "translation_of"
+  language: string | null; // only meaningful for "translation_of" (e.g. "es"); null otherwise
+  created_at: string;
+};
+```
+
+**`UNIQUE(from_book_id, link_type)` is the one fact that isn't obvious
+from the endpoint shapes alone** — confirmed by reading the migration's
+own SQL and comment, not just the routes: a book can have at most ONE
+outgoing link of a given type, full stop, not scoped by which other book
+it points at. This is exactly what the 409 means (`"This book already has
+a "<type>" link — delete the existing one first if you want to change
+it."`) and exactly why the UI's "Change" action has to be implemented as
+delete-then-create — **there is no PATCH endpoint for book links at all**,
+confirmed by reading every route in `bookLinks.ts` (only GET/POST/DELETE
+exist), so delete-then-recreate isn't just the easiest implementation,
+it's the only one the real API surface allows.
+
+**`src/lib/book-links-store.ts`** (new file) follows the same "single
+current book" reactive-store pattern as `banned-terms-store.ts`/
+`notes-store.ts` — only one project's own links (its Settings tab) are
+ever shown at once. `useBookLinks(bookId)` returns `{ outgoing, incoming
+}` from one `GET /book-links?bookId=` call (the real route runs both
+directions as two parallel queries and returns them in a single
+response — not two separate fetches from this store). `createBookLink()`
+optimistically appends into the cache's `outgoing` array on success (only
+when the created link's `fromBookId` matches whichever book is currently
+loaded); `deleteBookLink()` filters the deleted id out of both `outgoing`
+and `incoming`. Every cache mutation replaces the whole `data` object
+rather than mutating it in place — the same reference-stability
+discipline this file's own `useManuscriptWordCount` bug (§5.6) already
+established is required for `useSyncExternalStore` to actually notice a
+change.
+
+**UI — a new "Book Links" card on the previously-stub Project Settings
+tab** (`src/app/(app)/projects/[id]/(tabs)/settings/page.tsx`, replacing
+its bare `<ComingSoon title="Settings" />`; this is the first real content
+that tab has ever had). Two fixed rows, "Sequel of" / "Translation of" —
+a closed, known-values slot per the backend's own "two known values
+today" framing, not an open `linkType` text field — each showing its
+current outgoing link's target (and language, for a translation) with
+Change/Remove actions, or an "Add" action if none exists yet. A shared
+`LinkBookModal` handles both Add and Change: a book picker excluding the
+current project and disambiguating same-titled projects by a short id
+suffix (`${title} (${id.slice(0, 8)})`) — the exact same convention
+already established by the Planning Engine's "Copy prompts from another
+project" picker (§4.10's `ClonePromptsCard`) — plus a language field shown
+only for `translation_of`, with a real inline validation error ("Enter a
+language code, e.g. `"es"`.") if left blank rather than a blind POST that
+would 400. A read-only "Linked from other projects" section below the two
+rows surfaces the `incoming` array (e.g. "The Sequel Book is a sequel of
+this project."), since an incoming link has no action to take from this
+side — it belongs to the *other* book's own Settings tab.
+
+**A real z-index bug found and fixed while building this, worth
+remembering for any future modal that nests a `DropdownSelect`.**
+`LinkBookModal`'s first draft used this app's usual one-off-modal backdrop
+(`z-[60]`, matching `EditProjectModal`/`EditWritingGoalModal`) — but
+`DropdownSelect`'s own options panel and its "click outside to close"
+overlay are separately portaled to `document.body` at `z-50`/`z-40`
+(`dropdown-select.tsx`, same values `OptionsMenu` uses). A `z-60` backdrop
+paints on top of both, so the dropdown panel rendered but was completely
+unclickable — reproduced directly via Playwright (`locator.click` timing
+out with "element intercepts pointer events," the backdrop div named as
+the interceptor). Fixed by giving this modal's own backdrop `z-30`
+instead — still above the sidebar (`z-20`) and ordinary page content, but
+below the shared dropdown/options-menu stack, so their panels render and
+receive clicks correctly while nested inside it. `EditProjectModal` also
+nests a `DropdownSelect` (Primary Genre/POV/Tense) inside its own `z-[60]`
+backdrop and, by this same reasoning, likely has the identical latent bug
+— not fixed here (out of scope for this task, and its own verification
+history never actually exercised opening one of those dropdowns), but
+worth flagging for whoever next touches that file.
+
+**Verified working** (local mock backend extended with `GET`/`POST
+/book-links` and `DELETE /book-links/:id`, mirroring the real
+`UNIQUE(from_book_id, link_type)` 409 and `CHECK (from_book_id <>
+to_book_id)` 400 exactly): a fresh project's Settings tab shows both rows
+as "Add" with no links; creating a "Sequel of" link shows the real target
+project and flips that row to "Change"; a direct duplicate `POST` for the
+same `fromBookId`+`linkType` correctly 409s with the real backend's exact
+error text; using "Change" to retarget the link to a different project
+correctly deletes the old link and creates the new one — confirmed via a
+direct API call that exactly one `sequel_of` link exists afterward and it
+points at the new target, not the old one; creating a "Translation of"
+link with a language shows both the target and the language; leaving the
+language blank on a translation shows the real inline validation error
+and never attempts a submit; the target project's own Settings tab
+correctly shows the incoming link in its read-only "Linked from other
+projects" list, and correctly stops showing it once that link is
+retargeted elsewhere; removing a link (via the real `ConfirmDialog`)
+reverts its row back to "Add" and is confirmed gone via a direct API
+call. One console entry across the full pass — the browser's own
+unsuppressable network-panel log of the intentional direct-duplicate 409
+request itself, not a JS exception (same as noted elsewhere in this file
+for other deliberately-triggered non-2xx test cases). `tsc --noEmit`,
+`eslint`, and `npm run build` all clean.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance
@@ -4851,7 +4967,7 @@ export interface AiProvider {
 /projects/[id]                               Project detail chrome (10-tab nav), Edit Project modal (updateProject)
 /projects/[id]                (Overview tab) Project + real ManuscriptPart[]/word counts (§5.6) + deriveRecentActivity
 /projects/[id]/analytics                     stub — <ComingSoon>, no data model
-/projects/[id]/settings                      stub — <ComingSoon>, no data model
+/projects/[id]/settings                      BookLinkRow[] (live, §4.11) — Book Links card only; Analytics/other settings still stubbed
 /projects/[id]/chapters                      ManuscriptPart[] (live) + ChapterBody (live) + CommentThread[] (mock) (§4.5/§5) + BannedTermRow[] (live, §4.6) + ChatSessionRow[]/ChatMessage[] (live, AI tab, §4.7) + OutlineBeat[] (live read-only, Outline tab, §4.8)
 /projects/[id]/chapters/import                ImportJobRow (live, resumable job flow, §4.5)
 /projects/[id]/outlines                      OutlinePart[]/OutlineChapter[]/OutlineBeat[] (live, §4.8)
