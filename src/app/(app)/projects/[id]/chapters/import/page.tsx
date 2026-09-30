@@ -3,15 +3,19 @@
 import { AlertTriangle, ChevronLeft, ChevronRight, CircleCheck, Loader2, Upload } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Progress } from "@/components/ui/progress";
+import { chaptersToRawText, renumberSequentially, splitIntoChapters } from "@/lib/chapter-split";
 import { extractDocxText } from "@/lib/docx-text";
 import {
   createImportJob,
   getImportJob,
   type ImportJobRow,
   invalidateManuscriptCache,
+  refreshManuscript,
   stepImportJob,
+  useManuscript,
+  useManuscriptLoadStatus,
 } from "@/lib/manuscript-store";
 import { useProject } from "@/lib/project-store";
 
@@ -40,6 +44,22 @@ export default function BulkImportPage() {
   const [job, setJob] = useState<ImportJobRow | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // A project this book already has chapters in needs its new import
+  // numbered to continue after them, not trust whatever "Chapter N" headers
+  // the freshly-uploaded document happens to use — two different documents
+  // both starting their own numbering at 1 would otherwise collide with (or
+  // silently get appended onto, see chapter-split.ts's own module comment)
+  // this project's real existing Chapter 1. `useManuscript` triggers its own
+  // fetch on mount, so this is genuinely live, not stale from whenever the
+  // writer last had the Chapters list open.
+  const manuscript = useManuscript(project?.id);
+  const manuscriptStatus = useManuscriptLoadStatus(project?.id);
+  const highestExistingChapter = useMemo(
+    () => manuscript.reduce((max, part) => part.chapters.reduce((m, c) => Math.max(m, c.number), max), 0),
+    [manuscript],
+  );
+  const chaptersReady = manuscriptStatus === "loaded";
 
   // Only one drive loop should ever be in flight for a given job at once —
   // guards against the resume-on-mount effect and a manual Retry click both
@@ -122,11 +142,20 @@ export default function BulkImportPage() {
   }
 
   async function handleSubmit() {
-    if (!project || !rawText.trim() || creating) return;
+    if (!project || !rawText.trim() || creating || !chaptersReady) return;
     setCreating(true);
     setCreateError(null);
     try {
-      const created = await createImportJob(project.id, rawText);
+      // Only renumber when this project genuinely already has chapters —
+      // for a brand-new project this leaves rawText untouched, so its
+      // formatting (spelled-out chapter words, punctuation style, etc.)
+      // round-trips through the backend's own splitter exactly as before
+      // rather than always going through this file's reconstruction.
+      const textToSend =
+        highestExistingChapter > 0
+          ? chaptersToRawText(renumberSequentially(splitIntoChapters(rawText), highestExistingChapter + 1))
+          : rawText;
+      const created = await createImportJob(project.id, textToSend);
       setJob(created);
       router.replace(`/projects/${project.id}/chapters/import?job=${created.id}`);
       void driveImport(created.id);
@@ -223,7 +252,35 @@ export default function BulkImportPage() {
               <ul className="mt-3 space-y-1 text-xs text-ink-faint">
                 <li>Content before the first &ldquo;Chapter N&rdquo; header is dropped.</li>
                 <li>No headers found → entire input becomes Chapter 1.</li>
+                {chaptersReady && highestExistingChapter > 0 && (
+                  <li>
+                    This project already has chapters 1–{highestExistingChapter}. New chapters will be numbered
+                    starting at {highestExistingChapter + 1}, regardless of any chapter numbers in the source.
+                  </li>
+                )}
               </ul>
+
+              {(manuscriptStatus === "idle" || manuscriptStatus === "loading") && (
+                <p className="mt-3 flex items-center gap-1.5 text-xs text-ink-faint">
+                  <Loader2 className="size-3 animate-spin" />
+                  Checking this project&rsquo;s existing chapters…
+                </p>
+              )}
+              {manuscriptStatus === "error" && (
+                <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-danger/40 bg-danger/10 p-3">
+                  <p className="text-xs text-danger">
+                    Couldn&rsquo;t check this project&rsquo;s existing chapters, so importing is paused — continuing
+                    numbering safely depends on knowing where they left off.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => project && refreshManuscript(project.id)}
+                    className="shrink-0 rounded-lg border border-line-strong px-3 py-1.5 text-xs text-ink transition-colors hover:bg-surface-2"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
 
               {createError && <p className="mt-3 text-xs text-danger">{createError}</p>}
 
@@ -234,7 +291,7 @@ export default function BulkImportPage() {
                 <button
                   type="button"
                   onClick={handleSubmit}
-                  disabled={creating || !rawText.trim()}
+                  disabled={creating || !rawText.trim() || !chaptersReady}
                   className="flex items-center gap-1.5 rounded-xl bg-gold px-5 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-60"
                 >
                   {creating ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}

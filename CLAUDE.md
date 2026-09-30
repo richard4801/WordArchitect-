@@ -1889,6 +1889,89 @@ remaining chapter via Select All correctly falls back to the existing
 "Start your manuscript" empty state. Zero console errors across the
 full pass. `tsc --noEmit`, `eslint`, and `npm run build` all clean.
 
+**Bulk import now continues chapter numbering on a project that already
+has chapters, instead of trusting the newly-uploaded document's own
+"Chapter N" headers.** Real risk this closes: uploading a second document
+into a book that already has a real Chapter 1 (its own "next batch of
+chapters" workflow, or two documents each independently numbered from 1)
+would send the backend a chapter numbered `1` again — and
+`upsertChapterEditorContent` (the backend function that lands an imported
+chapter into the rich editor, confirmed by re-reading it directly, see
+§3.5's Manuscript/Chapters section) doesn't error on a colliding
+`(book_id, number)`, it **appends** the new paragraphs onto the existing
+chapter's — silently merging two unrelated chapters' prose together, with
+no error and no warning. No backend change was possible for this (no
+push access), so the fix is entirely client-side: never let the backend
+see a colliding number in the first place.
+
+**`src/lib/chapter-split.ts`** (new) is a client-side port of the
+backend's own `splitIntoChapters` (`manuscriptIngest.ts`) — same regex,
+same number-word table, same `MAX_HEADER_LINE_LENGTH` cap, ported
+line-for-line and confirmed against the real source rather than
+re-derived from the parsing rules' prose description alone, continuing
+this file's established discipline. Three functions: `splitIntoChapters`
+(detect the source's own chapters, exactly as the backend eventually
+will), `renumberSequentially(chapters, startNumber)` (throws away
+whatever numbers the source document's headers used and reassigns
+`startNumber, startNumber + 1, ...` in the parsed chapters' own order —
+the actual point: an uploaded document has no way to know where a
+different, already-existing book left off, so its own numbering is never
+trustworthy for this), and `chaptersToRawText` (reconstructs a plain
+rawText string with real "Chapter N: Title" headers reflecting the new
+numbers — this is what actually makes the renumbering stick, since the
+frontend has no way to tell the backend's own splitter to skip parsing
+and just trust pre-assigned numbers instead; submitting text whose
+headers already say the right thing is the only lever available).
+`chaptersToRawText`'s header formatting clamps a title long enough to
+push the whole header line past `MAX_HEADER_LINE_LENGTH` — otherwise that
+line would silently fail to be recognized as a header on the very next
+parse (by this app's own splitter or the backend's), merging that
+chapter into whatever came before it.
+
+**Wired into `chapters/import/page.tsx`**: `useManuscript(project?.id)`
+(already fetches on mount) supplies this book's real current chapter
+list; `highestExistingChapter` is the max chapter number across it (`0`
+on a genuinely new project). `handleSubmit` only reconstructs `rawText`
+when `highestExistingChapter > 0` — a brand-new project's upload goes
+through completely unmodified, so its formatting (spelled-out chapter
+words, whatever punctuation style the source used) round-trips through
+the backend's own splitter exactly as it always has; the renumbering
+path only activates for the specific case this was built for. A new hint
+line appears under the existing "content before the first header is
+dropped" / "no headers → Chapter 1" bullets whenever the project already
+has chapters: "This project already has chapters 1–N. New chapters will
+be numbered starting at N+1, regardless of any chapter numbers in the
+source" — naming the real range and the real next number, not a vague
+promise.
+
+**Submission is gated on actually knowing the real chapter count first**
+— `chaptersReady = manuscriptLoadStatus === "loaded"` disables "Import
+Manuscript" (with a "Checking this project's existing chapters…" note)
+until the fetch resolves, and a genuine load failure blocks submission
+entirely with a real error and a Retry button (`refreshManuscript`)
+rather than silently falling back to treating the project as chapter-less
+— guessing wrong here is exactly the silent-merge risk this whole change
+exists to prevent, so a real unknown blocks rather than assumes.
+
+**Verified working** (Playwright, against a local mock backend extended
+to actually reproduce the append-on-collision risk faithfully so this
+could be confirmed as a real fix, not just a plausible one): a fresh
+project shows no continuation hint and an unmodified 3-chapter import
+lands as chapters 1–3 exactly as before; re-opening Import on that same
+project shows the real hint text ("chapters 1–3 … starting at 4");
+importing a second document whose own headers *also* start at "Chapter
+1" imports as chapters 4–5, confirmed via a direct `GET
+/manuscript/chapters` call that all 5 numbers are unique (1,2,3,4,5,
+no collision); the original Chapter 1's title and body are confirmed
+byte-for-byte untouched (not silently appended to); the new chapters
+carry their own real titles and — checked via `GET
+/manuscript/chapters/:id` on the new Chapter 4 specifically — their own
+real body text with no trace of the original chapter's content merged
+in. A no-headers-at-all import into a project that already has one
+chapter correctly becomes a single new chapter continuing at 2, not a
+second "Chapter 1" colliding with the first. Zero console errors across
+the full pass. `tsc --noEmit`, `eslint`, and `npm run build` all clean.
+
 ### 4.6 Banned Terms
 
 **Live — backed by the real backend's `/banned-terms` (see the backend
