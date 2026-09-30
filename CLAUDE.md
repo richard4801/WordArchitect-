@@ -1815,6 +1815,80 @@ real zip) shows a real "Couldn't open that file" error rather than
 crashing the page. Zero console errors across the full pass. `tsc
 --noEmit`, `eslint`, and `npm run build` all clean.
 
+**Bulk chapter delete — "select all chapters, and delete" in the
+left-rail chapter nav.** Per-chapter delete already existed (each
+`ChapterRow`'s hover "..." menu, and the editor's own `MoreMenu`), but
+there was no way to remove several chapters at once — a real gap once a
+project can end up with a batch of chapters worth clearing in one go
+(e.g. after a bad bulk import, or just cleaning up a draft). New
+`deleteChapters(chapterIds)` in `manuscript-store.ts` wraps the existing
+single-chapter `deleteChapter()` in a plain sequential loop — no batch
+endpoint exists on the backend, and sequential (not `Promise.all`) means
+a failure partway through leaves the cache in a known state (everything
+before it really is gone, nothing after it was touched) rather than a
+handful of concurrent requests landing in an unpredictable order, same
+"no transactional guarantee, so report exactly what happened" discipline
+`renumberChaptersToCloseGaps()` already established for its own
+multi-request sequence.
+
+**UI, `ManuscriptPanel`** (`chapters/page.tsx`): a new "Select chapters"
+icon (`ListChecks`, reused from elsewhere in this file rather than adding
+a new import) next to Search/Import/Add in the panel header, disabled
+on a genuinely empty manuscript. Entering select mode swaps that whole
+header row for a selection toolbar — a "Select all" checkbox (label
+flips to "N selected" once anything's checked), a red delete icon
+(disabled until at least one chapter is checked), and an X to cancel.
+Each `ChapterRow` grows a real checkbox in select mode (replacing its
+normal expand-chevron/scene-toggle in that leading slot), and the row's
+title button toggles the checkbox instead of opening the chapter while
+select mode is active — the per-row "..." menu is hidden for the
+duration, so there's exactly one way to act on a chapter at a time,
+never two conflicting affordances competing for the same click.
+
+**"Select All" only ever selects what's actually visible under the
+current chapter filter** — computed from `filtered` (the same
+already-filtered list "Filter chapters…" already narrows down to), not
+the full unfiltered `manuscript`. Selecting under one filter, then
+narrowing to a different one, and hitting Delete should never reach past
+what the writer can actually see and silently delete a chapter they
+never looked at. The Select All checkbox's own checked state likewise
+reflects only the visible set (`allVisibleSelected`), so filtering after
+a full select doesn't leave it looking checked when some of what's
+selected has scrolled out of view.
+
+**A real, specific confirm dialog, not a vague "N chapters" count** —
+`describeBulkDeletePlan()` names the actual chapters being deleted (up to
+6, then "…and N more"), sorted by chapter number, same "say exactly
+what's about to happen" discipline `describeRenumberPlan()` and the
+renumber-blocked banner's own capped list already use elsewhere in this
+file. A failure partway through a bulk delete (a real, if rare,
+network/502 case) shows exactly how many succeeded before the error, and
+drops only the chapters that actually got deleted from the selection —
+so a Retry click only targets what's genuinely still there, not a stale
+selection that would immediately re-fail on the ones already gone.
+Select mode is exited (and the selection cleared) automatically once a
+bulk delete fully succeeds; Cancel (the X) exits it at any point without
+deleting anything.
+
+**Verified working** (against a local mock backend extended with a real
+`DELETE /manuscript/chapters/:id` handler — the mock previously only had
+`GET`/list for this domain, since nothing before this exercised chapter
+deletion against it): entering select mode shows a real "Select all"
+checkbox and a delete button correctly disabled with nothing checked;
+checking two individual chapters shows "2 selected" and enables delete;
+Select All checks every chapter and shows the real total, correctly
+reporting its own checked state; unchecking Select All clears every
+selection at once; selecting 3 specific chapters and confirming the
+delete shows the exact real chapter names and count in the dialog, and
+deletes exactly those 3 — independently confirmed via a direct `GET
+/manuscript/chapters` call that only the correct 2 untouched chapters
+remain, both still visible in the nav and the 3 deleted ones gone;
+select mode exits automatically on success; Cancel after a Select All
+leaves every chapter untouched, confirmed via the API; deleting every
+remaining chapter via Select All correctly falls back to the existing
+"Start your manuscript" empty state. Zero console errors across the
+full pass. `tsc --noEmit`, `eslint`, and `npm run build` all clean.
+
 ### 4.6 Banned Terms
 
 **Live — backed by the real backend's `/banned-terms` (see the backend

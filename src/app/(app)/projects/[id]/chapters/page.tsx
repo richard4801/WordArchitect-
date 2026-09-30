@@ -58,8 +58,10 @@ import {
   type ManuscriptPart,
 } from "@/lib/manuscript-data";
 import {
+  type BulkDeleteResult,
   createChapter,
   deleteChapter,
+  deleteChapters,
   type IndexedChapterBody,
   planChapterRenumber,
   renumberChaptersToCloseGaps,
@@ -859,6 +861,14 @@ function describeRenumberPlan(moves: RenumberMove[]): string {
     .join("; ");
 }
 
+/** Confirm-dialog copy for a bulk chapter delete — names the actual chapters being deleted (capped at 6) rather than a vague "N chapters", same "say exactly what's about to happen" discipline as describeRenumberPlan()'s and the renumber-blocked banner's own list caps. */
+function describeBulkDeletePlan(chapters: ManuscriptChapter[]): string {
+  const sorted = [...chapters].sort((a, b) => a.number - b.number);
+  const shown = sorted.slice(0, 6).map((c) => `Chapter ${c.number} – ${c.title}`);
+  const suffix = sorted.length > 6 ? `, and ${sorted.length - 6} more` : "";
+  return `${shown.join(", ")}${suffix} will be permanently deleted. This can't be undone.`;
+}
+
 function ManuscriptPanel({
   bookId,
   manuscript,
@@ -902,6 +912,31 @@ function ManuscriptPanel({
     setExpanded((prev) => new Set([...prev, ...newIds]));
   }, [manuscript]);
   const [query, setQuery] = useState("");
+
+  // "Select all, delete" bulk action — a plain checkbox-per-row mode, not a
+  // separate screen. Selection is cleared whenever select mode is toggled
+  // off (including right after a bulk delete completes) so a stale
+  // selection can never carry over into the next time it's opened.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteState, setBulkDeleteState] = useState<
+    { kind: "idle" } | { kind: "confirming" } | { kind: "running" } | { kind: "error"; message: string }
+  >({ kind: "idle" });
+
+  function exitSelectMode() {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+    setBulkDeleteState({ kind: "idle" });
+  }
+
+  function toggleSelected(chapterId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(chapterId)) next.delete(chapterId);
+      else next.add(chapterId);
+      return next;
+    });
+  }
 
   // Detects gaps in chapter numbering (e.g. chapters created directly
   // against the backend outside this app's own "Add Chapter" auto-
@@ -950,6 +985,49 @@ function ManuscriptPanel({
         .filter((part) => part.chapters.length > 0)
     : manuscript;
 
+  // "Select All" only selects what's actually visible under the current
+  // filter — selecting, then filtering to a different subset, then hitting
+  // Delete should never silently delete a chapter the writer never saw.
+  const visibleChapters = filtered.flatMap((part) => part.chapters);
+  const allVisibleSelected =
+    visibleChapters.length > 0 && visibleChapters.every((c) => selectedIds.has(c.id));
+  const selectedChapters = visibleChapters.filter((c) => selectedIds.has(c.id));
+
+  function toggleSelectAll() {
+    setSelectedIds((prev) => {
+      if (allVisibleSelected) {
+        const next = new Set(prev);
+        for (const c of visibleChapters) next.delete(c.id);
+        return next;
+      }
+      return new Set([...prev, ...visibleChapters.map((c) => c.id)]);
+    });
+  }
+
+  async function handleBulkDelete() {
+    setBulkDeleteState({ kind: "running" });
+    const ids = [...selectedIds];
+    const result: BulkDeleteResult = await deleteChapters(ids);
+    if (result.error) {
+      setBulkDeleteState({
+        kind: "error",
+        message:
+          result.deleted > 0
+            ? `Deleted ${result.deleted} of ${result.total} before this happened: ${result.error}`
+            : result.error,
+      });
+      // Drop the ones that did succeed from the selection so a retry only
+      // targets what's actually still there.
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const id of ids.slice(0, result.deleted)) next.delete(id);
+        return next;
+      });
+      return;
+    }
+    exitSelectMode();
+  }
+
   // Same source the Dashboard's Today's Progress ring reads from — see
   // daily-progress-store.ts — so the two never show different numbers for
   // the same day's writing.
@@ -962,35 +1040,99 @@ function ManuscriptPanel({
 
   return (
     <aside className="flex w-[280px] shrink-0 flex-col border-r border-line">
-      <div className="flex items-center justify-between px-5 pt-5 pb-3">
-        <h2 className="label-caps text-[0.68rem]">Manuscript</h2>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            aria-label="Search manuscript"
-            onClick={onOpenSearch}
-            className="grid size-7 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
-          >
-            <Search className="size-4" />
-          </button>
-          <Link
-            href={`/projects/${bookId}/chapters/import`}
-            aria-label="Import manuscript"
-            className="grid size-7 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
-          >
-            <Upload className="size-4" />
-          </Link>
-          <button
-            type="button"
-            aria-label="Add chapter"
-            onClick={onAddChapter}
-            disabled={addingChapter}
-            className="grid size-7 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-50"
-          >
-            <Plus className="size-4" />
-          </button>
+      {selectMode ? (
+        <div className="flex items-center justify-between gap-2 px-5 pt-5 pb-3">
+          <label className="flex min-w-0 items-center gap-2 text-sm text-ink">
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              onChange={toggleSelectAll}
+              className="accent-gold"
+              aria-label="Select all chapters"
+            />
+            <span className="truncate">
+              {selectedIds.size > 0 ? `${selectedIds.size} selected` : "Select all"}
+            </span>
+          </label>
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setBulkDeleteState({ kind: "confirming" })}
+              disabled={selectedIds.size === 0 || bulkDeleteState.kind === "running"}
+              aria-label="Delete selected chapters"
+              className="grid size-7 place-items-center rounded-lg text-danger transition-colors hover:bg-danger/10 disabled:pointer-events-none disabled:opacity-40"
+            >
+              {bulkDeleteState.kind === "running" ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Trash2 className="size-4" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={exitSelectMode}
+              aria-label="Cancel selecting chapters"
+              className="grid size-7 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="flex items-center justify-between px-5 pt-5 pb-3">
+          <h2 className="label-caps text-[0.68rem]">Manuscript</h2>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              aria-label="Search manuscript"
+              onClick={onOpenSearch}
+              className="grid size-7 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+            >
+              <Search className="size-4" />
+            </button>
+            <Link
+              href={`/projects/${bookId}/chapters/import`}
+              aria-label="Import manuscript"
+              className="grid size-7 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+            >
+              <Upload className="size-4" />
+            </Link>
+            <button
+              type="button"
+              aria-label="Select chapters"
+              onClick={() => setSelectMode(true)}
+              disabled={manuscript.length === 0}
+              className="grid size-7 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink disabled:pointer-events-none disabled:opacity-40"
+            >
+              <ListChecks className="size-4" />
+            </button>
+            <button
+              type="button"
+              aria-label="Add chapter"
+              onClick={onAddChapter}
+              disabled={addingChapter}
+              className="grid size-7 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-50"
+            >
+              <Plus className="size-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {bulkDeleteState.kind === "confirming" && (
+        <ConfirmDialog
+          title={`Delete ${selectedChapters.length} chapter${selectedChapters.length === 1 ? "" : "s"}?`}
+          description={describeBulkDeletePlan(selectedChapters)}
+          confirmLabel="Delete"
+          onCancel={() => setBulkDeleteState({ kind: "idle" })}
+          onConfirm={handleBulkDelete}
+        />
+      )}
+      {bulkDeleteState.kind === "error" && (
+        <p className="mx-5 mb-3 rounded-xl border border-danger/40 bg-danger/10 p-3 text-xs text-danger">
+          {bulkDeleteState.message}
+        </p>
+      )}
 
       {renumberMoves.length > 0 && renumberState.kind === "idle" && (
         // Deliberately low-key — a plain text row, not a colored alert box.
@@ -1119,6 +1261,9 @@ function ManuscriptPanel({
                       onSelect={() => onSelectChapter(chapter.id)}
                       onSelectScene={onSelectScene}
                       onDelete={() => onDeleteChapter(chapter.id)}
+                      selectMode={selectMode}
+                      selected={selectedIds.has(chapter.id)}
+                      onToggleSelected={() => toggleSelected(chapter.id)}
                     />
                   ))}
                 </ul>
@@ -1334,6 +1479,9 @@ function ChapterRow({
   onSelect,
   onSelectScene,
   onDelete,
+  selectMode,
+  selected,
+  onToggleSelected,
 }: {
   chapter: ManuscriptChapter;
   active: boolean;
@@ -1343,6 +1491,9 @@ function ChapterRow({
   onSelect: () => void;
   onSelectScene: (id: string) => void;
   onDelete: () => Promise<void>;
+  selectMode: boolean;
+  selected: boolean;
+  onToggleSelected: () => void;
 }) {
   const hasScenes = !!chapter.scenes?.length;
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -1353,7 +1504,15 @@ function ChapterRow({
           active ? "bg-surface-2 text-ink" : "text-ink-muted hover:bg-surface-2/60 hover:text-ink"
         }`}
       >
-        {hasScenes ? (
+        {selectMode ? (
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onToggleSelected}
+            aria-label={`Select Chapter ${chapter.number} – ${chapter.title}`}
+            className="shrink-0 accent-gold"
+          />
+        ) : hasScenes ? (
           <button
             type="button"
             onClick={onToggle}
@@ -1365,7 +1524,11 @@ function ChapterRow({
         ) : (
           <span className="size-3.5 shrink-0" />
         )}
-        <button type="button" onClick={onSelect} className="min-w-0 flex-1 truncate text-left">
+        <button
+          type="button"
+          onClick={selectMode ? onToggleSelected : onSelect}
+          className="min-w-0 flex-1 truncate text-left"
+        >
           Chapter {chapter.number} – {chapter.title}
         </button>
         {chapter.complete ? (
@@ -1373,14 +1536,16 @@ function ChapterRow({
         ) : active ? (
           <span className="size-1.5 shrink-0 rounded-full bg-gold" />
         ) : null}
-        <span className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100">
-          <OptionsMenu
-            ariaLabel={`More options for Chapter ${chapter.number}`}
-            buttonClassName="grid size-6 place-items-center rounded-md text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink"
-            iconClassName="size-3.5"
-            items={[{ label: "Delete Chapter", Icon: Trash2, danger: true, onClick: () => setConfirmingDelete(true) }]}
-          />
-        </span>
+        {!selectMode && (
+          <span className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100">
+            <OptionsMenu
+              ariaLabel={`More options for Chapter ${chapter.number}`}
+              buttonClassName="grid size-6 place-items-center rounded-md text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink"
+              iconClassName="size-3.5"
+              items={[{ label: "Delete Chapter", Icon: Trash2, danger: true, onClick: () => setConfirmingDelete(true) }]}
+            />
+          </span>
+        )}
       </div>
 
       {confirmingDelete && (

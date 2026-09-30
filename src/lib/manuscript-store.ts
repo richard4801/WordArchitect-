@@ -298,6 +298,32 @@ export async function deleteChapter(chapterId: string): Promise<void> {
   emit();
 }
 
+export type BulkDeleteResult = { deleted: number; total: number; error?: string };
+
+/**
+ * Deletes several chapters at once (the "select all, delete" bulk action) —
+ * a plain sequential loop over the real single-chapter `deleteChapter()`,
+ * not a batch endpoint (the backend has none). Sequential, not
+ * `Promise.all`, so a failure partway through leaves the cache in a known,
+ * consistent state (everything before it really is gone, nothing after it
+ * was touched) rather than a handful of concurrent requests landing in an
+ * unpredictable order. Stops at the first failure and reports exactly how
+ * many completed, same "no transactional guarantee, so say what actually
+ * happened" discipline `renumberChaptersToCloseGaps()` already uses.
+ */
+export async function deleteChapters(chapterIds: string[]): Promise<BulkDeleteResult> {
+  let deleted = 0;
+  for (const id of chapterIds) {
+    try {
+      await deleteChapter(id);
+      deleted++;
+    } catch (err) {
+      return { deleted, total: chapterIds.length, error: err instanceof Error ? err.message : "Failed to delete a chapter." };
+    }
+  }
+  return { deleted, total: chapterIds.length };
+}
+
 // ---------------------------------------------------------------------
 // Chapter body (lazy, one chapter at a time — a true singleton, see
 // module comment above)
