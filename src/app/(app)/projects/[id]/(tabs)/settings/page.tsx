@@ -23,6 +23,41 @@ const LINK_TYPES: { type: LinkType; label: string; description: string }[] = [
   { type: "translation_of", label: "Translation of", description: "This project is a translation of another one." },
 ];
 
+// `language` is a free-text VARCHAR(50) on the backend (see
+// 030_book_links.sql — "only meaningful for translation_of, e.g. \"es\"")
+// — no server-side enum, so this list is a frontend-only convenience, same
+// "dropdown instead of typo-prone free text" convention the Planning
+// Engine's MODEL_OPTIONS already established. Codes are real ISO 639-1
+// (plus the two common regional variants), since that's what the backend
+// actually expects — a plain language name like "Spanish"/"Espaniol" isn't
+// a real code and would save as meaningless free text.
+const LANGUAGE_OPTIONS: { code: string; label: string }[] = [
+  { code: "es", label: "Spanish" },
+  { code: "fr", label: "French" },
+  { code: "de", label: "German" },
+  { code: "it", label: "Italian" },
+  { code: "pt", label: "Portuguese" },
+  { code: "pt-BR", label: "Portuguese (Brazil)" },
+  { code: "ja", label: "Japanese" },
+  { code: "ko", label: "Korean" },
+  { code: "zh", label: "Chinese (Simplified)" },
+  { code: "zh-TW", label: "Chinese (Traditional)" },
+  { code: "ru", label: "Russian" },
+  { code: "ar", label: "Arabic" },
+  { code: "hi", label: "Hindi" },
+  { code: "nl", label: "Dutch" },
+  { code: "pl", label: "Polish" },
+  { code: "tr", label: "Turkish" },
+  { code: "vi", label: "Vietnamese" },
+  { code: "id", label: "Indonesian" },
+  { code: "th", label: "Thai" },
+  { code: "sv", label: "Swedish" },
+];
+
+function languageLabel(code: string): string {
+  return LANGUAGE_OPTIONS.find((l) => l.code === code)?.label ?? code;
+}
+
 export default function Page() {
   const { id } = useParams<{ id: string }>();
   const project = useProject(id);
@@ -38,7 +73,7 @@ export default function Page() {
 
 function relationshipLabel(l: BookLinkRow): string {
   if (l.link_type === "sequel_of") return "sequel";
-  if (l.link_type === "translation_of") return `translation${l.language ? ` (${l.language})` : ""}`;
+  if (l.link_type === "translation_of") return `translation${l.language ? ` (${languageLabel(l.language)})` : ""}`;
   return l.link_type;
 }
 
@@ -74,7 +109,7 @@ function BookLinksSection({ bookId }: { bookId: string }) {
                 {existing ? (
                   <p className="mt-0.5 truncate text-xs text-ink-muted">
                     {titleFor(existing.to_book_id)}
-                    {existing.language && <span className="text-ink-faint"> · {existing.language}</span>}
+                    {existing.language && <span className="text-ink-faint"> · {languageLabel(existing.language)}</span>}
                   </p>
                 ) : (
                   <p className="mt-0.5 text-xs text-ink-faint">{description}</p>
@@ -171,10 +206,20 @@ function LinkBookModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Fold in whatever this link's own saved `language` already is, in case
+  // it's a legacy free-text value from before this was a dropdown — same
+  // "don't hide real data behind a fixed list" convention the Planning
+  // Engine's own Model dropdown uses for `modelOptions`.
+  const languageOptions = useMemo(() => {
+    const codes = LANGUAGE_OPTIONS.map((l) => l.code);
+    if (existing?.language && !codes.includes(existing.language)) codes.push(existing.language);
+    return codes;
+  }, [existing]);
+
   async function handleSubmit() {
     if (!selectedId) return;
-    if (linkType === "translation_of" && !language.trim()) {
-      setError('Enter a language code, e.g. "es".');
+    if (linkType === "translation_of" && !language) {
+      setError("Select a language.");
       return;
     }
     setSubmitting(true);
@@ -189,7 +234,7 @@ function LinkBookModal({
         fromBookId: bookId,
         toBookId: selectedId,
         linkType,
-        language: linkType === "translation_of" ? language.trim() : null,
+        language: linkType === "translation_of" ? language : null,
       });
       onClose();
     } catch (err) {
@@ -238,12 +283,15 @@ function LinkBookModal({
           {linkType === "translation_of" && (
             <div className="mt-3">
               <label className="text-sm text-ink">Language</label>
-              <input
-                type="text"
-                value={language}
-                onChange={(e) => setLanguage(e.target.value)}
-                placeholder="e.g. es"
-                className="mt-1.5 w-full rounded-xl border border-line bg-surface px-4 py-2.5 text-sm text-ink placeholder:text-ink-faint focus:border-line-strong focus:outline-none"
+              <DropdownSelect
+                value={language ? languageLabel(language) : ""}
+                onChange={(label) => {
+                  const match = languageOptions.find((code) => languageLabel(code) === label);
+                  if (match) setLanguage(match);
+                }}
+                options={languageOptions.map(languageLabel)}
+                placeholder="Select a language"
+                className="mt-1.5"
               />
             </div>
           )}

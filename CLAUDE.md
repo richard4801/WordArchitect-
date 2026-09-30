@@ -4498,6 +4498,81 @@ request itself, not a JS exception (same as noted elsewhere in this file
 for other deliberately-triggered non-2xx test cases). `tsc --noEmit`,
 `eslint`, and `npm run build` all clean.
 
+**Language field is now a dropdown, not free text — and a likely
+production-side root cause flagged for a real submit failure.** User
+report with a screenshot: on production, adding a Translation link
+(typing "Espaniol" as the language) failed with a real, backend-surfaced
+"Book link request failed." — plus a direct ask that language shouldn't
+be a free-text field at all.
+
+**The dropdown, built the same way as every other "backend has no enum,
+but typing it freehand is the wrong UI" field in this app** — same
+convention as the Planning Engine's `MODEL_OPTIONS`/`modelLabel()`
+(§4.10): `language` is a free-text `VARCHAR(50)` on the backend (per
+`030_book_links.sql`'s own comment — "only meaningful for
+translation_of"), so this is a frontend-only convenience list, not a
+contract change. New `LANGUAGE_OPTIONS`/`languageLabel()` in
+`settings/page.tsx` hold 20 real ISO 639-1 codes (plus `pt-BR`/`zh-TW` for
+the two common regional variants) with friendly display labels; the
+picker's `languageOptions` fold in whatever `existing.language` already
+is if it's outside that fixed list, so a legacy free-text value already
+saved can never be silently discarded by switching to a dropdown. Both
+the link-row display and the read-only "Linked from other projects" list
+now show the friendly label (`languageLabel(code)`, e.g. "Spanish")
+instead of the raw stored code.
+
+**The submit failure itself is very likely a backend/database-deployment
+issue, not a frontend bug — investigated as far as this session's access
+allows, but not independently confirmed against the live production
+backend.** The request this modal sends matches `bookLinks.ts`'s route
+validation exactly (`fromBookId`/`toBookId`/`linkType` all real strings,
+`language` a real string, the two ids genuinely different) — nothing
+here should trip the route's own 400 checks, and a fresh link (no prior
+attempt) rules out the 409 path too. That leaves only the route's
+generic catch-all, which only fires on a real thrown error from the
+`createBookLink()` insert itself (`res.status(502).json({ error: "Book
+link request failed." })` — exactly the text in the screenshot).
+Confirmed by checking the backend repo's own git history
+(`richard4801/WordArchitect-Backend-`, branch
+`claude/ai-fiction-platform-backend-qnvkm5`): `68f2e54` ("Add
+book_links...") — the commit that added both the route *and*
+`030_book_links.sql` — is the single most recent commit in the entire
+repo, with no later commit deploying or confirming the migration ran
+against the live database. A Postgres table whose migration file exists
+in the repo but was never actually executed against the production
+Supabase instance would make *every* insert into `book_links` throw a
+generic "relation does not exist"-class error, caught by exactly this
+catch-all, regardless of what a correctly-formed request contains — which
+matches every observed symptom (first-ever attempt, well-formed request,
+generic 502 text) precisely.
+
+This could not be verified directly: this sandbox's network egress
+doesn't reach `wordarchitect-backend.onrender.com` (confirmed via a
+direct `curl` attempt — `connect_rejected`, same restriction noted
+elsewhere in this file for the Waitlist page's Google Apps Script), and
+this session has no Supabase credentials or push access to the backend
+repo to check the database directly. **Flagged as a real, likely
+blocker for the backend team to check**: confirm migration
+`030_book_links.sql` has actually been run against the production
+database (e.g. via the Supabase dashboard's table list, or a fresh
+`POST /book-links` test once confirmed) — the frontend's own request
+shape and validation are confirmed correct, so if the submit still fails
+after the language-dropdown fix above, this migration is the next thing
+to check, not another frontend change.
+
+**Verified working, the parts this session could verify** (same local
+mock backend, extended to ignore the value of `language` beyond the
+existing type check — it already accepted any string): selecting a
+language from the dropdown and saving a translation link shows the real
+friendly label ("Spanish"), not the raw code, in both the link row and
+the target project's incoming-links list; a legacy/unknown language code
+seeded directly against the mock (simulating a value saved before this
+dropdown existed) still shows up as a selectable option, labeled with its
+own raw code as a fallback, rather than being silently dropped; clicking
+Save with no language selected shows a real "Select a language." inline
+error and never attempts a submit. `tsc --noEmit`, `eslint`, and
+`npm run build` all clean.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance
