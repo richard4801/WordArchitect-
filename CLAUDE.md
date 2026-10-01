@@ -4659,6 +4659,119 @@ once; clicking either listed entry navigates to the real linked
 project. Zero console errors across the full pass. `tsc --noEmit`,
 `eslint`, and `npm run build` all clean.
 
+**`/projects` list now folds a derived book under its original, instead
+of showing it as its own independent card — and a separate, real bug in
+"which project is the last one you were working in" was found and fixed
+in the same pass.** Two distinct asks from the same user message: (1) a
+project with its own outgoing `sequel_of`/`translation_of` link shouldn't
+clutter the `/projects` list as a second top-level card — it belongs
+nested under its original, the way the Overview tab's own `LinkedBooksCard`
+already names the relationship rather than listing every book flat; (2)
+the Dashboard's "Continue Writing" card (and, it turned out, every
+top-level workspace redirect — `/writing`, `/characters`, `/worldbuilding`,
+`/notes`, `/outlines`, `/assistant`) was reported as always opening the
+most recently *created* project, never whichever one was actually last
+worked in — explicitly fine to leave alone on the Dashboard itself (a
+linked book showing there is fine if it's genuinely the last one worked
+on), but the underlying selection bug needed fixing everywhere it
+appeared, not just conceptually scoped to Projects vs. Dashboard.
+
+- **The real bug, confirmed by reading every call site**: all 7 of these
+  "pick the most recently active project" spots used the identical
+  `projects.reduce((a, b) => (b.updatedRank < a.updatedRank ? b : a))`,
+  and `Project.updatedRank` is sorted client-side from the backend's own
+  `books.updated_at` column — which only moves on a direct
+  `PATCH /books/:id` (Edit Project, Target Words). Writing a chapter,
+  adding a character, creating a note, running the Planning Engine, etc.
+  all write to entirely different tables and never touch that column — so
+  in every real case except an explicit project-details edit, "lowest
+  `updatedRank` wins" was silently equivalent to "most recently created,"
+  exactly matching the bug report. This was a real, previously
+  undocumented gap in the "lowest `updatedRank` wins" convention this file
+  itself had described as reliable.
+- **New `src/lib/last-active-project-store.ts`** — a genuinely independent
+  per-browser `localStorage` signal (`recordProjectActivity(bookId)` /
+  `useLastActiveProjectId()` / `pickActiveProject(projects, lastActiveId)`),
+  same tradeoff class as `writing-goal-store.ts`/`getUserId()`: real and
+  user-specific, just not synced across devices, since there's no backend
+  "last active project" concept to ask instead. `pickActiveProject()`
+  prefers the real last-active id (if it still points at a project that
+  exists — it might not, e.g. deleted, or never recorded yet for a
+  brand-new account) and falls back to the old `updatedRank` heuristic
+  otherwise, which is still the only reasonable tie-breaker before any
+  real activity has been tracked.
+- **One choke point records the signal, not every page individually**:
+  `project-store.ts`'s `useProject(id)` is called by essentially every
+  real project-scoped page in the app (confirmed via grep — 18 call
+  sites: Overview/Settings chrome, Chapters, Chapters-Import, Characters,
+  Characters/All/New/Edit, World, World/New-Category, Notes, Outliner,
+  Assistant, Planning's main page + `PlanningWorkspace.tsx`), so a single
+  `useEffect` inside it calling `recordProjectActivity(id)` is real
+  "the writer is actually here" tracking with no changes needed to any
+  individual page. The one accepted false-positive is `/projects/new`'s
+  own `useProject(linkFrom)` call (reading the *originating* project's
+  title for the quick-create banner, §4.11) — harmless, since visiting
+  that banner's own project page moments later would record the same id
+  anyway in the overwhelmingly common case.
+- **All 7 call sites switched from the raw `updatedRank` reduce to
+  `pickActiveProject(projects, useLastActiveProjectId())`**: the
+  Dashboard's `ReturningUserDashboard`, and `writing/page.tsx`,
+  `characters/page.tsx`, `worldbuilding/page.tsx`, `notes/page.tsx`,
+  `outlines/page.tsx`, `assistant/page.tsx` (all 6 top-level workspace
+  redirects). A real React Compiler lint catch along the way: the hook's
+  first draft called `setState` synchronously in a bare `useEffect` body
+  (`react-hooks/set-state-in-effect`) — fixed with the same "defer into a
+  callback" shape the Planning Engine's own `localStorage` fallback
+  (`getStoredRunId`/`storeRunId`) already established, via a
+  `window.setTimeout(..., 0)` rather than calling `setId()` directly in
+  the effect.
+- **Folding, on `/projects` only — confirmed scoped there, not applied to
+  the Dashboard**, per the user's own explicit carve-out. New
+  `useOutgoingLinksByBook(bookIds)` in `book-links-store.ts` — a second,
+  independent cache from the file's existing "single current book"
+  pattern (that one is scoped to whichever project's own Settings tab is
+  open; this one needs many books' own outgoing links live
+  simultaneously), using the same Map-keyed-cache + module-level-
+  version-counter + `useSyncExternalStore`/`useMemo` shape
+  `manuscript-store.ts`'s `useTotalWordCount` already established, for the
+  same reference-stability reason. Reuses the existing
+  `GET /book-links?bookId=` endpoint — there's no bulk "every book's links
+  in one call" route on the backend, so this is one real request per
+  currently-visible project, the same "accepted per-visible-project fetch
+  cost" tradeoff §5.6 already documents for this exact page's chapter/word
+  counts.
+- **Folding logic, in `projects/page.tsx`**: for every project in the
+  already-filtered/sorted `filtered` list, if it has a real outgoing link
+  AND that link's target (`to_book_id`) is *also* present in `filtered`,
+  it's folded — removed from the top-level list and recorded under its
+  parent in a `childrenByParent` map; otherwise it stays top-level. This
+  specifically means a derived book whose original got filtered out by
+  status/genre/search (or simply doesn't exist, e.g. deleted) never just
+  vanishes with no way to find it — it re-appears as its own top-level
+  card the instant its parent drops out of view. Pagination
+  (`totalPages`/`pageItems`/`PaginationFooter`'s `total`) now operates on
+  the folded `topLevel` list, not the raw `filtered` one, so the "Showing
+  X to Y of Z projects" count reflects real top-level cards. `ProjectRow`
+  renders each folded child as a small linked row (title + the same
+  `relationshipLabel()` badge — "sequel" / "translation (Spanish)" — the
+  Overview tab's `LinkedBooksCard` and Settings already use) below its
+  parent's usual content.
+
+**Verified working** (Playwright, against the local mock backend): created
+three projects (A, then B, then C, in that order — C is "most recently
+created"), then actually visited A's Characters workspace; confirmed
+`localStorage` recorded A as last-active; confirmed the Dashboard's
+Continue Writing card and the `/writing`/`/outlines` redirects all
+correctly followed A, not C; visited C's Notes and confirmed `/assistant`
+then correctly switched to following C instead. Separately: linked B as a
+sequel of A, reloaded `/projects`, and confirmed A and C both show as
+top-level cards while B does not — B instead appears as a nested row
+under A's card with a real "sequel" badge, and clicking it navigates to
+B's own project page; searching for "Project B" (filtering A, the parent,
+out of the visible set) correctly made B reappear as its own top-level
+card rather than disappearing. Zero console errors across the full pass.
+`tsc --noEmit`, `eslint`, and `npm run build` all clean.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance

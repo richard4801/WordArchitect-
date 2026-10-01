@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
+import { pickActiveProject, useLastActiveProjectId } from "@/lib/last-active-project-store";
 import { useProjects, useProjectsLoadStatus } from "@/lib/project-store";
 
 /**
@@ -15,9 +16,8 @@ export default function NotesRedirectPage() {
   const router = useRouter();
   const projects = useProjects();
   const loadStatus = useProjectsLoadStatus();
-  const mostRecent = projects.length
-    ? projects.reduce((a, b) => (b.updatedRank < a.updatedRank ? b : a))
-    : undefined;
+  const lastActiveId = useLastActiveProjectId();
+  const mostRecent = projects.length ? pickActiveProject(projects, lastActiveId) : undefined;
 
   useEffect(() => {
     if (mostRecent) router.replace(`/projects/${mostRecent.id}/notes`);

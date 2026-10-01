@@ -23,6 +23,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { apiFetch, getUserId } from "@/lib/api-client";
 import { logActivity } from "@/lib/activity-log-store";
+import { recordProjectActivity } from "@/lib/last-active-project-store";
 import type { Project, ProjectStatus } from "@/lib/projects-data";
 
 export type LoadStatus = "idle" | "loading" | "loaded" | "error";
@@ -198,9 +199,19 @@ export function useProjectsError(): string | null {
   return useSyncExternalStore(subscribe, getErrorSnapshot, getErrorSnapshot);
 }
 
-/** Live lookup of a single project by id, from the already-loaded list. */
+/**
+ * Live lookup of a single project by id, from the already-loaded list.
+ * Every real project-scoped page (Overview, Chapters, Characters, World,
+ * Notes, Outliner, Assistant, Planning, Settings) calls this with the
+ * route's own `[id]`, so it's also the one shared place to record "the
+ * writer is actually here" for `last-active-project-store.ts` — see that
+ * file for why this is real tracking and not just reusing `updatedRank`.
+ */
 export function useProject(id: string | undefined): Project | undefined {
   const list = useProjects();
+  useEffect(() => {
+    if (id) recordProjectActivity(id);
+  }, [id]);
   return list.find((p) => p.id === id);
 }
 

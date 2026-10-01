@@ -40,6 +40,7 @@ import {
   useWeeklyWordsWritten,
   useWritingStreak,
 } from "@/lib/daily-progress-store";
+import { useLastActiveProjectId, pickActiveProject } from "@/lib/last-active-project-store";
 import { useManuscript, useManuscriptWordCount } from "@/lib/manuscript-store";
 import { useProjects, useProjectsError, useProjectsLoadStatus } from "@/lib/project-store";
 import { useWritingGoals } from "@/lib/writing-goal-store";
@@ -111,9 +112,14 @@ function DashboardPageInner() {
 /* ======================================================================= */
 
 function ReturningUserDashboard({ projects }: { projects: Project[] }) {
-  // Same "most recently active" convention as the top-level workspace
-  // redirect pages (/writing, /characters, etc.) — lowest updatedRank wins.
-  const activeProject = projects.reduce((a, b) => (b.updatedRank < a.updatedRank ? b : a));
+  // The real "which project was I last working in" signal — not just
+  // whichever one `updatedRank` (the backend's own books.updated_at)
+  // happens to rank first, which only moves on an explicit project-detail
+  // edit and otherwise silently defaults to "most recently created." Same
+  // convention the top-level workspace redirect pages (/writing,
+  // /characters, etc.) now use too — see last-active-project-store.ts.
+  const lastActiveId = useLastActiveProjectId();
+  const activeProject = pickActiveProject(projects, lastActiveId);
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-6">

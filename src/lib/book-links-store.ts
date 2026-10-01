@@ -21,7 +21,7 @@
  * `banned-terms-store.ts`/`notes-store.ts` — only one project's own links
  * are ever shown at once (its Settings tab).
  */
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { apiFetch } from "@/lib/api-client";
 
 export type LoadStatus = "idle" | "loading" | "loaded" | "error";
@@ -137,4 +137,87 @@ export async function deleteBookLink(id: string): Promise<void> {
     incoming: data.incoming.filter((l) => l.id !== id),
   };
   emit();
+}
+
+// ---------------------------------------------------------------------
+// Bulk outgoing-link lookup — for the /projects list, which needs to know
+// (across every currently-visible project at once) which ones are derived
+// books that should fold under their original rather than show as their
+// own top-level card. Deliberately a separate cache from the single
+// "current book" one above: that one is scoped to whichever project's own
+// Settings tab is open; this one needs many books' own outgoing links live
+// simultaneously, the same "many keys at once" shape manuscript-store.ts's
+// Map-keyed chapter-list/word-count caches already established (as opposed
+// to the single-current-book pattern this file's own doc comment
+// describes). Reuses the same GET /book-links?bookId= endpoint — there's
+// no bulk "every book's links in one call" route on the backend, so this
+// is one real request per visible project, the same "accepted per-visible-
+// project fetch cost" tradeoff §5.6 already documents for chapter/word
+// counts on this exact page.
+// ---------------------------------------------------------------------
+
+type BulkEntry = { status: LoadStatus; outgoing: BookLinkRow[] };
+const bulkCache = new Map<string, BulkEntry>();
+let bulkVersion = 0;
+const bulkListeners = new Set<() => void>();
+function emitBulk(): void {
+  bulkVersion++;
+  for (const l of bulkListeners) l();
+}
+function subscribeBulk(l: () => void): () => void {
+  bulkListeners.add(l);
+  return () => bulkListeners.delete(l);
+}
+function getBulkVersion(): number {
+  return bulkVersion;
+}
+
+function getBulkEntry(bookId: string): BulkEntry {
+  let entry = bulkCache.get(bookId);
+  if (!entry) {
+    entry = { status: "idle", outgoing: [] };
+    bulkCache.set(bookId, entry);
+  }
+  return entry;
+}
+
+async function loadBulkOutgoing(bookId: string): Promise<void> {
+  bulkCache.set(bookId, { status: "loading", outgoing: getBulkEntry(bookId).outgoing });
+  emitBulk();
+  try {
+    const res = await apiFetch<BookLinksData>(`/book-links?bookId=${encodeURIComponent(bookId)}`);
+    bulkCache.set(bookId, { status: "loaded", outgoing: res.outgoing ?? [] });
+  } catch {
+    bulkCache.set(bookId, { status: "error", outgoing: [] });
+  }
+  emitBulk();
+}
+
+/**
+ * Every outgoing link (if any — almost always zero or one, per the
+ * `UNIQUE(from_book_id, link_type)` constraint per type) for each of the
+ * given book ids, keyed by book id. `bookIds` should be whatever set of
+ * projects is actually visible at once (e.g. the /projects list's current
+ * filtered/sorted result) — fetches lazily per id, cached thereafter.
+ */
+export function useOutgoingLinksByBook(bookIds: string[]): Map<string, BookLinkRow[]> {
+  const key = bookIds.join(",");
+  useEffect(() => {
+    for (const id of bookIds) {
+      if (getBulkEntry(id).status === "idle") void loadBulkOutgoing(id);
+    }
+    // key is the intentional dep — bookIds itself is a fresh array each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  const storeVersion = useSyncExternalStore(subscribeBulk, getBulkVersion, getBulkVersion);
+
+  return useMemo(() => {
+    const map = new Map<string, BookLinkRow[]>();
+    for (const id of bookIds) {
+      map.set(id, getBulkEntry(id).outgoing);
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, storeVersion]);
 }

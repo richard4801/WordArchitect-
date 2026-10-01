@@ -36,6 +36,8 @@ import {
 } from "@/lib/projects-data";
 import { deleteProject, useProjects, useProjectsError, useProjectsLoadStatus } from "@/lib/project-store";
 import { useChapterCount, useManuscriptWordCount, useTotalWordCount } from "@/lib/manuscript-store";
+import { relationshipLabel } from "@/lib/book-links-data";
+import { type BookLinkRow, useOutgoingLinksByBook } from "@/lib/book-links-store";
 
 const PER_PAGE = 6;
 type StatusFilter = "all" | ProjectStatus;
@@ -100,9 +102,33 @@ export default function ProjectsPage() {
     return sorted;
   }, [projects, statusFilter, genreFilter, search, sort]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
+  // A derived book (its own outgoing sequel_of/translation_of link) folds
+  // under its original's card instead of showing as an independent
+  // top-level project — but only when that original is ALSO present in
+  // the current filtered/sorted view. If the original got filtered out by
+  // status/genre/search, the derived book stays top-level instead of
+  // disappearing with no way to find it.
+  const filteredIds = useMemo(() => filtered.map((p) => p.id), [filtered]);
+  const outgoingByBook = useOutgoingLinksByBook(filteredIds);
+  const { topLevel, childrenByParent } = useMemo(() => {
+    const idSet = new Set(filteredIds);
+    const childrenByParent = new Map<string, { project: Project; link: BookLinkRow }[]>();
+    const foldedIds = new Set<string>();
+    for (const project of filtered) {
+      const [link] = outgoingByBook.get(project.id) ?? [];
+      if (link && idSet.has(link.to_book_id)) {
+        foldedIds.add(project.id);
+        const siblings = childrenByParent.get(link.to_book_id) ?? [];
+        siblings.push({ project, link });
+        childrenByParent.set(link.to_book_id, siblings);
+      }
+    }
+    return { topLevel: filtered.filter((p) => !foldedIds.has(p.id)), childrenByParent };
+  }, [filtered, filteredIds, outgoingByBook]);
+
+  const totalPages = Math.max(1, Math.ceil(topLevel.length / PER_PAGE));
   const currentPage = Math.min(page, totalPages);
-  const pageItems = filtered.slice(
+  const pageItems = topLevel.slice(
     (currentPage - 1) * PER_PAGE,
     currentPage * PER_PAGE,
   );
@@ -211,15 +237,19 @@ export default function ProjectsPage() {
             </div>
           ) : (
             pageItems.map((project) => (
-              <ProjectRow key={project.id} project={project} />
+              <ProjectRow
+                key={project.id}
+                project={project}
+                linkedChildren={childrenByParent.get(project.id) ?? []}
+              />
             ))
           )}
 
-          {filtered.length > 0 && (
+          {topLevel.length > 0 && (
             <PaginationFooter
               page={currentPage}
               totalPages={totalPages}
-              total={filtered.length}
+              total={topLevel.length}
               perPage={PER_PAGE}
               onPage={setPage}
             />
@@ -254,7 +284,13 @@ const STATUS_BADGE: Record<string, { label: string; varName: string }> = {
   archived: { label: "ARCHIVED", varName: "--low" },
 };
 
-function ProjectRow({ project }: { project: Project }) {
+function ProjectRow({
+  project,
+  linkedChildren,
+}: {
+  project: Project;
+  linkedChildren: { project: Project; link: BookLinkRow }[];
+}) {
   const chapters = useChapterCount(project.id);
   const { total: words } = useManuscriptWordCount(project.id);
   const percent = project.target > 0 ? Math.round((words / project.target) * 100) : 0;
@@ -332,6 +368,23 @@ function ProjectRow({ project }: { project: Project }) {
           </div>
         </div>
       </div>
+
+      {linkedChildren.length > 0 && (
+        <div className="mt-3 space-y-1 border-t border-line pt-3">
+          {linkedChildren.map(({ project: child, link }) => (
+            <Link
+              key={child.id}
+              href={`/projects/${child.id}`}
+              className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-xs text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+            >
+              <span className="truncate">{child.title}</span>
+              <span className="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[0.65rem] text-ink-faint">
+                {relationshipLabel(link)}
+              </span>
+            </Link>
+          ))}
+        </div>
+      )}
 
       {confirmingDelete && (
         <ConfirmDialog
