@@ -1,12 +1,14 @@
 "use client";
 
-import { ArrowRight, CheckCircle2, Circle, Globe2, PenLine, User, Plus } from "lucide-react";
+import { ArrowRight, BookCopy, CheckCircle2, Circle, Globe2, PenLine, User, Plus } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { CoverArt } from "@/components/ui/cover-art";
 import { Ring } from "@/components/ui/ring";
+import { languageLabel, relationshipLabel } from "@/lib/book-links-data";
+import { useBookLinks } from "@/lib/book-links-store";
 import { useChapterCount, useManuscript, useManuscriptWordCount } from "@/lib/manuscript-store";
-import { useProject } from "@/lib/project-store";
+import { useProject, useProjects } from "@/lib/project-store";
 import { deriveRecentActivity, type ProjectActivityKind } from "@/lib/projects-data";
 
 const ACTIVITY_ICON: Record<ProjectActivityKind, typeof PenLine> = {
@@ -68,6 +70,8 @@ export default function ProjectOverviewPage() {
           </div>
         </div>
       </section>
+
+      <LinkedBooksCard bookId={project.id} />
 
       {/* Manuscript Progress */}
       <section className="card p-5 sm:p-6">
@@ -179,6 +183,61 @@ export default function ProjectOverviewPage() {
         </section>
       </div>
     </>
+  );
+}
+
+/**
+ * Read-only summary of this project's sequel/translation relationships —
+ * surfaced right on Overview (where opening a project actually lands),
+ * not buried on the Settings tab where the Add/Change/Remove management
+ * UI lives. Renders nothing for an unlinked project (nothing to show);
+ * once linked, every relationship shows here, including several incoming
+ * links at once (e.g. multiple translations of this same original book),
+ * each a real link to that project.
+ */
+function LinkedBooksCard({ bookId }: { bookId: string }) {
+  const { outgoing, incoming } = useBookLinks(bookId);
+  const projects = useProjects();
+
+  if (outgoing.length === 0 && incoming.length === 0) return null;
+
+  function titleFor(id: string): string {
+    return projects.find((p) => p.id === id)?.title ?? "Unknown project";
+  }
+
+  return (
+    <section className="card p-5 sm:p-6">
+      <div className="flex items-center justify-between">
+        <h2 className="flex items-center gap-2 font-display text-lg text-ink">
+          <BookCopy className="size-4 text-gold" />
+          Linked Books
+        </h2>
+        <Link href={`/projects/${bookId}/settings`} className="text-xs text-gold hover:opacity-80">
+          Manage
+        </Link>
+      </div>
+      <ul className="mt-3 divide-y divide-line">
+        {outgoing.map((l) => (
+          <li key={l.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+            <span className="shrink-0 text-ink-faint">
+              {l.link_type === "sequel_of" ? "Sequel of" : l.link_type === "translation_of" ? "Translation of" : l.link_type}
+            </span>
+            <Link href={`/projects/${l.to_book_id}`} className="min-w-0 truncate text-right text-ink hover:text-gold">
+              {titleFor(l.to_book_id)}
+              {l.language && <span className="text-ink-faint"> · {languageLabel(l.language)}</span>}
+            </Link>
+          </li>
+        ))}
+        {incoming.map((l) => (
+          <li key={l.id} className="py-2.5 text-sm text-ink-muted">
+            <Link href={`/projects/${l.from_book_id}`} className="text-ink hover:text-gold">
+              {titleFor(l.from_book_id)}
+            </Link>{" "}
+            is a {relationshipLabel(l)} of this project.
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

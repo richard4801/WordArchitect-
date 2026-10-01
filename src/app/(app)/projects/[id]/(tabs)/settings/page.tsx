@@ -1,62 +1,14 @@
 "use client";
 
-import { Loader2, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useMemo, useState } from "react";
-import { createPortal } from "react-dom";
+import { useState } from "react";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { DropdownSelect } from "@/components/ui/dropdown-select";
-import { ApiError } from "@/lib/api-client";
-import {
-  type BookLinkRow,
-  createBookLink,
-  deleteBookLink,
-  useBookLinks,
-  useBookLinksLoadStatus,
-} from "@/lib/book-links-store";
+import { LinkBookModal } from "@/components/link-book-modal";
+import { LINK_TYPES, languageLabel, relationshipLabel, type LinkType } from "@/lib/book-links-data";
+import { type BookLinkRow, deleteBookLink, useBookLinks, useBookLinksLoadStatus } from "@/lib/book-links-store";
 import { useProject, useProjects } from "@/lib/project-store";
-
-type LinkType = "sequel_of" | "translation_of";
-
-const LINK_TYPES: { type: LinkType; label: string; description: string }[] = [
-  { type: "sequel_of", label: "Sequel of", description: "This project continues another one you've already written." },
-  { type: "translation_of", label: "Translation of", description: "This project is a translation of another one." },
-];
-
-// `language` is a free-text VARCHAR(50) on the backend (see
-// 030_book_links.sql — "only meaningful for translation_of, e.g. \"es\"")
-// — no server-side enum, so this list is a frontend-only convenience, same
-// "dropdown instead of typo-prone free text" convention the Planning
-// Engine's MODEL_OPTIONS already established. Codes are real ISO 639-1
-// (plus the two common regional variants), since that's what the backend
-// actually expects — a plain language name like "Spanish"/"Espaniol" isn't
-// a real code and would save as meaningless free text.
-const LANGUAGE_OPTIONS: { code: string; label: string }[] = [
-  { code: "es", label: "Spanish" },
-  { code: "fr", label: "French" },
-  { code: "de", label: "German" },
-  { code: "it", label: "Italian" },
-  { code: "pt", label: "Portuguese" },
-  { code: "pt-BR", label: "Portuguese (Brazil)" },
-  { code: "ja", label: "Japanese" },
-  { code: "ko", label: "Korean" },
-  { code: "zh", label: "Chinese (Simplified)" },
-  { code: "zh-TW", label: "Chinese (Traditional)" },
-  { code: "ru", label: "Russian" },
-  { code: "ar", label: "Arabic" },
-  { code: "hi", label: "Hindi" },
-  { code: "nl", label: "Dutch" },
-  { code: "pl", label: "Polish" },
-  { code: "tr", label: "Turkish" },
-  { code: "vi", label: "Vietnamese" },
-  { code: "id", label: "Indonesian" },
-  { code: "th", label: "Thai" },
-  { code: "sv", label: "Swedish" },
-];
-
-function languageLabel(code: string): string {
-  return LANGUAGE_OPTIONS.find((l) => l.code === code)?.label ?? code;
-}
 
 export default function Page() {
   const { id } = useParams<{ id: string }>();
@@ -69,12 +21,6 @@ export default function Page() {
       <BookLinksSection bookId={project.id} />
     </div>
   );
-}
-
-function relationshipLabel(l: BookLinkRow): string {
-  if (l.link_type === "sequel_of") return "sequel";
-  if (l.link_type === "translation_of") return `translation${l.language ? ` (${languageLabel(l.language)})` : ""}`;
-  return l.link_type;
 }
 
 function BookLinksSection({ bookId }: { bookId: string }) {
@@ -116,6 +62,20 @@ function BookLinksSection({ bookId }: { bookId: string }) {
                 )}
               </div>
               <div className="flex shrink-0 items-center gap-2">
+                {/* Quick-create: skip the "pick from existing projects" step
+                    entirely when the other book doesn't exist yet — lands on
+                    /projects/new, which shows this same link popup right
+                    after creation instead of requiring a separate trip back
+                    here afterward. Only offered when nothing's linked yet;
+                    "Change" already covers retargeting an existing link. */}
+                {!existing && (
+                  <Link
+                    href={`/projects/new?linkFrom=${bookId}&linkType=${type}`}
+                    className="hidden text-xs text-ink-faint underline-offset-2 transition-colors hover:text-ink hover:underline sm:inline"
+                  >
+                    New project
+                  </Link>
+                )}
                 <button
                   type="button"
                   onClick={() => setEditingType(type)}
@@ -174,163 +134,5 @@ function BookLinksSection({ bookId }: { bookId: string }) {
         />
       )}
     </section>
-  );
-}
-
-function LinkBookModal({
-  bookId,
-  linkType,
-  existing,
-  onClose,
-}: {
-  bookId: string;
-  linkType: LinkType;
-  existing: BookLinkRow | null;
-  onClose: () => void;
-}) {
-  const projects = useProjects();
-  const otherProjects = useMemo(() => projects.filter((p) => p.id !== bookId), [projects, bookId]);
-
-  function labelFor(id: string): string {
-    const p = otherProjects.find((x) => x.id === id);
-    if (!p) return "";
-    // Disambiguate same-titled projects ("Untitled Project" is a common one
-    // early on) rather than risk linking to the wrong one — same convention
-    // as the Planning Engine's own "Copy prompts from another project" picker.
-    const dupes = otherProjects.filter((x) => x.title === p.title);
-    return dupes.length > 1 ? `${p.title} (${p.id.slice(0, 8)})` : p.title;
-  }
-
-  const [selectedId, setSelectedId] = useState(existing?.to_book_id ?? otherProjects[0]?.id ?? "");
-  const [language, setLanguage] = useState(existing?.language ?? "");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Fold in whatever this link's own saved `language` already is, in case
-  // it's a legacy free-text value from before this was a dropdown — same
-  // "don't hide real data behind a fixed list" convention the Planning
-  // Engine's own Model dropdown uses for `modelOptions`.
-  const languageOptions = useMemo(() => {
-    const codes = LANGUAGE_OPTIONS.map((l) => l.code);
-    if (existing?.language && !codes.includes(existing.language)) codes.push(existing.language);
-    return codes;
-  }, [existing]);
-
-  async function handleSubmit() {
-    if (!selectedId) return;
-    if (linkType === "translation_of" && !language) {
-      setError("Select a language.");
-      return;
-    }
-    setSubmitting(true);
-    setError(null);
-    try {
-      // No PATCH endpoint exists for book links — "change" is delete the
-      // existing link, then create the new one, per the backend's own 409
-      // error text ("delete the existing one first if you want to change
-      // it").
-      if (existing) await deleteBookLink(existing.id);
-      await createBookLink({
-        fromBookId: bookId,
-        toBookId: selectedId,
-        linkType,
-        language: linkType === "translation_of" ? language : null,
-      });
-      onClose();
-    } catch (err) {
-      setError(
-        err instanceof ApiError && err.status === 409
-          ? "That link already exists — try again to replace it."
-          : err instanceof Error
-            ? err.message
-            : "Couldn't save this link.",
-      );
-      setSubmitting(false);
-    }
-  }
-
-  if (typeof document === "undefined") return null;
-
-  return (
-    <ModalPortal>
-      <h2 className="font-display text-lg text-ink">
-        {existing ? "Change" : "Add"} {linkType === "sequel_of" ? "Sequel" : "Translation"} Link
-      </h2>
-      <p className="mt-1 text-xs text-ink-muted">
-        {linkType === "sequel_of"
-          ? "Pick the project this one continues."
-          : "Pick the project this one is a translation of, and its language."}
-      </p>
-
-      {otherProjects.length === 0 ? (
-        <p className="mt-4 text-sm text-ink-faint">You don&rsquo;t have any other projects to link to yet.</p>
-      ) : (
-        <>
-          <div className="mt-4">
-            <label className="text-sm text-ink">Project</label>
-            <DropdownSelect
-              value={labelFor(selectedId)}
-              onChange={(label) => {
-                const match = otherProjects.find((p) => labelFor(p.id) === label);
-                if (match) setSelectedId(match.id);
-              }}
-              options={otherProjects.map((p) => labelFor(p.id))}
-              placeholder="Select a project"
-              className="mt-1.5"
-            />
-          </div>
-
-          {linkType === "translation_of" && (
-            <div className="mt-3">
-              <label className="text-sm text-ink">Language</label>
-              <DropdownSelect
-                value={language ? languageLabel(language) : ""}
-                onChange={(label) => {
-                  const match = languageOptions.find((code) => languageLabel(code) === label);
-                  if (match) setLanguage(match);
-                }}
-                options={languageOptions.map(languageLabel)}
-                placeholder="Select a language"
-                className="mt-1.5"
-              />
-            </div>
-          )}
-
-          {error && <p className="mt-3 text-xs text-danger">{error}</p>}
-        </>
-      )}
-
-      <div className="mt-5 flex items-center justify-end gap-3">
-        <button type="button" onClick={onClose} disabled={submitting} className="text-sm text-ink-muted transition-colors hover:text-ink disabled:opacity-60">
-          Cancel
-        </button>
-        <button
-          type="button"
-          onClick={handleSubmit}
-          disabled={submitting || !selectedId}
-          className="inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
-          {submitting && <Loader2 className="size-4 animate-spin" />}
-          Save
-        </button>
-      </div>
-    </ModalPortal>
-  );
-}
-
-function ModalPortal({ children }: { children: React.ReactNode }) {
-  if (typeof document === "undefined") return null;
-  // z-30, not the z-[60] other one-off modals in this app use — this one
-  // nests a DropdownSelect, whose own panel/close-overlay (both portaled
-  // separately to document.body, see dropdown-select.tsx) render at
-  // z-50/z-40. A z-60 backdrop would paint on top of both, silently
-  // intercepting every click aimed at the open dropdown panel — reproduced
-  // directly while building this. z-30 still sits above the sidebar (z-20)
-  // and ordinary page content, but stays under the dropdown's own stack.
-  return createPortal(
-    <div className="fixed inset-0 z-30 grid place-items-center bg-canvas/70 p-4 backdrop-blur-sm" onClick={(e) => e.stopPropagation()}>
-      <div className="card w-full max-w-sm p-5">{children}</div>
-    </div>,
-    document.body,
   );
 }

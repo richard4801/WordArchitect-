@@ -4573,6 +4573,92 @@ Save with no language selected shows a real "Select a language." inline
 error and never attempts a submit. `tsc --noEmit`, `eslint`, and
 `npm run build` all clean.
 
+**Linked books surfaced on Overview (not just buried in Settings), and a
+quick-create flow that skips the Settings round-trip entirely.** Two
+user asks: book links needed to be visible on the page a project
+actually opens to, not only on its Settings tab — especially once a
+project has several of them (e.g. more than one translation linking
+into the same original); and creating the *other* half of a link
+shouldn't mean creating the new project first, then having to go find
+Settings again afterward just to connect it.
+
+- **Shared components, not copy-pasted logic.** `LinkBookModal` (the
+  Add/Change popup) moved out of `settings/page.tsx` into
+  `src/components/link-book-modal.tsx`, and the small data/formatting
+  helpers (`LinkType`, `LINK_TYPES`, `LANGUAGE_OPTIONS`/`languageLabel()`,
+  `relationshipLabel()`) moved into a new `src/lib/book-links-data.ts` —
+  both the Settings management card and the New Project flow below now
+  import the same code rather than each carrying its own copy.
+- **`LinkedBooksCard`** (`(tabs)/page.tsx`, the Overview tab) is a
+  read-only summary, deliberately not a second place to Add/Change/
+  Remove — that stays exclusively on Settings. Calls `useBookLinks(bookId)`
+  directly and renders **nothing** when both `outgoing`/`incoming` are
+  empty (an unlinked project's Overview is pixel-identical to before —
+  matches the explicit "if it's not linked, it's fine the way it is"
+  ask), so this never shows an empty card or an "Add" affordance.
+  Lists every relationship at once when linked — every outgoing link
+  ("Sequel of"/"Translation of" + the real target + language) **and**
+  every incoming one, each its own list row with a real link to that
+  project. This is the concrete fix for "if a book has multiple linked
+  books, it should be visible": `UNIQUE(from_book_id, link_type)` caps a
+  book's own *outgoing* links at one per type (§4.11's main entry), but
+  nothing caps how many *other* books can link *into* it (e.g. three
+  different projects each translating the same original, each its own
+  row's `to_book_id`) — verified directly by seeding two unrelated
+  incoming links (a translation from one book, a sequel from a
+  completely different one) and confirming both rows render together.
+- **Quick-create, wired through `/projects/new`'s existing form, not a
+  second creation flow.** Each unlinked row in Settings' Book Links card
+  gained a small "New project" text link alongside "Add" — 
+  `/projects/new?linkFrom=<bookId>&linkType=sequel_of|translation_of`.
+  `NewProjectPage` reads those two query params via `useSearchParams()`;
+  present, a banner above the form names the real originating project
+  ("Creating a translation of \"X\" — you'll confirm the link right
+  after this project is created."), and `handleSubmit`'s success branch
+  holds off its usual `router.push` and instead renders the exact same
+  `LinkBookModal` used on Settings, scoped to the newly-created project
+  as `bookId`. **The modal needed one small addition to behave correctly
+  here**: a new optional `defaultToBookId` prop pre-selects the
+  originating project as the link target on a fresh Add (passed as
+  `linkFrom`) — without it, the modal's own existing fallback
+  (`existing?.to_book_id ?? otherProjects[0]?.id`) would default to
+  whichever project happens to sort first, not the one the writer
+  actually came from, silently making this flow link to the wrong book
+  on a careless Save. Saving (or Cancelling, which skips linking but
+  still finishes the flow) both land on the new project's own page —
+  never back on the Settings tab the writer never had to visit.
+- **A real test-locator trap worth remembering, not an app bug**: the
+  New Project form has its own unrelated "Language" field (the new
+  project's prose language, a plain `SelectField`), so an unscoped
+  `label:has-text("Language")` lookup matches two labels on this page
+  at once once the link modal is open — the first Playwright pass
+  against this feature clicked straight through the modal's own backdrop
+  onto the hidden-behind-it main-form dropdown, read as a confusing
+  "element intercepts pointer events" failure alternating between two
+  different ancestors. Fixed by scoping the test to the modal's own
+  `div.fixed.inset-0.z-30` container — the app's own markup was already
+  correct; this was purely a verification-script mistake, called out
+  here so the next person debugging a similar "intercepts pointer
+  events" failure on this page checks for an unscoped locator before
+  assuming a real stacking bug.
+
+**Verified working** (same local mock backend as the rest of this
+section): a freshly created, unlinked project's Overview shows no
+"Linked Books" card at all; from Settings, clicking "New project" next
+to the Translation-of row navigates to `/projects/new` with the real
+banner naming the originating project; creating the new project there
+shows the Add Translation Link popup immediately, pre-selected to that
+same originating project (not an arbitrary other one); picking a
+language and saving creates the real link and lands on the *new*
+project's own page (confirmed, not Settings); that new project's own
+Overview now shows "Linked Books" with the real target and language;
+seeding a second, unrelated incoming link (a different project's own
+sequel-of link into the same original) and reloading the original
+project's Overview shows **both** incoming relationships listed at
+once; clicking either listed entry navigates to the real linked
+project. Zero console errors across the full pass. `tsc --noEmit`,
+`eslint`, and `npm run build` all clean.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance
@@ -5038,9 +5124,9 @@ export interface AiProvider {
 ```
 /                                            Dashboard — Project[] (live) + dashboard-data.ts mock (§4.9)
 /projects                                    Project[] (live)
-/projects/new                                submits NewProjectInput
+/projects/new                                submits NewProjectInput; optional ?linkFrom=&linkType= shows the Add Link popup right after creation (§4.11)
 /projects/[id]                               Project detail chrome (10-tab nav), Edit Project modal (updateProject)
-/projects/[id]                (Overview tab) Project + real ManuscriptPart[]/word counts (§5.6) + deriveRecentActivity
+/projects/[id]                (Overview tab) Project + real ManuscriptPart[]/word counts (§5.6) + deriveRecentActivity + BookLinkRow[] summary when linked (§4.11)
 /projects/[id]/analytics                     stub — <ComingSoon>, no data model
 /projects/[id]/settings                      BookLinkRow[] (live, §4.11) — Book Links card only; Analytics/other settings still stubbed
 /projects/[id]/chapters                      ManuscriptPart[] (live) + ChapterBody (live) + CommentThread[] (mock) (§4.5/§5) + BannedTermRow[] (live, §4.6) + ChatSessionRow[]/ChatMessage[] (live, AI tab, §4.7) + OutlineBeat[] (live read-only, Outline tab, §4.8)

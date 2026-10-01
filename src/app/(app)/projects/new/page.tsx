@@ -27,10 +27,12 @@ import {
   Users,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { DropdownSelect, MultiSelectDropdown } from "@/components/ui/dropdown-select";
+import { LinkBookModal } from "@/components/link-book-modal";
 import { useRef, useState } from "react";
-import { createProject } from "@/lib/project-store";
+import type { LinkType } from "@/lib/book-links-data";
+import { createProject, useProject } from "@/lib/project-store";
 
 // Exported for reuse by EditProjectModal (src/components/edit-project-modal.tsx)
 // so an edit uses the exact same genre/POV/tense vocabulary as creation.
@@ -108,6 +110,20 @@ const WHATS_INCLUDED = [
 
 export default function NewProjectPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Set when this page is opened from a project's own "New project" link
+  // next to an unlinked Sequel-of/Translation-of row (Settings tab, or the
+  // Linked Books card) — e.g. /projects/new?linkFrom=<id>&linkType=sequel_of.
+  // Lets the writer create the other half of a link in one flow instead of
+  // creating the project here, then having to find Settings again
+  // afterward just to connect it.
+  const linkFrom = searchParams.get("linkFrom");
+  const linkTypeParam = searchParams.get("linkType");
+  const linkType: LinkType | null =
+    linkTypeParam === "sequel_of" || linkTypeParam === "translation_of" ? linkTypeParam : null;
+  const linkFromProject = useProject(linkFrom ?? undefined);
+  const [createdProjectId, setCreatedProjectId] = useState<string | null>(null);
 
   const [template, setTemplate] = useState<TemplateId>("blank");
   const [title, setTitle] = useState("");
@@ -164,7 +180,16 @@ export default function NewProjectPage() {
         language,
         targetWords: Number(targetWords),
       });
-      router.push(`/projects/${id}`);
+      if (linkFrom && linkType) {
+        // Hold off navigating — show the same Add Link popup Settings uses,
+        // pre-scoped to this new project, instead of sending the writer
+        // straight to the new project and making them find Settings
+        // themselves to finish connecting it.
+        setSubmitting(false);
+        setCreatedProjectId(id);
+      } else {
+        router.push(`/projects/${id}`);
+      }
     } catch (err) {
       setSubmitting(false);
       setSubmitError(err instanceof Error ? err.message : "Couldn't create the project. Try again.");
@@ -185,6 +210,14 @@ export default function NewProjectPage() {
         <h1 className="font-display text-4xl text-ink">New Project</h1>
         <p className="mt-1 text-sm text-ink-muted">Create a new home for your story.</p>
       </div>
+
+      {linkFrom && linkType && (
+        <p className="rounded-xl border border-line bg-surface-2/40 px-4 py-3 text-sm text-ink-muted">
+          Creating a {linkType === "sequel_of" ? "sequel" : "translation"} of{" "}
+          <span className="text-ink">{linkFromProject?.title ?? "that project"}</span> — you&rsquo;ll confirm the
+          link right after this project is created.
+        </p>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_300px] lg:items-start">
         <div className="space-y-6">
@@ -505,6 +538,16 @@ export default function NewProjectPage() {
           </section>
         </aside>
       </div>
+
+      {createdProjectId && linkFrom && linkType && (
+        <LinkBookModal
+          bookId={createdProjectId}
+          linkType={linkType}
+          existing={null}
+          defaultToBookId={linkFrom}
+          onClose={() => router.push(`/projects/${createdProjectId}`)}
+        />
+      )}
     </div>
   );
 }
