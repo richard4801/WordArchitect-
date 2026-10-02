@@ -90,8 +90,8 @@ import {
 import { formatRelativeTime, logActivity } from "@/lib/activity-log-store";
 import { useChapterBeats, type BeatStatus } from "@/lib/outline-store";
 import {
+  reconcileChapterWordCounts,
   recordChapterWordCount,
-  seedChapterBaseline,
   useTodaysWordsWritten,
   useWritingStreak,
 } from "@/lib/daily-progress-store";
@@ -377,13 +377,25 @@ export default function ChaptersPage() {
     setStats(bodyBaseline);
   }
 
-  // Seed this chapter's word-count baseline the moment its body loads —
-  // before any edits happen — so the very first autosave afterward credits
-  // only the words actually typed in this session, not the chapter's whole
-  // pre-existing content (see daily-progress-store.ts's doc comment).
+  // Reconcile this chapter's word-count baseline the moment its body
+  // loads — before any edits happen — so the very first autosave
+  // afterward credits only the words actually typed in this session, not
+  // the chapter's whole pre-existing content. This also doubles as the
+  // "did someone write this via MCP, outside this browser, earlier today"
+  // check: if the chapter's never been seen before AND the backend's own
+  // contentUpdatedAt confirms it was actually touched today, its real
+  // word count gets credited immediately instead of silently vanishing
+  // (see daily-progress-store.ts's reconcileChapterWordCounts).
   useEffect(() => {
-    if (activeChapter && body) seedChapterBaseline(activeChapter.id, bodyBaseline.words);
-  }, [activeChapter, body, bodyBaseline]);
+    if (!activeChapter || !body) return;
+    const credits = reconcileChapterWordCounts({
+      [activeChapter.id]: { words: bodyBaseline.words, contentUpdatedAt: activeChapter.contentUpdatedAt },
+    });
+    if (credits.length > 0 && project) {
+      const delta = credits[0].delta;
+      logActivity("wrote", `Wrote ${delta.toLocaleString()} word${delta === 1 ? "" : "s"} in "${project.title}"`);
+    }
+  }, [activeChapter, body, bodyBaseline, project]);
 
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 

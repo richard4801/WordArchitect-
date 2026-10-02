@@ -38,6 +38,8 @@
 
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { apiFetch, getUserId } from "@/lib/api-client";
+import { logActivity } from "@/lib/activity-log-store";
+import { reconcileChapterWordCounts, type ChapterObservation } from "@/lib/daily-progress-store";
 import type { ChapterParagraph, ManuscriptChapter, ManuscriptPart } from "@/lib/manuscript-data";
 
 export type LoadStatus = "idle" | "loading" | "loaded" | "error";
@@ -563,6 +565,30 @@ function setWordCountEntry(bookId: string, entry: WordCountEntry): void {
   wordCountCache.set(bookId, entry);
 }
 
+/**
+ * Credits/logs any real word-count growth this fetch just observed that
+ * this app didn't already know about — the fix for MCP-driven writing
+ * (a separate Claude session saving chapters directly to the backend,
+ * never touching this app's own autosave) showing up nowhere in the
+ * Dashboard. Called on every real loadWordCount(), not just the editor's
+ * own save path — see daily-progress-store.ts's reconcileChapterWordCounts
+ * for the full reasoning (seed vs. same-day backfill vs. delta credit).
+ */
+function reportExternalWritingActivity(
+  observations: Record<string, ChapterObservation>,
+  indexedBodies: IndexedChapterBody[],
+): void {
+  const credits = reconcileChapterWordCounts(observations);
+  if (credits.length === 0) return;
+  const byId = new Map(indexedBodies.map((b) => [b.id, b]));
+  for (const { chapterId, delta } of credits) {
+    const chapter = byId.get(chapterId);
+    if (!chapter) continue;
+    const words = `${delta.toLocaleString()} word${delta === 1 ? "" : "s"}`;
+    logActivity("wrote", `Wrote ${words} in Chapter ${chapter.number}: "${chapter.title}"`);
+  }
+}
+
 async function loadWordCount(bookId: string): Promise<void> {
   setWordCountEntry(bookId, { ...getWordCountEntry(bookId), status: "loading" });
   emit();
@@ -574,6 +600,7 @@ async function loadWordCount(bookId: string): Promise<void> {
     );
     const perChapter: Record<string, number> = {};
     const indexedBodies: IndexedChapterBody[] = [];
+    const observations: Record<string, ChapterObservation> = {};
     let total = 0;
     for (const body of bodies) {
       const words = body.chapter.paragraphs.reduce((sum, p) => sum + countWords(p.text), 0);
@@ -585,8 +612,10 @@ async function loadWordCount(bookId: string): Promise<void> {
         title: body.chapter.title?.trim() || `Chapter ${body.chapter.number}`,
         paragraphs: body.chapter.paragraphs,
       });
+      observations[body.chapter.id] = { words, contentUpdatedAt: body.chapter.content_updated_at };
     }
     setWordCountEntry(bookId, { perChapter, total, status: "loaded", bodies: indexedBodies });
+    reportExternalWritingActivity(observations, indexedBodies);
   } catch {
     setWordCountEntry(bookId, { ...getWordCountEntry(bookId), status: "error" });
   }

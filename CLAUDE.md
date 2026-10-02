@@ -2427,6 +2427,90 @@ the one field left with no real-data source of any kind, not even a
 localStorage-derivable proxy — there's no session-time tracking anywhere
 in the app.
 
+**Real bug: none of this reflected writing done over MCP — it was
+"static," wired to this one browser's own autosave and nothing else.**
+User report, precisely: sessions/word counts/chapter saves made through an
+MCP-connected Claude session (Hanami drafting, `save_manuscript_scene`,
+or any other tool that writes `manuscript_chapters` directly) never showed
+up on the Dashboard or anywhere else — not Today's Progress, not the
+writing streak, not Recent Activity. Root cause was exactly what the doc
+comment above already implied but didn't go far enough: `recordChapterWordCount`
+is only ever called from this app's own editor autosave
+(`chapters/page.tsx`'s `persistChapter`). An MCP session's own writes land
+in the exact same `manuscript_chapters` rows on the backend, but never
+pass through that one function — so no matter how much real writing
+happened, `daily-progress-store.ts`'s history stayed exactly where this
+browser last left it, and `activity-log-store.ts` never got a single
+entry for it either. This wasn't a display bug — the data behind these
+widgets was genuinely never told the writing happened.
+
+**Fixed by reconciling against the real backend state, not just this
+browser's own save calls.** `useManuscriptWordCount(bookId)`
+(`manuscript-store.ts`) already does a real fetch of every chapter's
+actual current body/word count for a book — that's what backs the
+Dashboard's Continue Writing card, `/projects`, and the Overview tab.
+New `reconcileChapterWordCounts(observations)` in `daily-progress-store.ts`
+is called every time that fetch completes (`loadWordCount`'s own
+`reportExternalWritingActivity` helper in `manuscript-store.ts`), not just
+from the editor's autosave path — so any chapter whose real word count has
+grown past whatever this store last knew about it gets credited to today,
+and a real `logActivity("wrote", ...)` entry is appended, regardless of
+whether the growth came from typing in this browser or an MCP session
+writing directly to the backend between visits. Two cases:
+- **Already seen before** (a baseline exists for that chapter): the
+  positive delta versus the last-known count is credited to *today* — the
+  day it's *observed*, not necessarily the exact day it was actually
+  typed on the MCP session's own clock. Still the best honest
+  approximation available without a real backend writing-session resource.
+- **Never seen before** (a chapter written entirely via MCP before this
+  browser ever loaded this book at all): normally just seeded with no
+  credit, to avoid dumping a chapter's whole pre-existing word count into
+  "today" the moment it's first noticed — but if the backend's own
+  `content_updated_at` genuinely falls on today's calendar date (real
+  server evidence, not a guess), the full count is credited immediately
+  instead of waiting for some later delta that may never come.
+
+The editor's own `seedChapterBaseline` (silent, no-credit seeding only)
+was deleted outright and replaced with a call to this same
+`reconcileChapterWordCounts` at the moment a chapter's body loads in the
+editor — unifying what used to be two subtly different "first observation"
+code paths into one, and meaning that simply *opening* a chapter an MCP
+session wrote earlier today now credits it too, not just a later
+Dashboard/`/projects` visit. No double-counting risk between the two call
+sites (editor-open vs. book-wide word-count fetch): whichever one runs
+first sets the baseline to the real observed count, so the other sees
+`words === previous` moments later and credits nothing further.
+
+**Still an approximation, not a real activity log — flagged, not hidden.**
+The actual, fully correct fix is a backend writing-session/activity
+resource that both this app and MCP tool calls write to directly (same
+class of gap as the Planning Engine's own "closed the browser" bug before
+`GET /planning/runs?bookId=` shipped) — this integration pass has no push
+access to add one. What's here now is the best available client-side
+reconciliation: it credits real MCP-driven writing the next time this app
+happens to observe it, not the instant it happens, and backdates nothing
+further than "was this touched today." Characters/notes/world entries
+created via MCP (`create_codex_entry`, `create_note`,
+`create_world_category`) still don't log to the Activity feed — this pass
+was scoped to the manuscript/word-count complaint specifically, since
+that's what was reported; the same list-diff-against-known-ids approach
+could extend to those domains in a later pass if asked for.
+
+**Verified working** (Playwright, against the local mock backend extended
+with a real `POST`/`PATCH /manuscript/chapters` standing in for an MCP
+session's own direct backend writes — never touching this app's editor or
+autosave at all): creating a brand-new chapter with 842 words directly
+against the backend, then visiting the Dashboard with zero in-app typing,
+shows "842" in Today's Progress and a real "Wrote 842 words in Chapter 1:
+..." entry in Recent Activity; growing that same chapter's real content to
+1,200 words via a second direct backend write, then visiting `/projects`,
+shows the real grown total there too; revisiting the Dashboard afterward
+shows the cumulative 1,200 in Today's Progress, the Writing Goal card, and
+the Weekly Stats tile, plus a second real "Wrote 358 words..." activity
+entry for the delta — all without ever opening the editor. Zero console
+errors across the full pass. `tsc --noEmit`, `eslint`, and `npm run build`
+all clean.
+
 ### 4.10 Planning Engine
 
 **Live — backed by the real backend's `/agent-prompts` and `/planning/runs`
