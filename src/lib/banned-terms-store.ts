@@ -4,15 +4,21 @@
  * Real backend-backed Banned Terms store — wraps the WordArchitect
  * backend's `/api/v1/banned-terms` (see the backend repo's
  * `src/routes/bannedTerms.ts` + `012_banned_terms.sql`). Lets a writer ban
- * an exact word/phrase for the current book straight from the manuscript
- * editor; every future `POST /generate-prose` for that book enforces every
- * banned term server-side automatically — nothing else to wire up once a
- * term is banned.
+ * an exact word/phrase straight from the manuscript editor; every future
+ * `POST /generate-prose` enforces every banned term server-side
+ * automatically — nothing else to wire up once a term is banned.
  *
- * Same `bookId`-scoped single-current-book pattern as `notes-store.ts`/
- * `character-store.ts` (not the Map-keyed pattern `manuscript-store.ts`
- * uses) — the banned-terms list is only ever shown for whichever project's
- * editor is currently open, never several at once.
+ * **Scope is per-ACCOUNT, not per-book** — confirmed by the backend team
+ * directly: `GET /banned-terms` is looked up by `userId`, not `bookId`.
+ * A term banned while editing one project is enforced on every one of that
+ * writer's other projects too, not just the book it was banned from.
+ * `book_id` still lives on every row (which book the term was first banned
+ * from), but it's provenance, not a filter — nothing here scopes by it.
+ * The fetch below still keys its single-current-book cache off `bookId`
+ * (same call-site pattern as `notes-store.ts`/`character-store.ts`), but
+ * that's purely "which project's editor is this panel open in," not a
+ * data-scoping boundary — every fetch, whichever book triggered it,
+ * returns this same writer's whole account-wide list.
  *
  * `banTerm()` doesn't need to distinguish the backend's 200 (already
  * banned, case-insensitively) vs 201 (newly banned) — both are `apiFetch`
@@ -65,7 +71,9 @@ async function loadBannedTerms(bookId: string): Promise<void> {
   error = null;
   emit();
   try {
-    const res = await apiFetch<ListResponse>(`/banned-terms?bookId=${encodeURIComponent(bookId)}`);
+    // userId, not bookId — this is this writer's whole account-wide banned
+    // list (see this file's own top comment), not scoped to `bookId`.
+    const res = await apiFetch<ListResponse>(`/banned-terms?userId=${encodeURIComponent(getUserId())}`);
     rows = res.terms;
     status = "loaded";
   } catch (err) {
@@ -75,7 +83,7 @@ async function loadBannedTerms(bookId: string): Promise<void> {
   emit();
 }
 
-/** Live banned-terms list for one project — fetched once, kept live via bans/unbans below. */
+/** Live banned-terms list for this writer's whole account — re-keyed per `bookId` only to track which project's editor is currently open, not to scope the data (see this file's own top comment). */
 export function useBannedTerms(bookId: string | undefined): BannedTermRow[] {
   useEffect(() => {
     if (bookId && bookId !== currentBookId) void loadBannedTerms(bookId);

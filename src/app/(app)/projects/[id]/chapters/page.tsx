@@ -160,10 +160,11 @@ export default function ChaptersPage() {
 
   // ---------------------------------------------------------------------
   // Ban-this-selection — highlight any word/phrase/sentence in the prose
-  // and ban it for this book right from the editor, no separate settings
-  // panel required. Every future AI generation for this book enforces
-  // every banned term server-side automatically once it exists — nothing
-  // else to wire up here beyond the POST itself.
+  // and ban it right from the editor, no separate settings panel required.
+  // Scope is per-account, not per-book (see banned-terms-store.ts's own
+  // comment) — every future AI generation across every one of this
+  // writer's projects enforces every banned term server-side automatically
+  // once it exists, nothing else to wire up here beyond the POST itself.
   // ---------------------------------------------------------------------
 
   const [selectionMenu, setSelectionMenu] = useState<{ text: string; top: number; left: number } | null>(null);
@@ -3012,8 +3013,9 @@ function CommentsPanel({
 }
 
 /**
- * The "Ban" tab's content — a real list of everything banned for this
- * book, with a way to unban each one, living as a normal tab alongside
+ * The "Ban" tab's content — a real list of everything this writer has
+ * banned account-wide (not just for this book — see banned-terms-store.ts's
+ * own comment), with a way to unban each one, living as a normal tab alongside
  * Comments/Versions/Outline/AI rather than its own floating popup (an
  * earlier version opened this from a dedicated TopBar icon; that read as
  * redundant once the same action was always one click away via this tab
@@ -3125,8 +3127,8 @@ function BannedWordsTab({ terms }: { terms: BannedTermRow[] }) {
   return (
     <div className="scroll-slim flex-1 overflow-y-auto px-5 py-4">
       <p className="text-xs text-ink-muted">
-        Banned for this project — every future AI generation avoids these automatically, nothing else
-        to set up. One tradeoff worth knowing: once a project has at least one banned term, generation
+        Banned for you — applies across every one of your projects, automatically, nothing else to
+        set up. One tradeoff worth knowing: once a project has at least one banned term, generation
         loses live streaming — the prose appears once it&rsquo;s done and checked, not typed out in
         real time.
       </p>

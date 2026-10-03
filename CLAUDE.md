@@ -1980,11 +1980,15 @@ the full pass. `tsc --noEmit`, `eslint`, and `npm run build` all clean.
 **Live — backed by the real backend's `/banned-terms` (see the backend
 repo's `src/routes/bannedTerms.ts` + `012_banned_terms.sql`).** The
 "Ghost Editor" feature: a writer highlights any word/phrase/sentence
-directly in the manuscript editor's prose and bans it for the current
-book, no separate settings screen involved. Once a term is banned,
-`POST /generate-prose` enforces every banned term for that book
-automatically on the backend — nothing else in the frontend needs to call
-or configure anything for enforcement itself. Confirmed by reading the
+directly in the manuscript editor's prose and bans it, no separate
+settings screen involved. **Scope is per-account, not per-book** —
+confirmed directly by the backend team and corrected in this pass, see
+the changelog entry at the end of this section for the fix; everything
+in the prose below already reflects the corrected behavior. Once a term
+is banned, `POST /generate-prose` enforces every banned term across every
+one of that writer's projects automatically on the backend — nothing else
+in the frontend needs to call or configure anything for enforcement
+itself. Confirmed by reading the
 backend's own migration comment: there's no cheap generation-time
 suppression mechanism (`logit_bias` doesn't work against the model this
 app uses, and word-level token suppression isn't safe since most words
@@ -2007,12 +2011,13 @@ export type BannedTermRow = {
 };
 ```
 
-`src/lib/banned-terms-store.ts` follows the same `bookId`-scoped
-single-current-book pattern as `notes-store.ts`/`character-store.ts` (not
-manuscript-store.ts's Map-keyed pattern) — the list is only ever shown for
-whichever project's editor is currently open. `banTerm(bookId, term)`
-sends the selection exactly as-is (no client-side trim/lowercase — the
-backend trims, and matching is already case-insensitive there); the
+`src/lib/banned-terms-store.ts` re-keys its cache by `bookId` the same
+way `notes-store.ts`/`character-store.ts` do for their own single-
+current-book pattern, but that's purely "which project's editor triggered
+this fetch" bookkeeping, not a data-scoping boundary — see the fix
+changelog entry at the end of this section for why. `banTerm(bookId,
+term)` sends the selection exactly as-is (no client-side trim/lowercase —
+the backend trims, and matching is already case-insensitive there); the
 backend can respond 200 (already banned, case-insensitively) or 201
 (freshly banned), and both are treated identically in the UI — `apiFetch`
 doesn't even surface the status code to the caller, so there was nothing
@@ -2021,9 +2026,9 @@ by reading `bannedTerms.ts` directly: `POST`/nothing-else returns the row
 itself (`{id, user_id, book_id, term, created_at}`), unlike every other
 domain's `{thing: {...}}` wrapping — the one exception found so far in
 this codebase's backend integration, worth remembering before assuming
-the wrapping convention holds universally. `GET /banned-terms?bookId=`
-does use the usual envelope (`{terms: [...]}`). `DELETE /banned-terms/:id`
-returns `204`.
+the wrapping convention holds universally. `GET /banned-terms?userId=`
+(not `bookId=` — see below) does use the usual envelope (`{terms:
+[...]}`). `DELETE /banned-terms/:id` returns `204`.
 
 **Editor UI** (`chapters/page.tsx`):
 - **`SelectionBubbleMenu`** — a small floating "Ban this" button that
@@ -2092,6 +2097,58 @@ confirming; a plain click with no drag shows no bubble; banning the same
 word in different casing three times still lists only one panel entry;
 unbanning removes it from the panel and drops the badge count. Zero
 console errors across the full pass.
+
+**Real bug: the Ban panel's own list was scoped to the wrong resource —
+`bookId`, when the backend actually scopes bans by `userId`.** The backend
+team flagged this directly: `GET /banned-terms` is looked up by the
+signed-in writer's account, not by which book the request names — a term
+banned while editing one project is enforced on *every* one of that
+writer's projects, not just the one it was banned from (confirmed by
+reading `POST /generate-prose`'s own enforcement path, which pulls a
+writer's banned terms by `user_id`, never joined against the book being
+generated). `loadBannedTerms()` (`banned-terms-store.ts`) was still
+calling `GET /banned-terms?bookId=` — silently wrong, not a 404 or an
+empty list: in every real multi-project account the backend would have
+returned bans from *other* books too, since the real filter has always
+been `userId`, so the panel's own book-scoped framing just never matched
+what the backend was actually enforcing.
+
+Fixed with a one-line swap: `loadBannedTerms()` now calls `GET
+/banned-terms?userId=` (via the existing `getUserId()` from
+`api-client.ts`), not `?bookId=`. `banTerm`/`unbanTerm` needed no changes
+— `POST`/`DELETE` were already correct (`POST` already sends both
+`userId` and `bookId` in its body; `book_id` on a row has always just been
+"which book this term was first banned from," not a filter key). The
+store's cache is still re-fetched per `bookId` change (same call-site
+shape as every other `bookId`-scoped store in this file) purely to track
+"which project's editor is this panel open in" — not because the data
+itself is book-scoped; a fetch triggered from any project now correctly
+returns this writer's whole account-wide list, the same list every other
+project's Ban tab shows.
+
+**Copy updated to match, since the behavior is now genuinely different,
+not just a backend detail**: the panel's own description ("Banned for
+this project — every future AI generation avoids these automatically...")
+read as a real, specific (and now wrong) scope claim, not generic
+copy — changed to "Banned for you — applies across every one of your
+projects, automatically, nothing else to set up." Two code comments
+making the same now-incorrect per-book claim (the Ban-this-selection
+block's own header comment, and `BannedWordsTab`'s doc comment) were
+corrected alongside it — comments in this file are held to the same
+"describe what's actually true" standard as the user-facing copy.
+
+**Verified working** (Playwright, against the local mock backend extended
+with real `POST`/`GET`/`DELETE /banned-terms` handlers filtering by
+`user_id` — previously this domain's mock only had a GET stub always
+returning `{terms: []}`, since nothing before this exercised real
+cross-project scope): created two projects under the same account, banned
+a term from the first project's editor via a direct backend call
+(standing in for the selection-bubble flow), then opened the *second*
+project's editor — one that had never banned anything — and confirmed its
+Ban tab shows the real badge count and the banned term itself, with the
+updated "Banned for you" copy and no trace of the old "for this project"
+claim anywhere on the panel. Zero console errors across the full pass.
+`tsc --noEmit`, `eslint`, and `npm run build` all clean.
 
 ### 4.7 AI Assistant Chat
 
