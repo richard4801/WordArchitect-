@@ -1322,6 +1322,62 @@ increments it yet (no comment-adding feature exists), and `mine` is
 computed live from the real `user_id` column instead of hardcoded seed
 values.
 
+**Real bug: note cards had no way to actually read a note's full
+content.** User report: "I noticed we can[']t exactly view content of
+note cards." Confirmed by reading `NoteCard` directly: every card (grid
+and compact/list view alike) only ever rendered `note.excerpt` through a
+line-clamp (`line-clamp-3` in grid view, a single line in compact view) —
+a CSS visual truncation only, with no click target anywhere on the card
+to read the rest. The *only* way to see a note's full text was "Edit
+Note" from the card's options menu — and compact/list view didn't even
+render an options menu at all, so a note opened in that view had no path
+to its full content whatsoever.
+
+Fixed by making the whole card a real click target to a new read-only
+`ViewNoteModal`, following this codebase's own established conventions
+rather than inventing a new one: the outer card gained `role="button"
+tabIndex={0}` plus `onClick`/`onKeyDown` (Enter/Space) exactly like
+`CharacterCard` in `characters/all/page.tsx`, and the modal itself reuses
+`ConfirmDialog`'s portal-to-`document.body` + backdrop
+`onClick={(e) => e.stopPropagation()}` pattern — necessary because a
+portaled child still bubbles through the *React tree* (not just the DOM
+tree) to its logical parent, so a non-stopped click inside a modal
+rendered as a child of the now-clickable card would otherwise reopen the
+view modal the instant something inside it was clicked. `ViewNoteModal`
+shows the category badge, title, date, and the full `note.excerpt` with
+`whitespace-pre-wrap` (no line-clamp) in a scrollable `max-h-[85vh]`
+card, plus "Close" and "Edit Note" (hands off to the existing edit flow)
+actions. The options menu also gained a new "View Note" item as a second
+way in, and the Pin button's `onClick` was changed to call
+`e.stopPropagation()` before toggling, so pinning a note from the card no
+longer also opens the view modal underneath it.
+
+**A second, related bug fixed proactively while making the card
+clickable, not yet reported but reasoned through before it could
+surface:** `NewNoteModal` (used for both New Note and, via the new
+`note` prop, Edit Note) was not portaled and had no `stopPropagation` on
+its own backdrop — harmless while the card itself had no `onClick`, but
+once the card became a real click target, any click inside that
+still-unportaled modal would bubble straight into the card's own
+`onClick` and reopen the view modal on top of the edit form. Fixed the
+same way `ConfirmDialog` already solves this: `NewNoteModal` now renders
+via `createPortal(..., document.body)` with `onClick={(e) =>
+e.stopPropagation()}` on its backdrop.
+
+**Verified working** (Playwright, against a local mock backend extended
+with real `GET`/`POST`/`PATCH`/`DELETE /notes` handlers — this domain's
+mock previously had no notes handlers of any kind): clicking a grid-view
+note card opens a modal showing the complete, untruncated note body (not
+the line-clamped preview); the modal's "Close" and "Edit Note" actions
+both render; clicking "Edit Note" inside the view modal opens the real
+edit form with no stacked modals underneath; clicking the Pin star
+toggles the pin without opening the view modal; the options menu
+correctly includes a new "View Note" item; and — the specific gap this
+was reported for — switching to compact/list view, which has no options
+menu at all, still lets a click on the card itself open the same view
+modal with the full content. Zero console errors across the full pass.
+`tsc --noEmit`, `eslint`, and `npm run build` all clean.
+
 ### 4.5 Manuscript / Chapters
 
 **Live — backed by the real backend's `/manuscript/chapters`, see §3.5's

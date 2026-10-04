@@ -3,6 +3,7 @@
 import {
   Bell,
   Bold,
+  Eye,
   Filter,
   FolderOpen,
   Image as ImageIcon,
@@ -21,7 +22,8 @@ import {
   X,
 } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DropdownSelect } from "@/components/ui/dropdown-select";
 import { NoteCoverArt } from "@/components/ui/note-cover-art";
@@ -398,8 +400,20 @@ function NoteCard({ note, compact, onTogglePin }: { note: Note; compact: boolean
   const meta = NOTE_CATEGORY_META[note.category];
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [editingNote, setEditingNote] = useState(false);
+  const [viewingNote, setViewingNote] = useState(false);
   return (
-    <div className={`card-2 overflow-hidden ${compact ? "flex items-center gap-4 p-3" : ""}`}>
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => setViewingNote(true)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          setViewingNote(true);
+        }
+      }}
+      className={`card-2 cursor-pointer overflow-hidden text-left transition-transform hover:-translate-y-0.5 ${compact ? "flex items-center gap-4 p-3" : ""}`}
+    >
       <div className={`relative shrink-0 overflow-hidden ${compact ? "size-20 rounded-lg" : "aspect-[4/3]"}`}>
         <NoteCoverArt seed={note.id} scene={sceneFor(note)} className="size-full" />
         {note.pinned && (
@@ -412,6 +426,7 @@ function NoteCard({ note, compact, onTogglePin }: { note: Note; compact: boolean
             ariaLabel="More options"
             buttonClassName="absolute right-2 top-11 grid size-7 place-items-center rounded-full bg-canvas/60 text-ink-muted backdrop-blur transition-colors hover:text-ink"
             items={[
+              { label: "View Note", Icon: Eye, onClick: () => setViewingNote(true) },
               { label: "Edit Note", Icon: Pencil, onClick: () => setEditingNote(true) },
               { label: "Delete Note", Icon: Trash2, danger: true, onClick: () => setConfirmingDelete(true) },
             ]}
@@ -431,6 +446,16 @@ function NoteCard({ note, compact, onTogglePin }: { note: Note; compact: boolean
         />
       )}
       {editingNote && <NewNoteModal note={note} onClose={() => setEditingNote(false)} />}
+      {viewingNote && (
+        <ViewNoteModal
+          note={note}
+          onClose={() => setViewingNote(false)}
+          onEdit={() => {
+            setViewingNote(false);
+            setEditingNote(true);
+          }}
+        />
+      )}
       <div className={compact ? "min-w-0 flex-1" : "p-4"}>
         <div className="flex items-center justify-between gap-2">
           <span
@@ -439,7 +464,14 @@ function NoteCard({ note, compact, onTogglePin }: { note: Note; compact: boolean
           >
             {note.category}
           </span>
-          <button type="button" onClick={onTogglePin} aria-label={note.pinned ? "Unpin note" : "Pin note"}>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onTogglePin();
+            }}
+            aria-label={note.pinned ? "Unpin note" : "Pin note"}
+          >
             <Star className={`size-4 transition-colors ${note.pinned ? "fill-gold text-gold" : "text-ink-faint hover:text-gold"}`} />
           </button>
         </div>
@@ -454,6 +486,73 @@ function NoteCard({ note, compact, onTogglePin }: { note: Note; compact: boolean
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Read-only "see the full content" view — previously the only way to read a
+ * note past its line-clamped excerpt was to open the Edit modal, which (a)
+ * wasn't discoverable as a "view" action, requiring the options menu, and
+ * (b) didn't exist at all for compact/list view, which had no options menu.
+ * The card's whole body now opens this; "Edit Note" hands off to the real
+ * edit form. Portaled + stopPropagation on its own backdrop, same as
+ * ConfirmDialog — required because NoteCard's own root is now a click
+ * target itself (see that component's own click handler), and without this
+ * a click anywhere inside this modal would otherwise bubble back up to it.
+ */
+function ViewNoteModal({ note, onClose, onEdit }: { note: Note; onClose: () => void; onEdit: () => void }) {
+  const meta = NOTE_CATEGORY_META[note.category];
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-30 grid place-items-center bg-canvas/70 p-4 backdrop-blur-sm"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="card flex max-h-[85vh] w-full max-w-lg flex-col p-5">
+        <div className="flex shrink-0 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <span
+              className="label-caps inline-block rounded-md border px-2 py-0.5 text-[0.6rem]"
+              style={{ color: meta.color, borderColor: `color-mix(in srgb, ${meta.color} 45%, transparent)`, background: `color-mix(in srgb, ${meta.color} 12%, transparent)` }}
+            >
+              {note.category}
+            </span>
+            <h2 className="mt-2 truncate font-display text-xl text-ink">{note.title}</h2>
+            <p className="mt-1 text-xs text-ink-faint">{note.date}</p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" className="shrink-0 text-ink-faint hover:text-ink">
+            <X className="size-4" />
+          </button>
+        </div>
+        <div className="scroll-slim mt-4 min-h-0 flex-1 overflow-y-auto">
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink">
+            {note.excerpt || "This note has no content yet."}
+          </p>
+        </div>
+        <div className="mt-5 flex shrink-0 items-center justify-end gap-3">
+          <button type="button" onClick={onClose} className="text-sm text-ink-muted transition-colors hover:text-ink">
+            Close
+          </button>
+          <button
+            type="button"
+            onClick={onEdit}
+            className="flex items-center gap-1.5 rounded-xl bg-gold px-4 py-2.5 text-sm font-medium text-gold-contrast transition-opacity hover:opacity-90"
+          >
+            <Pencil className="size-3.5" />
+            Edit Note
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -486,8 +585,11 @@ function NewNoteModal({ bookId, note, onClose }: { bookId?: string; note?: Note;
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-30 grid place-items-center bg-canvas/70 p-4 backdrop-blur-sm">
+  return createPortal(
+    <div
+      className="fixed inset-0 z-30 grid place-items-center bg-canvas/70 p-4 backdrop-blur-sm"
+      onClick={(e) => e.stopPropagation()}
+    >
       <div className="card w-full max-w-md p-5">
         <div className="flex items-center justify-between">
           <h2 className="font-display text-xl text-ink">{isEdit ? "Edit Note" : "New Note"}</h2>
@@ -552,6 +654,7 @@ function NewNoteModal({ bookId, note, onClose }: { bookId?: string; note?: Note;
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
