@@ -418,6 +418,7 @@ backend during backend-side development.
 | Outliner | **Live** — `/outline/beats` + `/manuscript/chapters/:id/beats` + `/manuscript/beats/:id` | `outline-store.ts` |
 | Planning Engine | **Live** — `/agent-prompts` + `/planning/runs` | `planning-store.ts` |
 | Book Links | **Live** — `/book-links` | `book-links-store.ts` |
+| Writing Voice | **Live** — `/writing-voice` (scoped by `userId` alone, no `bookId`) | `writing-voice-store.ts` |
 | Dashboard-only stats | Mock, deferred | `dashboard-data.ts` (no backend resource exists for these — see §4.9) |
 
 ### Accounts & Authentication (live)
@@ -4969,6 +4970,94 @@ out of the visible set) correctly made B reappear as its own top-level
 card rather than disappearing. Zero console errors across the full pass.
 `tsc --noEmit`, `eslint`, and `npm run build` all clean.
 
+### 4.12 Writing Voice
+
+**Live — backed by the real backend's `/writing-voice`.** The one piece
+of writer-facing configuration that deliberately does **not** live inside
+the per-book Project workspace — scoped by `userId` alone, no `bookId`
+anywhere in its request/response shapes. A standing writer preference
+applied silently to every `/generate-prose` call once a sample exists;
+there's no per-generation opt-out on the generation request itself
+(unlike Chapter Instructions, entered fresh per call). Lives on the
+Settings page (`(app)/settings/page.tsx`), not inside any book's editor
+or Generate panel.
+
+```ts
+export type WritingVoiceProfile = {
+  id: string;
+  user_id: string;
+  sample_text: string;
+  style_profile: string | null;
+  extraction_error: string | null;
+  updated_at: string;
+};
+```
+
+`src/lib/writing-voice-store.ts` (new file) — a true singleton cache,
+same shape as `auth-store.ts`'s own session state, since there's exactly
+one profile per signed-in account, never a list (no Map-keyed-by-bookId
+pattern needed here). `GET /writing-voice?userId=` → `{ profile: null |
+{...} }`, loaded once per session on first mount. `POST /writing-voice`
+`{ userId, sampleText }` → `201 { profile, extractionFailed }` both saves
+the sample and triggers analysis in one call — no separate save/analyze
+step on first paste. `POST /writing-voice/extract` `{ userId }` → `{
+profile }` re-runs analysis against the already-saved sample, no re-paste
+required. `DELETE /writing-voice?userId=` → `204`, clearing both the
+sample and the derived profile with no undo.
+
+**`extractionFailed: true` is a non-blocking warning, not a failed
+call** — the sample is saved either way, and the backend deliberately
+never blanks a previously-good `style_profile` on a failed
+re-extraction (stale-but-good beats nothing). `WritingVoiceCard`
+(`settings/page.tsx`) shows "Saved, but analysis failed — try
+Re-analyze." instead of an error banner on this path, and the existing
+style-profile block (if any) stays visible untouched.
+
+**The style profile is shown verbatim, not just a "voice is on"
+indicator** — a `label-caps`-styled block below the sample textarea
+("Here's what we learned from your sample") renders `style_profile`
+directly: this is the actual text injected into every generation, so
+showing it is what makes the feature legible to the writer, per the
+integration spec's own framing.
+
+**A real bug caught and fixed before shipping: a key-based remount would
+have silently swallowed the "Saved." confirmation on first save.** The
+first draft keyed `WritingVoiceCard` by `profile?.id ?? "empty"`, the same
+"reset via remount" convention this file uses elsewhere (`PromptDraftEditor`,
+`EntityReviewView`) — but here it was wrong: on a writer's very first
+save, the profile id appears for the first time, the store's `emit()`
+fires synchronously inside `saveWritingVoice()` *before* the async
+function returns to the caller, which unmounts the old keyed instance and
+mounts a fresh one — so the caller's own subsequent `setNotice("Saved.")`
+call lands on an already-unmounted component instance and has no effect.
+Fixed by dropping the key-remount entirely: the parent (`WritingVoiceSection`)
+already gates rendering until the load status leaves `"idle"`/`"loading"`,
+so a single long-lived `WritingVoiceCard` with a plain lazy `useState`
+initializer seeds correctly on its one real mount either way (existing
+sample or none), and `style_profile`/`extraction_error`/`hasSample` are
+read live from the `profile` prop on every render rather than frozen into
+local state — so a *second* save against the same (now-stable) profile id
+can never go stale either, which a frozen local copy would have risked.
+
+**Verified working** (Playwright, against a local mock backend extended
+with `GET`/`POST /writing-voice`, `POST /writing-voice/extract`, and
+`DELETE /writing-voice` handlers matching the spec's exact shapes, plus a
+`/__test__/force-writing-voice-extraction-failure` hook): a fresh account
+shows the empty state (no style-profile block, no Re-analyze/Clear
+buttons, Save disabled with an empty textarea); saving a real sample
+shows the real analysis summary and a real "Saved." confirmation that
+survives the save (confirming the remount bug above is actually fixed,
+not just plausible); both the sample and its summary survive a hard
+reload (real persistence); Re-analyze produces a fresh summary with its
+own confirmation; a second save against the same existing profile
+reflects the new sample's real word count, not a stale cached one;
+forcing a simulated extraction failure shows the real non-blocking
+warning while the sample is still saved and the old style-profile block
+stays visible, untouched; Clear routes through a real `ConfirmDialog`,
+and the sample/profile are confirmed gone both client-side and via a hard
+reload afterward. Zero console errors across the full pass. `tsc
+--noEmit`, `eslint`, and `npm run build` all clean.
+
 ---
 
 ## 5. Manuscript editor — LIVE vs MOCK-ONLY at a glance
@@ -5453,9 +5542,10 @@ export interface AiProvider {
 /projects/[id]/world                         WorldCategoryMeta[] (live) + WorldEntry[] (live read, no in-app create — §3.5/§4.3) + WORLD_TIMELINE/WORLD_OVERVIEW/PINNED_WORLD_ITEMS (mock)
 /projects/[id]/world/new-category            submits NewCategoryInput
 /projects/[id]/notes                         Note[] (live)
+/settings                                    WritingVoiceProfile | null (live, §4.12) — scoped by userId alone, no bookId
 /planning                                    global entry point — Main/Contract chooser, then a real book picker (useProjects()) → navigates into that book's /projects/[id]/planning/main|contract
 /writing /outlines /characters /worldbuilding /notes /assistant   redirect-only pages → most-recently-active project's real workspace, no data of their own
-/goals /analytics /settings /timeline /templates /help   stubs — <ComingSoon>, no data model
+/goals /analytics /timeline /templates /help   stubs — <ComingSoon>, no data model
 /waitlist                                    standalone marketing page, outside (app) — see §5.7
 /login /signup                               public auth pages, outside (app) — see §3.5's Accounts & Authentication section
 /api/ai                                      POST — see §6
