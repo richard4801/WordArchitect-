@@ -85,6 +85,85 @@ function download(blob: Blob, filename: string) {
 }
 
 // ---------------------------------------------------------------------
+// Cleaning + inline formatting
+// ---------------------------------------------------------------------
+
+export type Seg = { text: string; b: boolean; i: boolean };
+
+// Order matters: ***x***, then **x**, then *x* / _x_ (single markers need word boundaries).
+const INLINE_SRC =
+  /(\*\*\*|___)(?=\S)([\s\S]*?\S)\1|(\*\*|__)(?=\S)([\s\S]*?\S)\3|(?<![\w*_])(\*|_)(?=[^\s*_])([\s\S]*?[^\s*_])\5(?![\w*_])/.source;
+
+function parseInline(text: string, b = false, i = false): Seg[] {
+  const out: Seg[] = [];
+  let last = 0;
+  // Fresh regex per call: recursion below would otherwise clobber a shared lastIndex.
+  const re = new RegExp(INLINE_SRC, "g");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push({ text: text.slice(last, m.index), b, i });
+    if (m[1]) out.push(...parseInline(m[2]!, true, true));
+    else if (m[3]) out.push(...parseInline(m[4]!, true, i));
+    else out.push(...parseInline(m[6]!, b, true));
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push({ text: text.slice(last), b, i });
+  return out;
+}
+
+/** Plain-text cleanup shared by both formats. */
+function cleanText(raw: string): string {
+  return raw
+    .replace(/[​-‍⁠﻿]/g, "") // zero-width / BOM
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
+    .replace(/ /g, " ")
+    .replace(/\r\n?/g, "\n")
+    .replace(/^#{1,6}\s+/, "") // stray markdown heading marker
+    .replace(/[ \t]+/g, " ")
+    .replace(/ ?\n ?/g, "\n")
+    .trim();
+}
+
+const SCENE_BREAK_RE = /^\s*(?:[*\-_~#=•·]\s*){3,}$/;
+
+export type CleanBlock = { kind: "break" } | { kind: "text"; segs: Seg[] };
+
+/** Turn a chapter's saved paragraphs into clean, formatted blocks. */
+export function cleanChapter(c: ExportChapter): CleanBlock[] {
+  const blocks: CleanBlock[] = [];
+  const headingForms = new Set(
+    [chapterHeading(c), `Chapter ${c.number}`, c.title].map((h) => h.toLowerCase().replace(/[:.\s]+/g, " ").trim()),
+  );
+  let firstText = true;
+  for (const p of c.paragraphs) {
+    if (p.break) {
+      if (blocks.length && blocks[blocks.length - 1]!.kind !== "break") blocks.push({ kind: "break" });
+      continue;
+    }
+    const text = cleanText(p.text ?? "");
+    if (!text) continue;
+    if (SCENE_BREAK_RE.test(text)) {
+      if (blocks.length && blocks[blocks.length - 1]!.kind !== "break") blocks.push({ kind: "break" });
+      continue;
+    }
+    // Drop a leading paragraph that merely repeats the chapter heading.
+    if (firstText) {
+      firstText = false;
+      const plain = text.replace(/[*_]/g, "").toLowerCase().replace(/[:.\s]+/g, " ").trim();
+      if (headingForms.has(plain)) continue;
+    }
+    let segs = parseInline(text, false, !!p.emphasis);
+    // Remove unmatched leftover bold/italic markers (runs of 2+), keep lone * (e.g. "5 * 3").
+    segs = segs
+      .map((sg) => ({ ...sg, text: sg.text.replace(/\*{2,}|_{2,}/g, "") }))
+      .filter((sg) => sg.text.length > 0);
+    if (segs.length) blocks.push({ kind: "text", segs });
+  }
+  while (blocks.length && blocks[blocks.length - 1]!.kind === "break") blocks.pop();
+  return blocks;
+}
+
+// ---------------------------------------------------------------------
 // DOCX
 // ---------------------------------------------------------------------
 
@@ -118,11 +197,11 @@ async function buildDocx(title: string, subtitle: string | undefined, chapters: 
 
   chapters.forEach((c) => {
     body.push(para(run(chapterHeading(c)), `<w:pStyle w:val="Heading1"/><w:pageBreakBefore/>`));
-    for (const p of c.paragraphs) {
-      if (p.break) {
+    for (const blk of cleanChapter(c)) {
+      if (blk.kind === "break") {
         body.push(para(run("* * *"), `<w:jc w:val="center"/>`));
-      } else if (p.text.trim()) {
-        body.push(para(run(p.text, p.emphasis ? "<w:i/>" : "")));
+      } else {
+        body.push(para(blk.segs.map((sg) => run(sg.text, (sg.b ? "<w:b/>" : "") + (sg.i ? "<w:i/>" : ""))).join("")));
       }
     }
   });
@@ -196,8 +275,9 @@ async function buildPdf(title: string, subtitle: string | undefined, chapters: E
     doc.text(headLines, pageW / 2, y, { align: "center" });
     y += headLines.length * 24 + 24;
 
-    for (const p of c.paragraphs) {
-      if (p.break) {
+    const fontFor = (sg: Seg) => (sg.b && sg.i ? "bolditalic" : sg.b ? "bold" : sg.i ? "italic" : "normal");
+    for (const blk of cleanChapter(c)) {
+      if (blk.kind === "break") {
         if (y + lineH > pageH - margin) {
           doc.addPage();
           y = margin;
@@ -207,27 +287,53 @@ async function buildPdf(title: string, subtitle: string | undefined, chapters: E
         y += lineH * 1.5;
         continue;
       }
-      if (!p.text.trim()) continue;
-      doc.setFont("times", p.emphasis ? "italic" : "normal").setFontSize(fontSize);
-      // First line is indented; wrap it narrower, then re-wrap the rest at full width.
-      const words = p.text.trim();
-      const first = doc.splitTextToSize(words, textW - indent) as string[];
-      const firstLine = first[0] ?? "";
-      const rest = words.slice(firstLine.length).trim();
-      const restLines = rest ? (doc.splitTextToSize(rest, textW) as string[]) : [];
-      const lines: { text: string; x: number }[] = [
-        { text: firstLine, x: margin + indent },
-        ...restLines.map((t) => ({ text: t, x: margin })),
-      ];
-      for (const l of lines) {
+      // Word-level layout so mixed bold/italic runs wrap correctly.
+      type Word = { text: string; font: string; w: number; gap: number };
+      const words: Word[] = [];
+      let pendingGap = 0; // carried across runs so a space at a style boundary survives
+      for (const sg of blk.segs) {
+        const font = fontFor(sg);
+        doc.setFont("times", font).setFontSize(fontSize);
+        const spaceW = doc.getTextWidth(" ");
+        const parts = sg.text.split(/(\s+)/);
+        for (const part of parts) {
+          if (!part) continue;
+          if (/^\s+$/.test(part)) {
+            pendingGap = spaceW;
+            continue;
+          }
+          words.push({ text: part, font, w: doc.getTextWidth(part), gap: words.length ? pendingGap : 0 });
+          pendingGap = 0;
+        }
+      }
+      let line: Word[] = [];
+      let lineW = 0;
+      let first = true;
+      const flush = () => {
         if (y > pageH - margin) {
           doc.addPage();
           y = margin;
-          doc.setFont("times", p.emphasis ? "italic" : "normal").setFontSize(fontSize);
         }
-        doc.text(l.text, l.x, y);
+        let x = margin + (first ? indent : 0);
+        line.forEach((wd, idx) => {
+          if (idx > 0) x += wd.gap;
+          doc.setFont("times", wd.font).setFontSize(fontSize);
+          doc.text(wd.text, x, y);
+          x += wd.w;
+        });
         y += lineH;
+        first = false;
+        line = [];
+        lineW = 0;
+      };
+      for (const wd of words) {
+        const avail = textW - (first ? indent : 0);
+        const add = (line.length ? wd.gap : 0) + wd.w;
+        if (line.length && lineW + add > avail) flush();
+        lineW += (line.length ? wd.gap : 0) + wd.w;
+        line.push(wd);
       }
+      if (line.length) flush();
     }
   }
 
