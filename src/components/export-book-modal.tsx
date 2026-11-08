@@ -89,7 +89,7 @@ export function ExportBookModal({
           ))}
         </div>
         <p className="mt-3 text-xs text-ink-muted">
-          Text is cleaned automatically. *Italic* and **bold** markers in your chapters become real italic and bold; formatting applied only in the editor toolbar is not saved by the backend, so it canNote: only plain text and scene breaks are saved for chapters, so bold/italic formatting won&apos;t appear in the export.apos;t be exported.
+          Text is cleaned automatically. *Italic* and **bold** markers in your chapters become real italic and bold. Formatting applied only with the editor toolbar isn&apos;t saved by the backend, so it can&apos;t be exported.
         </p>
         {busy && (
           <p className="mt-3 flex items-center gap-2 text-sm text-ink-muted">
