@@ -1,5 +1,6 @@
 "use client";
 
+import { ExportBookModal } from "@/components/export-book-modal";
 import {
   AlertTriangle,
   Ban,
@@ -1699,6 +1700,7 @@ function TopBar({
         <ShareButton />
         <MoreMenu
           projectId={project.id}
+          projectTitle={project.title}
           chapter={chapter}
           hasContent={hasContent ?? false}
           onDeleteChapter={onDeleteChapter}
@@ -1781,11 +1783,15 @@ function syncNeedFor(chapter: ManuscriptChapter | undefined): SyncNeed {
 
 function MoreMenu({
   projectId,
+  projectTitle,
+  projectGenre,
   chapter,
   hasContent,
   onDeleteChapter,
 }: {
   projectId: string;
+  projectTitle: string;
+  projectGenre?: string;
   chapter?: ManuscriptChapter;
   hasContent: boolean;
   onDeleteChapter: (chapterId: string) => Promise<void>;
@@ -1793,6 +1799,7 @@ function MoreMenu({
   const [open, setOpen] = useState(false);
   const [syncState, setSyncState] = useState<SyncState>({ kind: "idle" });
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const syncNeed = syncNeedFor(chapter);
   const canSync = !!chapter && hasContent && syncNeed !== "up-to-date";
@@ -1816,6 +1823,14 @@ function MoreMenu({
 
   return (
     <div className="relative">
+      {exporting && (
+        <ExportBookModal
+          bookId={projectId}
+          title={projectTitle}
+          subtitle={projectGenre}
+          onClose={() => setExporting(false)}
+        />
+      )}
       <button
         type="button"
         aria-label="More"
@@ -1843,12 +1858,16 @@ function MoreMenu({
               >
                 Chapter settings
               </Link>
-              <Link
-                href={`/projects/${projectId}`}
-                className="block rounded-lg px-3 py-2 text-sm text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  setExporting(true);
+                }}
+                className="block w-full rounded-lg px-3 py-2 text-left text-sm text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
               >
-                Export chapter
-              </Link>
+                Export Book (PDF / DOCX)
+              </button>
               <div className="my-1 h-px bg-line" />
               <button
                 type="button"
